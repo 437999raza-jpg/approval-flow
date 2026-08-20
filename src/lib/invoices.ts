@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database, InvoiceSource } from "@/lib/supabase/types";
 import { extractInvoiceFields } from "@/lib/extract-invoice";
+import { selectWorkflowForInvoice } from "@/lib/workflow-routing";
 
 const INVOICE_BUCKET = "invoices";
 const MAX_FILE_BYTES = 20 * 1024 * 1024; // 20MB
@@ -44,13 +45,6 @@ export async function createInvoiceFromFile({
     throw new InvoiceIngestError(`Unsupported file type: ${file.type || "unknown"}`);
   }
 
-  const { data: workflow } = await supabase
-    .from("approval_workflows")
-    .select("id")
-    .eq("organization_id", organizationId)
-    .eq("is_default", true)
-    .maybeSingle();
-
   const safeName = file.name.replace(/[^\w.\-]+/g, "_");
   const filePath = `${organizationId}/${crypto.randomUUID()}-${safeName}`;
 
@@ -65,11 +59,30 @@ export async function createInvoiceFromFile({
     throw new InvoiceIngestError(`Upload failed: ${uploadError.message}`);
   }
 
+  // Route the invoice to the first workflow whose items all match; fall
+  // back to the org's default workflow.
+  const { data: submitterProfile } = submittedBy
+    ? await supabase
+        .from("profiles")
+        .select("full_name")
+        .eq("id", submittedBy)
+        .maybeSingle()
+    : { data: null };
+  const workflowId = await selectWorkflowForInvoice(supabase, organizationId, {
+    amount: extracted?.amount ?? null,
+    vendorName: extracted?.vendor_name ?? null,
+    submittedBy: submittedBy ?? null,
+    submitterName: submitterProfile?.full_name ?? null,
+    projectId: null, // project is assigned later in the Bill panel
+    projectName: null,
+    lineItems: [],
+  });
+
   const { data: invoice, error: insertError } = await supabase
     .from("invoices")
     .insert({
       organization_id: organizationId,
-      workflow_id: workflow?.id ?? null,
+      workflow_id: workflowId,
       status: "pending",
       source,
       source_email: sourceEmail ?? null,

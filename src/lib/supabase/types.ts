@@ -283,6 +283,23 @@ export interface Database {
         Update: Partial<Database["public"]["Tables"]["audit_log"]["Row"]>;
         Relationships: [];
       };
+      saved_reports: {
+        Row: {
+          id: string;
+          organization_id: string;
+          name: string;
+          config: Record<string, unknown>;
+          created_by: string | null;
+          created_at: string;
+        };
+        Insert: Partial<
+          Database["public"]["Tables"]["saved_reports"]["Row"]
+        > & { organization_id: string; name: string };
+        Update: Partial<
+          Database["public"]["Tables"]["saved_reports"]["Row"]
+        >;
+        Relationships: [];
+      };
       inbound_email_log: {
         Row: {
           id: string;
