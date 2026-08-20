@@ -10,11 +10,11 @@ import type { Database } from "@/lib/supabase/types";
 type OrgRole =
   Database["public"]["Tables"]["organization_members"]["Row"]["role"];
 
-const ROLES: OrgRole[] = ["admin", "approver", "submitter"];
+const ROLES: OrgRole[] = ["user", "auditor", "admin"];
 const ROLE_LABELS: Record<OrgRole, string> = {
+  user: "User",
+  auditor: "Auditor",
   admin: "Admin",
-  approver: "Approver",
-  submitter: "Submitter",
 };
 
 const SETTINGS_ERRORS: Record<string, string> = {
@@ -388,7 +388,7 @@ export default async function SettingsPage({
                   placeholder="teammate@company.com"
                   className={`${inputCls} min-w-52 flex-1`}
                 />
-                <select name="role" className={inputCls} defaultValue="approver">
+                <select name="role" className={inputCls} defaultValue="user">
                   {ROLES.map((r) => (
                     <option key={r} value={r}>
                       {ROLE_LABELS[r]}

@@ -670,7 +670,13 @@ export default async function DashboardPage({
   }
 
   const selectedId = params.id?.[0];
-  const canReviewNow = org.role === "admin" || org.role === "submitter";
+  const isAuditor = org.role === "auditor";
+  // Review (the Pending Review queue) is admin-only; auditors can view it
+  // read-only; users never see pending_review invoices (RLS enforces this
+  // at the data level too).
+  const canReviewNow = org.role === "admin";
+  const canSeeReviewQueue = org.role === "admin" || isAuditor;
+  const canEdit = !isAuditor;
   const view: View = VIEWS.includes(searchParams.view as View)
     ? (searchParams.view as View)
     : "all";
@@ -848,7 +854,9 @@ export default async function DashboardPage({
 
   const navItems: { key: View; label: string }[] = [
     { key: "all", label: "All invoices" },
-    { key: "review", label: "Pending Review" },
+    ...(canSeeReviewQueue
+      ? [{ key: "review" as View, label: "Pending Review" }]
+      : []),
     { key: "mine", label: "Requires my approval" },
     { key: "created", label: "Created by me" },
     { key: "approved", label: "Approved" },
@@ -1019,6 +1027,7 @@ export default async function DashboardPage({
               <DetailSplit
                 documents={documentsForSelected}
                 uploadAction={addDocument.bind(null, selected.id)}
+                canEdit={canEdit}
                 bill={{
                   invoice: selected,
                   primaryFileUrl: signedFileUrl,
@@ -1034,6 +1043,7 @@ export default async function DashboardPage({
                   reExtract: reExtract.bind(null, selected.id),
                   backToReview: backToReview.bind(null, selected.id),
                   canReview: canReviewNow,
+                  readOnly: !canEdit,
                 }}
               >
                 {/* Side panel content: header + collapsible sections */}
@@ -1099,9 +1109,8 @@ export default async function DashboardPage({
                           {selected.status === "pending_review" &&
                           !canReviewNow ? (
                             <p className="text-sm text-slate-500">
-                              Awaiting review of the extracted data — an
-                              admin or submitter must complete the review to
-                              send it into the approval workflow.
+                              Awaiting review — an admin must complete the
+                              review to send it into the approval workflow.
                             </p>
                           ) : null}
                           {canDecide ? (
@@ -1171,6 +1180,7 @@ export default async function DashboardPage({
                   <CollapsibleSection title="Instructions for accounting">
                     <InstructionsBox
                       initialValue={selected.accounting_instructions ?? ""}
+                      readOnly={isAuditor}
                       saveInstructions={saveAccountingInstructions.bind(
                         null,
                         selected.id
@@ -1221,20 +1231,22 @@ export default async function DashboardPage({
                         ))
                       )}
                     </div>
-                    <form
-                      action={addComment.bind(null, selected.id)}
-                      className="mt-3 flex gap-2"
-                    >
-                      <input
-                        name="body"
-                        required
-                        placeholder="Ask a question or leave a note…"
-                        className="min-w-0 flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
-                      />
-                      <button className="rounded-md bg-slate-800 px-3 py-2 text-sm font-medium text-white hover:bg-slate-700">
-                        Post
-                      </button>
-                    </form>
+                    {canEdit && (
+                      <form
+                        action={addComment.bind(null, selected.id)}
+                        className="mt-3 flex gap-2"
+                      >
+                        <input
+                          name="body"
+                          required
+                          placeholder="Ask a question or leave a note…"
+                          className="min-w-0 flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+                        />
+                        <button className="rounded-md bg-slate-800 px-3 py-2 text-sm font-medium text-white hover:bg-slate-700">
+                          Post
+                        </button>
+                      </form>
+                    )}
                   </CollapsibleSection>
 
                   <CollapsibleSection title="Document details">

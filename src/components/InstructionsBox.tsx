@@ -12,10 +12,12 @@ export function InstructionsBox({
   initialValue,
   saveInstructions,
   approve,
+  readOnly = false,
 }: {
   initialValue: string;
   saveInstructions: (formData: FormData) => Promise<void>;
   approve?: (formData: FormData) => Promise<void>;
+  readOnly?: boolean;
 }) {
   const formRef = useRef<HTMLFormElement>(null);
 
@@ -34,19 +36,20 @@ export function InstructionsBox({
           name="instructions"
           defaultValue={initialValue}
           rows={3}
+          disabled={readOnly}
           placeholder="e.g. Allocate to job 12-45, net-30 terms, prior approval required…"
           onBlur={
-            approve
+            approve || readOnly
               ? undefined // never auto-submit to Approve on blur
               : () => formRef.current?.requestSubmit()
           }
-          className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+          className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none disabled:bg-slate-50 disabled:text-slate-500"
         />
         {approve ? (
           <button className="mt-2 w-full rounded-md bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700">
             Approve
           </button>
-        ) : (
+        ) : readOnly ? null : (
           <div className="mt-2 flex items-center justify-between">
             <span className="text-[10px] text-slate-400">
               auto-saves on edit

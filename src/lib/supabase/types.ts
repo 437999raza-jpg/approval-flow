@@ -13,7 +13,7 @@ export type InvoiceStatus =
 
 export type InvoiceSource = "manual" | "email";
 
-export type OrgRole = "admin" | "approver" | "submitter";
+export type OrgRole = "user" | "auditor" | "admin";
 
 export interface Database {
   public: {

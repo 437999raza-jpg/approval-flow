@@ -30,12 +30,14 @@ export interface BillData {
   reExtract: () => Promise<void>;
   backToReview: () => Promise<void>;
   canReview: boolean;
+  readOnly: boolean;
 }
 
 interface DetailSplitProps {
   documents: DocumentRef[];
   bill?: BillData;
   uploadAction?: (formData: FormData) => Promise<void>; // add a document
+  canEdit?: boolean; // auditors are read-only
   children: ReactNode; // side panel content (server-rendered)
 }
 
@@ -48,6 +50,7 @@ export function DetailSplit({
   documents,
   bill,
   uploadAction,
+  canEdit = true,
   children,
 }: DetailSplitProps) {
   const [showDoc, setShowDoc] = useState(false);
@@ -158,7 +161,7 @@ export function DetailSplit({
                   Open in new tab ↗
                 </a>
               )}
-              {uploadAction && (
+              {uploadAction && canEdit && (
                 <form ref={formRef} action={uploadAction} className="flex-none">
                   <label className="cursor-pointer rounded-md border border-slate-200 px-2 py-1 text-xs font-medium text-slate-500 hover:bg-slate-50">
                     Add document
@@ -294,6 +297,7 @@ export function DetailSplit({
             reExtract={bill.reExtract}
             backToReview={bill.backToReview}
             canReview={bill.canReview}
+            readOnly={bill.readOnly}
             onOpenDocument={openDocument}
             onCollapse={() => setBillOpen(false)}
           />

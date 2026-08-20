@@ -20,6 +20,7 @@ export function BillPanel({
   reExtract,
   backToReview,
   canReview,
+  readOnly,
   onOpenDocument,
   onCollapse,
 }: {
@@ -36,6 +37,7 @@ export function BillPanel({
   reExtract: () => Promise<void>;
   backToReview: () => Promise<void>;
   canReview: boolean;
+  readOnly: boolean;
   onOpenDocument: () => void;
   onCollapse: () => void;
 }) {
@@ -55,14 +57,15 @@ export function BillPanel({
   const billDateDefault = invoice.bill_date ?? invoice.created_at.slice(0, 10);
 
   // Bill fields save automatically when a field loses focus (no Save
-  // button); Review Complete in the side panel then just routes.
+  // button); Review Complete in the side panel then just routes. In
+  // read-only (auditor) mode the fields are disabled instead.
   const billFormRef = useRef<HTMLFormElement>(null);
-  const billBlur = {
-    onBlur: () => billFormRef.current?.requestSubmit(),
-  };
-  const billChange = {
-    onChange: () => billFormRef.current?.requestSubmit(),
-  };
+  const billBlur = readOnly
+    ? { disabled: true as const }
+    : { onBlur: () => billFormRef.current?.requestSubmit() };
+  const billChange = readOnly
+    ? { disabled: true as const }
+    : { onChange: () => billFormRef.current?.requestSubmit() };
 
   const inputCls =
     "mt-0.5 w-full rounded-md border border-slate-300 px-2 py-1 text-sm focus:border-blue-500 focus:outline-none";
@@ -98,7 +101,8 @@ export function BillPanel({
         {["pending", "in_review", "held", "rejected"].includes(
           invoice.status
         ) &&
-          canReview && (
+          canReview &&
+          !readOnly && (
             <div className="flex flex-none items-center gap-2 border-b border-slate-200 px-4 py-2">
               <form action={backToReview}>
                 <button className="rounded-md border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50">
@@ -271,22 +275,26 @@ export function BillPanel({
                 }}
                 saveLineItem={saveLineItem}
                 deleteLineItem={deleteLineItem}
+                readOnly={readOnly}
               />
             ))}
             {/* Add-line row (empty) */}
-            <LineItemRow
-              itemId="new"
-              defaults={{
-                category: "",
-                description: "",
-                tax_rate: "",
-                class: "",
-                amount: "",
-                linked: false,
-              }}
-              saveLineItem={saveLineItem}
-              deleteLineItem={undefined}
-            />
+            {!readOnly && (
+              <LineItemRow
+                itemId="new"
+                defaults={{
+                  category: "",
+                  description: "",
+                  tax_rate: "",
+                  class: "",
+                  amount: "",
+                  linked: false,
+                }}
+                saveLineItem={saveLineItem}
+                deleteLineItem={undefined}
+                readOnly={false}
+              />
+            )}
           </div>
         </div>
 
@@ -300,9 +308,11 @@ export function BillPanel({
             Open the original document
           </button>
           <form action={reExtract}>
-            <button className="block py-0.5 text-left text-xs font-medium text-slate-500 hover:text-slate-700 hover:underline">
-              Re-extract document fields
-            </button>
+            {!readOnly && (
+              <button className="block py-0.5 text-left text-xs font-medium text-slate-500 hover:text-slate-700 hover:underline">
+                Re-extract document fields
+              </button>
+            )}
           </form>
           <span
             className="block py-0.5 text-slate-400"
@@ -321,6 +331,7 @@ function LineItemRow({
   defaults,
   saveLineItem,
   deleteLineItem,
+  readOnly,
 }: {
   itemId: string;
   defaults: {
@@ -336,6 +347,7 @@ function LineItemRow({
     formData: FormData
   ) => Promise<void>;
   deleteLineItem?: (lineItemId: string) => Promise<void>;
+  readOnly: boolean;
 }) {
   const isNew = itemId === "new";
   const formRef = useRef<HTMLFormElement>(null);
@@ -345,13 +357,18 @@ function LineItemRow({
     "block text-[10px] font-semibold uppercase tracking-wide text-slate-400";
 
   // Existing rows save automatically when a field loses focus (no Save
-  // button). The blank "add line" row keeps an explicit button.
+  // button). The blank "add line" row keeps an explicit button. In
+  // read-only (auditor) mode the fields are disabled.
   const blurSave = isNew
     ? {}
-    : { onBlur: () => formRef.current?.requestSubmit() };
+    : readOnly
+      ? { disabled: true as const }
+      : { onBlur: () => formRef.current?.requestSubmit() };
   const checkboxSave = isNew
     ? {}
-    : { onChange: () => formRef.current?.requestSubmit() };
+    : readOnly
+      ? { disabled: true as const }
+      : { onChange: () => formRef.current?.requestSubmit() };
 
   return (
     <div className="rounded-md border border-slate-200 p-2">
@@ -417,7 +434,7 @@ function LineItemRow({
             <span className={labelCls}>Linked</span>
           </label>
         </div>
-        {isNew && (
+        {isNew && !readOnly && (
           <div className="mt-2 flex justify-end">
             <button className="rounded-md bg-slate-800 px-2.5 py-1 text-xs font-medium text-white hover:bg-slate-700">
               Add line
@@ -425,12 +442,12 @@ function LineItemRow({
           </div>
         )}
       </form>
-      {!isNew && (
+      {!isNew && !readOnly && (
         <p className="mt-1 text-right text-[10px] text-slate-400">
           auto-saves on edit
         </p>
       )}
-      {!isNew && deleteLineItem && (
+      {!isNew && !readOnly && deleteLineItem && (
         <form
           action={deleteLineItem.bind(null, itemId)}
           className="mt-1 text-right"

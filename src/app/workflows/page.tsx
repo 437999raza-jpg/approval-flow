@@ -313,12 +313,15 @@ export default async function WorkflowsPage() {
           .order("rule_order", { ascending: true })
       : { data: [] };
 
-  // Org members for the approver selects.
+  // Org members for the approver selects (auditors can't be approvers).
   const { data: members } = await supabase
     .from("organization_members")
     .select("user_id, role")
     .eq("organization_id", org.id);
   const memberIds = [...new Set((members ?? []).map((m) => m.user_id))];
+  const memberRoleById = new Map(
+    (members ?? []).map((m) => [m.user_id, m.role])
+  );
   const { data: profiles } =
     memberIds.length > 0
       ? await supabase
@@ -334,12 +337,14 @@ export default async function WorkflowsPage() {
   const emailById = new Map(
     (authUsers?.users ?? []).map((u) => [u.id, u.email ?? null])
   );
-  const approverOptions = (profiles ?? []).map((p) => ({
-    id: p.id,
-    label: p.full_name
-      ? `${p.full_name}${emailById.get(p.id) ? ` (${emailById.get(p.id)})` : ""}`
-      : emailById.get(p.id) ?? p.id.slice(0, 8),
-  }));
+  const approverOptions = (profiles ?? [])
+    .filter((p) => memberRoleById.get(p.id) !== "auditor")
+    .map((p) => ({
+      id: p.id,
+      label: p.full_name
+        ? `${p.full_name}${emailById.get(p.id) ? ` (${emailById.get(p.id)})` : ""}`
+        : emailById.get(p.id) ?? p.id.slice(0, 8),
+    }));
   const approverName = (id: string | null) =>
     approverOptions.find((o) => o.id === id)?.label ?? "Unassigned";
 
