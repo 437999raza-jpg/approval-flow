@@ -254,7 +254,7 @@ export function DetailSplit({
           onDrag={(dx) =>
             setDocW((w) => {
               const base = w ?? docRef.current?.offsetWidth ?? 560;
-              return Math.min(900, Math.max(240, base + dx));
+              return Math.min(2400, Math.max(240, base + dx));
             })
           }
         />
@@ -310,7 +310,7 @@ export function DetailSplit({
       {showDoc && billOpen && (
         <ResizeHandle
           onDrag={(dx) =>
-            setBillW((w) => Math.min(800, Math.max(320, w + dx)))
+            setBillW((w) => Math.min(1600, Math.max(320, w + dx)))
           }
         />
       )}
@@ -326,7 +326,9 @@ export function DetailSplit({
         {children}
       </div>
       <ResizeHandle
-        onDrag={(dx) => setSideW((w) => Math.min(600, Math.max(300, w + dx)))}
+        onDrag={(dx) =>
+          setSideW((w) => Math.min(1200, Math.max(300, w + dx)))
+        }
       />
     </div>
   );
