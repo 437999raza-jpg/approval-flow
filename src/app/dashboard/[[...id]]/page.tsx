@@ -291,10 +291,11 @@ async function canReview(supabase: ReturnType<typeof createClient>) {
   return org ? org.role === "admin" || org.role === "submitter" : false;
 }
 
-// Review Done: save the edited bill fields, then route the invoice into
-// the approval workflow (status -> pending, workflow re-picked by the
-// rules engine now that the project/line items may be known).
-async function reviewDone(invoiceId: string, formData: FormData) {
+// Review Complete: saves the edited bill fields. When the invoice is still
+// in the Pending Review queue, it also routes the invoice into the approval
+// workflow (status -> pending, workflow re-picked by the rules engine now
+// that the project/line items may be known).
+async function reviewComplete(invoiceId: string, formData: FormData) {
   "use server";
 
   const supabase = createClient();
@@ -307,64 +308,71 @@ async function reviewDone(invoiceId: string, formData: FormData) {
   const { data: inv } = await supabase
     .from("invoices")
     .select(
-      "id, organization_id, amount, vendor_name, submitted_by, project_id"
+      "id, organization_id, status, amount, vendor_name, submitted_by, project_id"
     )
     .eq("id", invoiceId)
     .single();
   if (!inv) return;
 
-  const [{ data: project }, { data: profile }, { data: lineItems }] =
-    await Promise.all([
-      inv.project_id
-        ? supabase
-            .from("projects")
-            .select("name")
-            .eq("id", inv.project_id)
-            .maybeSingle()
-        : Promise.resolve({ data: null }),
-      inv.submitted_by
-        ? supabase
-            .from("profiles")
-            .select("full_name")
-            .eq("id", inv.submitted_by)
-            .maybeSingle()
-        : Promise.resolve({ data: null }),
-      supabase
-        .from("invoice_line_items")
-        .select("category, description, class, amount")
-        .eq("invoice_id", invoiceId),
-    ]);
+  const update: Database["public"]["Tables"]["invoices"]["Update"] = {
+    ...(parseBillForm(formData) as Database["public"]["Tables"]["invoices"]["Update"]),
+    updated_at: new Date().toISOString(),
+  };
 
-  const workflowId = await selectWorkflowForInvoice(
-    supabase,
-    inv.organization_id,
-    {
-      amount: inv.amount,
-      vendorName: inv.vendor_name,
-      submittedBy: inv.submitted_by,
-      submitterName: profile?.full_name ?? null,
-      projectId: inv.project_id,
-      projectName: project?.name ?? null,
-      lineItems: lineItems ?? [],
-    }
-  );
+  if (inv.status === "pending_review") {
+    const [{ data: project }, { data: profile }, { data: lineItems }] =
+      await Promise.all([
+        inv.project_id
+          ? supabase
+              .from("projects")
+              .select("name")
+              .eq("id", inv.project_id)
+              .maybeSingle()
+          : Promise.resolve({ data: null }),
+        inv.submitted_by
+          ? supabase
+              .from("profiles")
+              .select("full_name")
+              .eq("id", inv.submitted_by)
+              .maybeSingle()
+          : Promise.resolve({ data: null }),
+        supabase
+          .from("invoice_line_items")
+          .select("category, description, class, amount")
+          .eq("invoice_id", invoiceId),
+      ]);
 
-  await supabase
-    .from("invoices")
-    .update({
-      ...parseBillForm(formData),
+    const workflowId = await selectWorkflowForInvoice(
+      supabase,
+      inv.organization_id,
+      {
+        amount: inv.amount,
+        vendorName: inv.vendor_name,
+        submittedBy: inv.submitted_by,
+        submitterName: profile?.full_name ?? null,
+        projectId: inv.project_id,
+        projectName: project?.name ?? null,
+        lineItems: lineItems ?? [],
+      }
+    );
+
+    Object.assign(update, {
       workflow_id: workflowId,
       status: "pending",
       current_step_order: 1,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", invoiceId);
+    });
+  }
+
+  await supabase.from("invoices").update(update).eq("id", invoiceId);
 
   await supabase.from("audit_log").insert({
     organization_id: inv.organization_id,
     invoice_id: invoiceId,
     actor_id: user.id,
-    action: "invoice.review_done",
+    action:
+      inv.status === "pending_review"
+        ? "invoice.review_done"
+        : "invoice.review_complete",
   });
 
   revalidatePath("/dashboard", "layout");
@@ -968,7 +976,7 @@ export default async function DashboardPage({
                   saveLineItem: saveLineItem.bind(null, selected.id),
                   deleteLineItem,
                   reExtract: reExtract.bind(null, selected.id),
-                  reviewDone: reviewDone.bind(null, selected.id),
+                  reviewComplete: reviewComplete.bind(null, selected.id),
                   backToReview: backToReview.bind(null, selected.id),
                   canReview:
                     org.role === "admin" || org.role === "submitter",

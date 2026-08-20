@@ -28,7 +28,7 @@ export interface BillData {
   ) => Promise<void>;
   deleteLineItem: (lineItemId: string) => Promise<void>;
   reExtract: () => Promise<void>;
-  reviewDone: (formData: FormData) => Promise<void>;
+  reviewComplete: (formData: FormData) => Promise<void>;
   backToReview: () => Promise<void>;
   canReview: boolean;
 }
@@ -293,7 +293,7 @@ export function DetailSplit({
             saveLineItem={bill.saveLineItem}
             deleteLineItem={bill.deleteLineItem}
             reExtract={bill.reExtract}
-            reviewDone={bill.reviewDone}
+            reviewComplete={bill.reviewComplete}
             backToReview={bill.backToReview}
             canReview={bill.canReview}
             onOpenDocument={openDocument}
