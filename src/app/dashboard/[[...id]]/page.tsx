@@ -304,6 +304,13 @@ export default async function DashboardPage({
     selected.workflow_id !== null &&
     currentStepApprover === user.id;
 
+  // Decide how to preview the attached document (allowed types are pdf,
+  // png, jpeg, webp — see src/lib/invoices.ts).
+  const fileNameExt =
+    selected?.file_name.split(".").pop()?.toLowerCase() ?? "";
+  const isPdf = fileNameExt === "pdf";
+  const isImage = ["png", "jpg", "jpeg", "webp"].includes(fileNameExt);
+
   const navItems: { key: View; label: string }[] = [
     { key: "all", label: "All invoices" },
     { key: "mine", label: "Requires my approval" },
@@ -406,14 +413,83 @@ export default async function DashboardPage({
             )}
           </div>
 
-          {/* Detail pane */}
-          <div className="flex-1 overflow-y-auto">
+          {/* Detail pane: document viewer + side panel (Dext/ApprovalMax-style split) */}
+          <div className="flex min-w-0 flex-1">
             {!selected ? (
-              <div className="flex h-full items-center justify-center text-sm text-slate-400">
+              <div className="flex flex-1 items-center justify-center text-sm text-slate-400">
                 Select an invoice to view details.
               </div>
             ) : (
-              <div className="mx-auto max-w-2xl p-8">
+              <>
+                {/* Left: the invoice document */}
+                <div className="flex min-w-0 flex-1 flex-col border-r border-slate-200 bg-slate-100">
+                  <div className="flex flex-none items-center justify-between gap-2 border-b border-slate-200 bg-white px-4 py-2">
+                    <span className="truncate text-sm font-medium text-slate-700">
+                      {selected.file_name}
+                    </span>
+                    {signedFileUrl && (
+                      <a
+                        href={signedFileUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="flex-none text-xs font-medium text-blue-600 hover:underline"
+                      >
+                        Open in new tab ↗
+                      </a>
+                    )}
+                  </div>
+                  <div className="min-h-0 flex-1 overflow-auto p-4">
+                    {signedFileUrl ? (
+                      isImage ? (
+                        <img
+                          src={signedFileUrl}
+                          alt={selected.file_name}
+                          className="mx-auto max-w-full rounded-md shadow"
+                        />
+                      ) : isPdf ? (
+                        <object
+                          data={signedFileUrl}
+                          type="application/pdf"
+                          className="h-full w-full"
+                        >
+                          <p className="text-sm text-slate-500">
+                            Your browser can&apos;t display this PDF.{" "}
+                            <a
+                              href={signedFileUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-blue-600 underline"
+                            >
+                              Open it instead
+                            </a>
+                            .
+                          </p>
+                        </object>
+                      ) : (
+                        <p className="text-sm text-slate-500">
+                          No preview for this file type.{" "}
+                          <a
+                            href={signedFileUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-blue-600 underline"
+                          >
+                            Open file
+                          </a>
+                          .
+                        </p>
+                      )
+                    ) : (
+                      <p className="text-sm text-slate-500">
+                        File preview unavailable.
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                {/* Right: data + approvals + discussion */}
+                <div className="w-[400px] flex-none overflow-y-auto">
+                  <div className="p-6">
                 {searchParams.error && (
                   <div className="mb-6 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
                     {DECISION_ERRORS[searchParams.error] ??
@@ -575,7 +651,9 @@ export default async function DashboardPage({
                     </span>
                   </dd>
                 </dl>
-              </div>
+                  </div>
+                </div>
+              </>
             )}
           </div>
         </div>
