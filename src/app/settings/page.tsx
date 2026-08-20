@@ -174,6 +174,50 @@ async function deleteProject(projectId: string) {
   revalidatePath("/settings");
 }
 
+// Link a project to the approval workflow that manages it (admin-only via
+// RLS). This is what drives the workflow-managed access model: members see
+// the project's invoices only if they're an approver on that workflow.
+async function setProjectWorkflow(projectId: string, formData: FormData) {
+  "use server";
+
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
+  const workflowId = String(formData.get("workflow_id") ?? "").trim() || null;
+
+  const { data: project } = await supabase
+    .from("projects")
+    .select("organization_id")
+    .eq("id", projectId)
+    .single();
+  if (!project) return;
+
+  if (workflowId) {
+    const { data: wf } = await supabase
+      .from("approval_workflows")
+      .select("id")
+      .eq("id", workflowId)
+      .eq("organization_id", project.organization_id)
+      .maybeSingle();
+    if (!wf) return;
+  }
+
+  await supabase
+    .from("approval_workflow_projects")
+    .delete()
+    .eq("project_id", projectId);
+  if (workflowId) {
+    await supabase
+      .from("approval_workflow_projects")
+      .insert({ workflow_id: workflowId, project_id: projectId });
+  }
+
+  revalidatePath("/settings");
+}
+
 export default async function SettingsPage({
   searchParams,
 }: {
@@ -208,7 +252,12 @@ export default async function SettingsPage({
 
   const isAdmin = org.role === "admin";
 
-  const [{ data: members }, { data: projects }] = await Promise.all([
+  const [
+    { data: members },
+    { data: projects },
+    { data: workflows },
+    { data: wfLinks },
+  ] = await Promise.all([
     supabase
       .from("organization_members")
       .select("id, user_id, role")
@@ -219,7 +268,48 @@ export default async function SettingsPage({
       .select("*")
       .eq("organization_id", org.id)
       .order("name", { ascending: true }),
+    supabase
+      .from("approval_workflows")
+      .select("id, name, is_default")
+      .eq("organization_id", org.id)
+      .order("name", { ascending: true }),
+    supabase.from("approval_workflow_projects").select("workflow_id, project_id"),
   ]);
+
+  // Workflow steps + approver names (read-only display for now; the full
+  // workflow builder is the next feature).
+  const workflowIds = (workflows ?? []).map((w) => w.id);
+  const { data: wfSteps } =
+    workflowIds.length > 0
+      ? await supabase
+          .from("approval_workflow_steps")
+          .select("workflow_id, step_order, approver_user_id")
+          .in("workflow_id", workflowIds)
+          .order("step_order", { ascending: true })
+      : { data: [] };
+  const stepApproverIds = [
+    ...new Set(
+      (wfSteps ?? [])
+        .map((s) => s.approver_user_id)
+        .filter((id): id is string => !!id)
+    ),
+  ];
+  const { data: stepProfiles } =
+    stepApproverIds.length > 0
+      ? await supabase
+          .from("profiles")
+          .select("id, full_name")
+          .in("id", stepApproverIds)
+      : { data: [] };
+  const stepNameById = new Map(
+    (stepProfiles ?? []).map((p) => [p.id, p.full_name ?? "Unassigned"])
+  );
+  const workflowById = new Map(
+    (workflows ?? []).map((w) => [w.id, w])
+  );
+  const projectWorkflowId = new Map(
+    (wfLinks ?? []).map((l) => [l.project_id, l.workflow_id])
+  );
 
   // Names from profiles, emails from auth (admin client).
   const userIds = [...new Set((members ?? []).map((m) => m.user_id))];
@@ -369,6 +459,53 @@ export default async function SettingsPage({
             </ul>
           </section>
 
+          {/* Approval workflows (read-only for now) */}
+          <section className="mt-10">
+            <h2 className="text-lg font-semibold">Approval workflows</h2>
+            <p className="mt-1 text-sm text-slate-500">
+              The workflow manages access: members only see invoices for
+              projects covered by workflows they approve on. The full
+              workflow builder (steps, routing rules) is the next feature.
+            </p>
+            <ul className="mt-4 divide-y divide-slate-100 rounded-lg border border-slate-200 bg-white">
+              {(workflows ?? []).map((w) => {
+                const steps = (wfSteps ?? []).filter(
+                  (s) => s.workflow_id === w.id
+                );
+                return (
+                  <li key={w.id} className="px-4 py-3">
+                    <div className="text-sm font-medium text-slate-800">
+                      {w.name}
+                      {w.is_default && (
+                        <span className="ml-2 rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-600">
+                          default
+                        </span>
+                      )}
+                    </div>
+                    <div className="mt-1 text-xs text-slate-500">
+                      {steps.length === 0
+                        ? "No steps yet."
+                        : steps.map((s) => (
+                            <span key={s.step_order} className="mr-3">
+                              Step {s.step_order}:{" "}
+                              {s.approver_user_id
+                                ? (stepNameById.get(s.approver_user_id) ??
+                                  "Unassigned")
+                                : "Unassigned"}
+                            </span>
+                          ))}
+                    </div>
+                  </li>
+                );
+              })}
+              {(workflows ?? []).length === 0 && (
+                <li className="px-4 py-6 text-center text-sm text-slate-400">
+                  No workflows yet.
+                </li>
+              )}
+            </ul>
+          </section>
+
           {/* Projects / customers */}
           <section className="mt-10">
             <h2 className="text-lg font-semibold">Projects / customers</h2>
@@ -436,12 +573,47 @@ export default async function SettingsPage({
                     <button className="rounded-md bg-slate-800 px-2.5 py-1 text-xs font-medium text-white hover:bg-slate-700">
                       Save
                     </button>
+                  </form>
+                  <div className="mt-2 flex flex-wrap items-center gap-3">
+                    {isAdmin ? (
+                      <form
+                        action={setProjectWorkflow.bind(null, p.id)}
+                        className="flex items-center gap-1"
+                      >
+                        <select
+                          name="workflow_id"
+                          defaultValue={projectWorkflowId.get(p.id) ?? ""}
+                          title="Workflow that manages this project's approvals"
+                          className="rounded-md border border-slate-300 px-2 py-1 text-xs"
+                        >
+                          <option value="">— no workflow —</option>
+                          {(workflows ?? []).map((w) => (
+                            <option key={w.id} value={w.id}>
+                              {w.name}
+                              {w.is_default ? " (default)" : ""}
+                            </option>
+                          ))}
+                        </select>
+                        <button className="rounded-md bg-slate-800 px-2 py-1 text-xs font-medium text-white hover:bg-slate-700">
+                          Link
+                        </button>
+                      </form>
+                    ) : (
+                      <span className="text-xs text-slate-500">
+                        Workflow:{" "}
+                        {projectWorkflowId.get(p.id)
+                          ? (workflowById.get(projectWorkflowId.get(p.id)!)?.name ??
+                            "—")
+                          : "none"}
+                      </span>
+                    )}
+                    <span className="flex-1" />
                     <form action={deleteProject.bind(null, p.id)}>
                       <button className="text-xs text-red-500 hover:underline">
                         Delete
                       </button>
                     </form>
-                  </form>
+                  </div>
                 </li>
               ))}
               {(projects ?? []).length === 0 && (

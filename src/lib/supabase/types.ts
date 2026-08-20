@@ -77,6 +77,21 @@ export interface Database {
         Update: Partial<Database["public"]["Tables"]["projects"]["Row"]>;
         Relationships: [];
       };
+      approval_workflow_projects: {
+        Row: {
+          id: string;
+          workflow_id: string;
+          project_id: string;
+          created_at: string;
+        };
+        Insert: Partial<
+          Database["public"]["Tables"]["approval_workflow_projects"]["Row"]
+        > & { workflow_id: string; project_id: string };
+        Update: Partial<
+          Database["public"]["Tables"]["approval_workflow_projects"]["Row"]
+        >;
+        Relationships: [];
+      };
       approval_workflows: {
         Row: {
           id: string;
