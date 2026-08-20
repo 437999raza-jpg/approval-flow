@@ -16,6 +16,7 @@ export function BillPanel({
   saveBill,
   saveLineItem,
   deleteLineItem,
+  reExtract,
   onOpenDocument,
   onCollapse,
 }: {
@@ -29,6 +30,7 @@ export function BillPanel({
     formData: FormData
   ) => Promise<void>;
   deleteLineItem: (lineItemId: string) => Promise<void>;
+  reExtract: () => Promise<void>;
   onOpenDocument: () => void;
   onCollapse: () => void;
 }) {
@@ -258,6 +260,11 @@ export function BillPanel({
           >
             Open the original document
           </button>
+          <form action={reExtract}>
+            <button className="block py-0.5 text-left text-xs font-medium text-slate-500 hover:text-slate-700 hover:underline">
+              Re-extract document fields
+            </button>
+          </form>
           <span
             className="block py-0.5 text-slate-400"
             title="Available once QBO sync is enabled"

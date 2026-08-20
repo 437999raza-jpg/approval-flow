@@ -69,7 +69,7 @@ export async function createInvoiceFromFile({
         .maybeSingle()
     : { data: null };
   const workflowId = await selectWorkflowForInvoice(supabase, organizationId, {
-    amount: extracted?.amount ?? null,
+    amount: extracted?.total_amount ?? null,
     vendorName: extracted?.vendor_name ?? null,
     submittedBy: submittedBy ?? null,
     submitterName: submitterProfile?.full_name ?? null,
@@ -91,9 +91,12 @@ export async function createInvoiceFromFile({
       file_name: file.name,
       vendor_name: extracted?.vendor_name ?? null,
       invoice_number: extracted?.invoice_number ?? null,
-      amount: extracted?.amount ?? null,
+      amount: extracted?.total_amount ?? null,
       currency: extracted?.currency ?? "USD",
+      bill_date: extracted?.bill_date ?? null,
       due_date: extracted?.due_date ?? null,
+      tax_amount: extracted?.tax_amount ?? null,
+      extraction: (extracted ?? null) as Record<string, unknown> | null,
     })
     .select()
     .single();
@@ -102,6 +105,22 @@ export async function createInvoiceFromFile({
     await supabase.storage.from(INVOICE_BUCKET).remove([filePath]);
     throw new InvoiceIngestError(
       `Could not create invoice record: ${insertError?.message ?? "unknown error"}`
+    );
+  }
+
+  // Populate the Bill panel's Category details from the extracted line
+  // items (best-effort).
+  if (extracted && extracted.line_items.length > 0) {
+    await supabase.from("invoice_line_items").insert(
+      extracted.line_items.map((li, i) => ({
+        invoice_id: invoice.id,
+        description: li.description,
+        amount: li.amount,
+        tax_rate: li.tax_rate,
+        category: li.category,
+        class: li.class,
+        line_order: i + 1,
+      }))
     );
   }
 

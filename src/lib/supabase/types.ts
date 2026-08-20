@@ -173,6 +173,7 @@ export interface Database {
           status: InvoiceStatus;
           source: InvoiceSource;
           source_email: string | null;
+          extraction: Record<string, unknown> | null;
           file_path: string;
           file_name: string;
           submitted_by: string | null;

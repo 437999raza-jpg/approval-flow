@@ -16,6 +16,10 @@ import { CollapsiblePane } from "@/components/CollapsiblePane";
 import { DetailSplit, type DocumentRef } from "@/components/DetailSplit";
 import { Sidebar } from "@/components/Sidebar";
 import type { Database } from "@/lib/supabase/types";
+import {
+  extractInvoiceFields,
+  mapExtractionToInvoice,
+} from "@/lib/extract-invoice";
 
 type Invoice = Database["public"]["Tables"]["invoices"]["Row"];
 
@@ -336,6 +340,82 @@ async function deleteLineItem(lineItemId: string) {
   if (!user) redirect("/login");
 
   await supabase.from("invoice_line_items").delete().eq("id", lineItemId);
+
+  revalidatePath("/dashboard", "layout");
+}
+
+// Re-run extraction on the invoice's primary document and replace the
+// mapped fields + line items (Dext-style "re-process"). Best-effort.
+async function reExtract(invoiceId: string) {
+  "use server";
+
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
+  const { data: invoice } = await supabase
+    .from("invoices")
+    .select("id, organization_id, file_path, file_name")
+    .eq("id", invoiceId)
+    .single();
+  if (!invoice) return;
+
+  const { data: blob, error: downloadError } = await supabase.storage
+    .from("invoices")
+    .download(invoice.file_path);
+  if (downloadError || !blob) return;
+
+  const ext = invoice.file_name.split(".").pop()?.toLowerCase() ?? "";
+  const mime =
+    ext === "pdf"
+      ? "application/pdf"
+      : ext === "png"
+        ? "image/png"
+        : ext === "jpg" || ext === "jpeg"
+          ? "image/jpeg"
+          : ext === "webp"
+            ? "image/webp"
+            : "application/octet-stream";
+  const file = new File([blob], invoice.file_name, { type: mime });
+
+  const extracted = await extractInvoiceFields(file);
+  if (!extracted) return;
+
+  await supabase
+    .from("invoices")
+    .update({
+      ...mapExtractionToInvoice(extracted),
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", invoiceId);
+
+  // Replace the extracted line items (Category details in the Bill panel).
+  await supabase
+    .from("invoice_line_items")
+    .delete()
+    .eq("invoice_id", invoiceId);
+  if (extracted.line_items.length > 0) {
+    await supabase.from("invoice_line_items").insert(
+      extracted.line_items.map((li, i) => ({
+        invoice_id: invoiceId,
+        description: li.description,
+        amount: li.amount,
+        tax_rate: li.tax_rate,
+        category: li.category,
+        class: li.class,
+        line_order: i + 1,
+      }))
+    );
+  }
+
+  await supabase.from("audit_log").insert({
+    organization_id: invoice.organization_id,
+    invoice_id: invoiceId,
+    actor_id: user.id,
+    action: "invoice.re_extracted",
+  });
 
   revalidatePath("/dashboard", "layout");
 }
@@ -744,6 +824,7 @@ export default async function DashboardPage({
                   saveBill: saveBill.bind(null, selected.id),
                   saveLineItem: saveLineItem.bind(null, selected.id),
                   deleteLineItem,
+                  reExtract: reExtract.bind(null, selected.id),
                 }}
               >
                 {/* Side panel content: header + collapsible sections */}

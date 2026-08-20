@@ -19,7 +19,7 @@ for the real gaps.
 | Hosting | Vercel | Pairs naturally with Next.js |
 | Database / Auth / Storage | Supabase (Postgres + `@supabase/ssr`) | One backend for data, auth, and file storage; Row Level Security for multi-tenancy |
 | Styling | Tailwind CSS | Fast iteration, no component library |
-| Invoice field extraction | Claude API (`claude-opus-5`, `@anthropic-ai/sdk`) | Vision/document input to pull vendor/amount/due date from uploaded PDFs/images |
+| Invoice field extraction | OpenRouter (any model, default `anthropic/claude-sonnet-4.5`) | Vision/JSON extraction of vendor, line items, tax, PO number, contacts from PDFs/images |
 | Email ingestion | SendGrid Inbound Parse (webhook) | Forwards email attachments to our API as multipart form data |
 
 ---
@@ -102,7 +102,8 @@ Copy `.env.example` → `.env.local` and fill in:
 | `SUPABASE_SERVICE_ROLE_KEY` | Yes | Same page → **Secret key** (new naming) / service_role key (legacy) — **server-only, full admin access, never expose to the client** |
 | `INBOUND_EMAIL_WEBHOOK_SECRET` | Yes (for email ingestion) | Any random string you choose; appended as `?token=` on the webhook URL you give SendGrid |
 | `INBOUND_EMAIL_DOMAIN` | Yes (for email ingestion) | A subdomain you control, e.g. `invoices.yourapp.com` |
-| `ANTHROPIC_API_KEY` | Optional | console.anthropic.com — if unset, invoice field extraction silently no-ops (fields stay null) rather than failing the upload |
+| `OPENROUTER_API_KEY` | For extraction | openrouter.ai — required for invoice field/line-item extraction (without it, extraction silently no-ops) |
+| `OPENROUTER_MODEL` | No | Any OpenRouter model id, e.g. `anthropic/claude-sonnet-4.5`, `openai/gpt-4o`, `google/gemini-2.0-flash-001` — defaults to `anthropic/claude-sonnet-4.5` |
 
 Supabase renamed its API keys at some point — you may see either
 **"Publishable and secret API keys"** or **"Legacy anon, service_role API
@@ -241,16 +242,20 @@ curl -X POST "http://localhost:3210/api/webhooks/inbound-email?token=<INBOUND_EM
   -F "attachment1=@/path/to/invoice.pdf;type=application/pdf"
 ```
 
-### Field extraction
+### Field extraction (OpenRouter, model-agnostic)
 
 [`src/lib/extract-invoice.ts`](src/lib/extract-invoice.ts) sends the
-uploaded PDF/image to Claude (`claude-opus-5`) as a document/vision content
-block, forcing a structured tool call (`strict: true`) to pull
-`vendor_name`, `invoice_number`, `amount`, `currency`, `due_date`. Runs in
-parallel with the Storage upload inside `createInvoiceFromFile()`. Any
-failure (missing `ANTHROPIC_API_KEY`, bad file, API error) resolves to
-`null` fields rather than throwing — extraction is best-effort and never
-blocks ingestion.
+uploaded PDF/image to an **OpenRouter** model (any model — set
+`OPENROUTER_MODEL`, defaults to `anthropic/claude-sonnet-4.5`) and asks for
+strict JSON covering far more than the basics: vendor (name/address/email/
+phone), invoice number, bill date, due date, PO number, currency, subtotal,
+tax rate/amount, total, customer, description, **and every line item**
+(description, quantity, unit price, amount, category, class, tax rate).
+Line items populate the Bill panel's Category details automatically, and
+extraction failures resolve to `null` rather than blocking ingestion. A
+**"Re-extract document fields"** button in the Bill panel re-runs the
+engine on the primary document (Dext-style re-process) and replaces the
+fields + line items. Requires `OPENROUTER_API_KEY`.
 
 ---
 

@@ -27,6 +27,7 @@ export interface BillData {
     formData: FormData
   ) => Promise<void>;
   deleteLineItem: (lineItemId: string) => Promise<void>;
+  reExtract: () => Promise<void>;
 }
 
 interface DetailSplitProps {
@@ -288,6 +289,7 @@ export function DetailSplit({
             saveBill={bill.saveBill}
             saveLineItem={bill.saveLineItem}
             deleteLineItem={bill.deleteLineItem}
+            reExtract={bill.reExtract}
             onOpenDocument={openDocument}
             onCollapse={() => setBillOpen(false)}
           />
