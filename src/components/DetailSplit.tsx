@@ -1,27 +1,42 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 
-interface DetailSplitProps {
-  fileName: string;
-  fileUrl: string | null;
+export interface DocumentRef {
+  name: string;
+  url: string | null;
   isPdf: boolean;
   isImage: boolean;
+}
+
+interface DetailSplitProps {
+  documents: DocumentRef[];
+  middle?: ReactNode; // ApprovalMax-style bill panel
+  uploadAction?: (formData: FormData) => Promise<void>; // add a document page
   children: ReactNode; // side panel content (server-rendered)
 }
 
-// Dext/ApprovalMax-style split: the invoice document on the left, the side
-// panel on the right. The document pane collapses to a slim strip and the
-// panel then takes the full width. Client component with explicit state so
-// the collapse is guaranteed to work. Authored by Araza.
+// Dext/ApprovalMax-style split: the invoice document(s) on the left, the
+// bill panel in the middle, and the side panel on the right. The document
+// pane collapses to a slim strip and the panels take the full width. Client
+// component with explicit state. Authored by Araza.
 export function DetailSplit({
-  fileName,
-  fileUrl,
-  isPdf,
-  isImage,
+  documents,
+  middle,
+  uploadAction,
   children,
 }: DetailSplitProps) {
   const [showDoc, setShowDoc] = useState(true);
+  const [docIndex, setDocIndex] = useState(0);
+  const formRef = useRef<HTMLFormElement>(null);
+
+  const safeIndex = Math.min(docIndex, Math.max(documents.length - 1, 0));
+  const doc = documents[safeIndex];
+  const multi = documents.length > 1;
+
+  const prevDoc = () =>
+    setDocIndex((i) => (i + documents.length - 1) % documents.length);
+  const nextDoc = () => setDocIndex((i) => (i + 1) % documents.length);
 
   return (
     <div className="flex min-w-0 flex-1">
@@ -51,39 +66,86 @@ export function DetailSplit({
                 </svg>
                 Hide
               </button>
+              {multi && (
+                <span className="flex flex-none items-center gap-1 text-xs text-slate-500">
+                  <button
+                    type="button"
+                    onClick={prevDoc}
+                    title="Previous page"
+                    className="rounded p-1 hover:bg-slate-100"
+                  >
+                    ‹
+                  </button>
+                  <span className="tabular-nums">
+                    {safeIndex + 1} / {documents.length}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={nextDoc}
+                    title="Next page"
+                    className="rounded p-1 hover:bg-slate-100"
+                  >
+                    ›
+                  </button>
+                </span>
+              )}
               <span className="truncate text-sm font-medium text-slate-700">
-                {fileName}
+                {doc?.name ?? "Document"}
               </span>
             </span>
-            {fileUrl && (
-              <a
-                href={fileUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="flex-none text-xs font-medium text-blue-600 hover:underline"
-              >
-                Open in new tab ↗
-              </a>
-            )}
+            <span className="flex flex-none items-center gap-3">
+              {doc?.url && (
+                <a
+                  href={doc.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-xs font-medium text-blue-600 hover:underline"
+                >
+                  Open in new tab ↗
+                </a>
+              )}
+              {uploadAction && (
+                <form ref={formRef} action={uploadAction} className="flex-none">
+                  <label className="cursor-pointer rounded-md border border-slate-200 px-2 py-1 text-xs font-medium text-slate-500 hover:bg-slate-50">
+                    + Add page
+                    <input
+                      type="file"
+                      name="file"
+                      accept=".pdf,image/png,image/jpeg,image/webp"
+                      className="hidden"
+                      onChange={(e) => {
+                        if (e.target.files?.length) {
+                          formRef.current?.requestSubmit();
+                        }
+                      }}
+                    />
+                  </label>
+                </form>
+              )}
+            </span>
           </div>
           <div className="min-h-0 flex-1 overflow-auto p-4">
-            {fileUrl ? (
-              isImage ? (
+            {doc?.url ? (
+              doc.isImage ? (
                 // Deliberately a plain <img>: the source is an expiring
                 // signed URL for a user-uploaded document, not something
                 // next/image can optimize.
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
-                  src={fileUrl}
-                  alt={fileName}
+                  src={doc.url}
+                  alt={doc.name}
                   className="mx-auto max-w-full rounded-md shadow"
                 />
-              ) : isPdf ? (
-                <object data={fileUrl} type="application/pdf" className="h-full w-full">
+              ) : doc.isPdf ? (
+                <object
+                  data={doc.url}
+                  type="application/pdf"
+                  className="h-full w-full"
+                >
                   <p className="text-sm text-slate-500">
                     Your browser can&apos;t display this PDF.{" "}
                     <a
-                      href={fileUrl}
+                      href={doc.url}
                       target="_blank"
                       rel="noreferrer"
                       className="text-blue-600 underline"
@@ -97,7 +159,7 @@ export function DetailSplit({
                 <p className="text-sm text-slate-500">
                   No preview for this file type.{" "}
                   <a
-                    href={fileUrl}
+                    href={doc.url}
                     target="_blank"
                     rel="noreferrer"
                     className="text-blue-600 underline"
@@ -108,7 +170,9 @@ export function DetailSplit({
                 </p>
               )
             ) : (
-              <p className="text-sm text-slate-500">File preview unavailable.</p>
+              <p className="text-sm text-slate-500">
+                File preview unavailable.
+              </p>
             )}
           </div>
         </div>
@@ -141,10 +205,12 @@ export function DetailSplit({
         </div>
       )}
 
+      {middle}
+
       <div
         className={
           showDoc
-            ? "w-[400px] flex-none overflow-y-auto bg-white"
+            ? "w-[360px] flex-none overflow-y-auto bg-white"
             : "min-w-0 flex-1 overflow-y-auto bg-white"
         }
       >

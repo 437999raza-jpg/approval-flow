@@ -288,12 +288,20 @@ layered on top by subscribing to `invoice_comments` with Supabase Realtime.
 ([`src/lib/audit-trail.ts`](src/lib/audit-trail.ts)) generates a **PDF**
 (dependency-free writer in [`src/lib/pdf.ts`](src/lib/pdf.ts)) combining the
 invoice metadata, the full approval trail, the chat history, and the raw
-`audit_log` — served as a downloadable attachment. This is one of the two
-files attached to the QBO bill on sync; the exact two-file bundle is
-assembled by [`src/lib/qbo-attachments.ts`](src/lib/qbo-attachments.ts):
+`audit_log` — served as a downloadable attachment.
 
-1. **`audit-trail-<vendor>-<id>.pdf`** — chat history + approval audit trail (one PDF)
-2. **the original invoice document** — the invoice PDF/image as uploaded
+**Bill panel** ([`src/components/BillPanel.tsx`](src/components/BillPanel.tsx)):
+an ApprovalMax-style preview of the QBO bill — vendor + bill number +
+amount header, Bill actions (bill date / due date / bill number), the
+Category-details line-items table, links ("Open the original document",
+"Open in QuickBooks Online" once sync lands), and tax-exclusive totals.
+This panel is exactly what gets pushed to QBO on sync.
+
+**Multi-document support** (migration 0003): an invoice can carry the
+primary file plus any number of additional pages (`invoice_documents`).
+The document viewer gets a page switcher ("2 / 3") and a **"+ Add page"**
+button in its header. On sync, **everything** is attached to the bill:
+the audit-trail PDF + all documents ([`src/lib/qbo-attachments.ts`](src/lib/qbo-attachments.ts)).
 
 `/invoices/[id]` still exists as a redirect to `/dashboard/[id]`, in case
 anything links to the old URL shape.
@@ -335,9 +343,10 @@ end-to-end vision:
 4. Authorized people **chat about the invoice** in a full chat window —
    the discussion thread here is the foundation for it.
 5. On approval, the invoice syncs to the customer's accounting system
-   (Xero / QuickBooks) as a bill with **two attachments**: the
-   **audit-trail PDF** (chat history + approval audit trail, one file) and
-   the **original invoice PDF** ([`src/lib/qbo-attachments.ts`](src/lib/qbo-attachments.ts)).
+   (Xero / QuickBooks) as a bill with **every attached file**: the
+   **audit-trail PDF** (chat history + approval audit trail) plus **all
+   invoice documents** (primary + any added pages)
+   ([`src/lib/qbo-attachments.ts`](src/lib/qbo-attachments.ts)).
 
 A production domain/brand is coming; `INBOUND_EMAIL_DOMAIN` and the org
 inbound addresses already flow from env vars, so rebranding is config, not

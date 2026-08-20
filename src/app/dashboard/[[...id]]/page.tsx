@@ -13,7 +13,8 @@ import { SearchInput } from "@/components/SearchInput";
 import { SignOutButton } from "@/components/SignOutButton";
 import { CollapsibleSection } from "@/components/CollapsibleSection";
 import { CollapsiblePane } from "@/components/CollapsiblePane";
-import { DetailSplit } from "@/components/DetailSplit";
+import { DetailSplit, type DocumentRef } from "@/components/DetailSplit";
+import { BillPanel } from "@/components/BillPanel";
 import { Sidebar } from "@/components/Sidebar";
 import type { Database } from "@/lib/supabase/types";
 
@@ -159,6 +160,55 @@ async function addComment(invoiceId: string, formData: FormData) {
   revalidatePath("/dashboard", "layout");
 }
 
+// Add an extra document page to an invoice (multi-document support,
+// migration 0003). All documents are attached to the QBO bill on sync.
+async function addDocument(invoiceId: string, formData: FormData) {
+  "use server";
+
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
+  const file = formData.get("file");
+  if (!(file instanceof File) || file.size === 0) return;
+  if (file.size > 20 * 1024 * 1024) return; // 20MB, same as ingestion
+  const allowed = ["application/pdf", "image/png", "image/jpeg", "image/webp"];
+  if (!allowed.includes(file.type)) return;
+
+  const { data: invoice } = await supabase
+    .from("invoices")
+    .select("organization_id")
+    .eq("id", invoiceId)
+    .single();
+  if (!invoice) return;
+
+  const safeName = file.name.replace(/[^\w.\-]+/g, "_");
+  const filePath = `${invoice.organization_id}/${invoiceId}-${crypto.randomUUID()}-${safeName}`;
+
+  const { error: uploadError } = await supabase.storage
+    .from("invoices")
+    .upload(filePath, file, { contentType: file.type, upsert: false });
+  if (uploadError) return;
+
+  await supabase.from("invoice_documents").insert({
+    invoice_id: invoiceId,
+    file_path: filePath,
+    file_name: file.name,
+    uploaded_by: user.id,
+  });
+
+  revalidatePath("/dashboard", "layout");
+}
+
+// File-type helpers for previewing documents (allowed types are pdf, png,
+// jpeg, webp — see src/lib/invoices.ts).
+const extOf = (name: string) => name.split(".").pop()?.toLowerCase() ?? "";
+const isPdfName = (name: string) => extOf(name) === "pdf";
+const isImageName = (name: string) =>
+  ["png", "jpg", "jpeg", "webp"].includes(extOf(name));
+
 export default async function DashboardPage({
   params,
   searchParams,
@@ -256,14 +306,20 @@ export default async function DashboardPage({
   let stepsForSelected: NonNullable<typeof allSteps> = [];
   let approvalsForSelected: Database["public"]["Tables"]["invoice_approvals"]["Row"][] = [];
   let commentsForSelected: Database["public"]["Tables"]["invoice_comments"]["Row"][] = [];
+  let documentsForSelected: DocumentRef[] = [];
   let authorNameById = new Map<string, string>();
 
   if (selected) {
-    const [signed, approvalsRes, commentsRes] = await Promise.all([
+    const [signed, approvalsRes, commentsRes, docsRes] = await Promise.all([
       supabase.storage.from("invoices").createSignedUrl(selected.file_path, 60 * 10),
       supabase.from("invoice_approvals").select("*").eq("invoice_id", selected.id),
       supabase
         .from("invoice_comments")
+        .select("*")
+        .eq("invoice_id", selected.id)
+        .order("created_at", { ascending: true }),
+      supabase
+        .from("invoice_documents")
         .select("*")
         .eq("invoice_id", selected.id)
         .order("created_at", { ascending: true }),
@@ -272,6 +328,36 @@ export default async function DashboardPage({
     approvalsForSelected = approvalsRes.data ?? [];
     commentsForSelected = commentsRes.data ?? [];
     stepsForSelected = (allSteps ?? []).filter((s) => s.workflow_id === selected.workflow_id);
+
+    // Document list for the viewer: the primary file first, then any
+    // additional pages (multi-document support, migration 0003).
+    const attachmentRows = docsRes.data ?? [];
+    const attachmentUrls = await Promise.all(
+      attachmentRows.map(async (d) => {
+        const { data } = await supabase.storage
+          .from("invoices")
+          .createSignedUrl(d.file_path, 60 * 10);
+        return data?.signedUrl ?? null;
+      })
+    );
+    documentsForSelected = [
+      ...(signedFileUrl
+        ? [
+            {
+              name: selected.file_name,
+              url: signedFileUrl,
+              isPdf: isPdfName(selected.file_name),
+              isImage: isImageName(selected.file_name),
+            },
+          ]
+        : []),
+      ...attachmentRows.map((d, i) => ({
+        name: d.file_name,
+        url: attachmentUrls[i] ?? null,
+        isPdf: isPdfName(d.file_name),
+        isImage: isImageName(d.file_name),
+      })),
+    ];
 
     // Resolve comment author names (profiles RLS lets org members read each
     // other since migration 0002).
@@ -307,13 +393,6 @@ export default async function DashboardPage({
     (selected.status === "pending" || selected.status === "in_review") &&
     selected.workflow_id !== null &&
     currentStepApprover === user.id;
-
-  // Decide how to preview the attached document (allowed types are pdf,
-  // png, jpeg, webp — see src/lib/invoices.ts).
-  const fileNameExt =
-    selected?.file_name.split(".").pop()?.toLowerCase() ?? "";
-  const isPdf = fileNameExt === "pdf";
-  const isImage = ["png", "jpg", "jpeg", "webp"].includes(fileNameExt);
 
   const navItems: { key: View; label: string }[] = [
     { key: "all", label: "All invoices" },
@@ -417,7 +496,7 @@ export default async function DashboardPage({
             )}
           </CollapsiblePane>
 
-          {/* Detail pane: document viewer + side panel (Dext/ApprovalMax-style split) */}
+          {/* Detail pane: document viewer + bill panel + side panel */}
           <div className="flex min-w-0 flex-1">
             {!selected ? (
               <div className="flex flex-1 items-center justify-center text-sm text-slate-400">
@@ -425,10 +504,15 @@ export default async function DashboardPage({
               </div>
             ) : (
               <DetailSplit
-                fileName={selected.file_name}
-                fileUrl={signedFileUrl}
-                isPdf={isPdf}
-                isImage={isImage}
+                documents={documentsForSelected}
+                uploadAction={addDocument.bind(null, selected.id)}
+                middle={
+                  <BillPanel
+                    invoice={selected}
+                    primaryFileUrl={signedFileUrl}
+                    documentCount={documentsForSelected.length}
+                  />
+                }
               >
                 {/* Side panel content: header + collapsible sections */}
                   <div className="border-b border-slate-200 px-4 py-4">

@@ -2,17 +2,47 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/types";
 import { buildInvoiceAuditDocument } from "@/lib/audit-trail";
 
-// The exact two files that get attached to the QuickBooks bill when an
+// The exact files that get attached to the QuickBooks bill when an
 // approved invoice syncs:
 //   1. audit-trail-<vendor>-<id>.pdf  — chat history + approval audit trail
-//   2. <original file>                — the invoice document itself
-// Both are returned as bytes ready for QBO's multipart attachment upload.
+//   2. the primary invoice document (invoices.file_path)
+//   3. every additional document page (invoice_documents, migration 0003)
+// All are returned as bytes ready for QBO's multipart attachment upload.
 // Authored by Araza.
 
 export interface QboAttachment {
   name: string;
   mimeType: string;
   data: Uint8Array;
+}
+
+const MIME_BY_EXT: Record<string, string> = {
+  pdf: "application/pdf",
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  webp: "image/webp",
+};
+
+function mimeFor(name: string): string {
+  const ext = name.split(".").pop()?.toLowerCase() ?? "";
+  return MIME_BY_EXT[ext] ?? "application/octet-stream";
+}
+
+async function downloadToAttachment(
+  supabase: SupabaseClient<Database>,
+  filePath: string,
+  name: string
+): Promise<QboAttachment | null> {
+  const { data: blob, error } = await supabase.storage
+    .from("invoices")
+    .download(filePath);
+  if (error || !blob) return null;
+  return {
+    name,
+    mimeType: mimeFor(name),
+    data: new Uint8Array(await blob.arrayBuffer()),
+  };
 }
 
 export async function buildQboAttachmentBundle(
@@ -38,17 +68,27 @@ export async function buildQboAttachmentBundle(
     });
   }
 
-  // 2) The original invoice document.
-  const { data: blob, error } = await supabase.storage
-    .from("invoices")
-    .download(invoice.file_path);
-  if (!error && blob) {
-    const isPdf = invoice.file_name.toLowerCase().endsWith(".pdf");
-    attachments.push({
-      name: invoice.file_name,
-      mimeType: isPdf ? "application/pdf" : "application/octet-stream",
-      data: new Uint8Array(await blob.arrayBuffer()),
-    });
+  // 2) The primary invoice document.
+  const primary = await downloadToAttachment(
+    supabase,
+    invoice.file_path,
+    invoice.file_name
+  );
+  if (primary) attachments.push(primary);
+
+  // 3) Every additional document page.
+  const { data: extraDocs } = await supabase
+    .from("invoice_documents")
+    .select("file_path, file_name")
+    .eq("invoice_id", invoiceId)
+    .order("created_at", { ascending: true });
+  for (const doc of extraDocs ?? []) {
+    const extra = await downloadToAttachment(
+      supabase,
+      doc.file_path,
+      doc.file_name
+    );
+    if (extra) attachments.push(extra);
   }
 
   return attachments.length > 0 ? attachments : null;

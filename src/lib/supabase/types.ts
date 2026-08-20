@@ -160,6 +160,23 @@ export interface Database {
         >;
         Relationships: [];
       };
+      invoice_documents: {
+        Row: {
+          id: string;
+          invoice_id: string;
+          file_path: string;
+          file_name: string;
+          uploaded_by: string | null;
+          created_at: string;
+        };
+        Insert: Partial<
+          Database["public"]["Tables"]["invoice_documents"]["Row"]
+        > & { invoice_id: string; file_path: string; file_name: string };
+        Update: Partial<
+          Database["public"]["Tables"]["invoice_documents"]["Row"]
+        >;
+        Relationships: [];
+      };
       audit_log: {
         Row: {
           id: string;
