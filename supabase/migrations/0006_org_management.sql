@@ -37,21 +37,25 @@ alter table invoices add column if not exists project_id uuid
 
 -- Member management is admin-only: only admins can invite, change roles,
 -- or remove members. The read-roster policy from 0001 still applies.
+-- NOTE: the admin check must go through the security-definer helper
+-- is_org_admin (see 0007) — querying organization_members directly inside
+-- this policy causes infinite recursion.
+create or replace function is_org_admin(org_id uuid)
+returns boolean
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select exists (
+    select 1 from organization_members
+    where organization_id = org_id
+      and user_id = auth.uid()
+      and role = 'admin'
+  );
+$$;
+
 create policy "organization_members: admins manage" on organization_members
   for all
-  using (
-    exists (
-      select 1 from organization_members m
-      where m.organization_id = organization_members.organization_id
-        and m.user_id = auth.uid()
-        and m.role = 'admin'
-    )
-  )
-  with check (
-    exists (
-      select 1 from organization_members m
-      where m.organization_id = organization_members.organization_id
-        and m.user_id = auth.uid()
-        and m.role = 'admin'
-    )
-  );
+  using (is_org_admin(organization_id))
+  with check (is_org_admin(organization_id));
