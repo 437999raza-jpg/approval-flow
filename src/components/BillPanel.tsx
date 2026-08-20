@@ -10,16 +10,15 @@ type LineItem = Database["public"]["Tables"]["invoice_line_items"]["Row"];
 // Authored by Araza.
 export function BillPanel({
   invoice,
-  primaryFileUrl,
   documentCount,
   lineItems,
   saveBill,
   saveLineItem,
   deleteLineItem,
+  onOpenDocument,
   onCollapse,
 }: {
   invoice: Invoice;
-  primaryFileUrl: string | null;
   documentCount: number;
   lineItems: LineItem[];
   saveBill: (formData: FormData) => Promise<void>;
@@ -28,6 +27,7 @@ export function BillPanel({
     formData: FormData
   ) => Promise<void>;
   deleteLineItem: (lineItemId: string) => Promise<void>;
+  onOpenDocument: () => void;
   onCollapse: () => void;
 }) {
   const fmt = (n: number | null) =>
@@ -234,20 +234,13 @@ export function BillPanel({
 
         {/* Links */}
         <div className="border-b border-slate-200 px-4 py-3 text-xs">
-          {primaryFileUrl ? (
-            <a
-              href={primaryFileUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="block py-0.5 text-blue-600 hover:underline"
-            >
-              Open the original document
-            </a>
-          ) : (
-            <span className="block py-0.5 text-slate-400">
-              Open the original document
-            </span>
-          )}
+          <button
+            type="button"
+            onClick={onOpenDocument}
+            className="block py-0.5 text-left text-xs font-medium text-blue-600 hover:underline"
+          >
+            Open the original document
+          </button>
           <span
             className="block py-0.5 text-slate-400"
             title="Available once QBO sync is enabled"

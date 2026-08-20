@@ -2,6 +2,7 @@
 
 import { useRef, useState, type ReactNode } from "react";
 import { BillPanel } from "./BillPanel";
+import { ResizeHandle } from "./ResizeHandle";
 import type { Database } from "@/lib/supabase/types";
 
 type Invoice = Database["public"]["Tables"]["invoices"]["Row"];
@@ -48,11 +49,18 @@ export function DetailSplit({
   const [showDoc, setShowDoc] = useState(false);
   const [billOpen, setBillOpen] = useState(true);
   const [docIndex, setDocIndex] = useState(0);
+  const [billW, setBillW] = useState(480);
+  const [sideW, setSideW] = useState(360);
   const formRef = useRef<HTMLFormElement>(null);
 
   const safeIndex = Math.min(docIndex, Math.max(documents.length - 1, 0));
   const doc = documents[safeIndex];
   const multi = documents.length > 1;
+
+  const openDocument = () => {
+    setShowDoc(true);
+    setDocIndex(0);
+  };
 
   const prevDoc = () =>
     setDocIndex((i) => (i + documents.length - 1) % documents.length);
@@ -227,18 +235,17 @@ export function DetailSplit({
 
       {bill && (billOpen ? (
         <div
-          className={
-            showDoc ? "w-[480px] flex-none" : "min-w-0 flex-[3]"
-          }
+          style={showDoc ? { width: billW } : undefined}
+          className={showDoc ? "flex-none" : "min-w-0 flex-1"}
         >
           <BillPanel
             invoice={bill.invoice}
-            primaryFileUrl={bill.primaryFileUrl}
             documentCount={bill.documentCount}
             lineItems={bill.lineItems}
             saveBill={bill.saveBill}
             saveLineItem={bill.saveLineItem}
             deleteLineItem={bill.deleteLineItem}
+            onOpenDocument={openDocument}
             onCollapse={() => setBillOpen(false)}
           />
         </div>
@@ -270,16 +277,23 @@ export function DetailSplit({
           </span>
         </div>
       ))}
+      {showDoc && billOpen && (
+        <ResizeHandle
+          onDrag={(dx) =>
+            setBillW((w) => Math.min(800, Math.max(320, w + dx)))
+          }
+        />
+      )}
 
       <div
-        className={
-          showDoc
-            ? "w-[360px] flex-none overflow-y-auto bg-white"
-            : "min-w-0 flex-[2] overflow-y-auto bg-white"
-        }
+        style={{ width: sideW }}
+        className="flex-none overflow-y-auto bg-white"
       >
         {children}
       </div>
+      <ResizeHandle
+        onDrag={(dx) => setSideW((w) => Math.min(600, Math.max(300, w + dx)))}
+      />
     </div>
   );
 }
