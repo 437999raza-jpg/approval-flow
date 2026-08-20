@@ -248,6 +248,18 @@ export function DetailSplit({
         </div>
       )}
 
+      {/* Resize handle: document pane's right edge */}
+      {showDoc && (
+        <ResizeHandle
+          onDrag={(dx) =>
+            setDocW((w) => {
+              const base = w ?? docRef.current?.offsetWidth ?? 560;
+              return Math.min(900, Math.max(240, base + dx));
+            })
+          }
+        />
+      )}
+
       {bill && (billOpen ? (
         <div
           style={showDoc ? { width: billW } : undefined}
@@ -292,22 +304,15 @@ export function DetailSplit({
           </span>
         </div>
       ))}
+
+      {/* Resize handle: bill pane's right edge (bill is fixed only when
+          the document is open; when it's hidden the bill flexes to fill) */}
       {showDoc && billOpen && (
-        <>
-          <ResizeHandle
-            onDrag={(dx) =>
-              setDocW((w) => {
-                const base = w ?? docRef.current?.offsetWidth ?? 560;
-                return Math.min(900, Math.max(240, base + dx));
-              })
-            }
-          />
-          <ResizeHandle
-            onDrag={(dx) =>
-              setBillW((w) => Math.min(800, Math.max(320, w + dx)))
-            }
-          />
-        </>
+        <ResizeHandle
+          onDrag={(dx) =>
+            setBillW((w) => Math.min(800, Math.max(320, w + dx)))
+          }
+        />
       )}
 
       <div
