@@ -51,8 +51,10 @@ export function DetailSplit({
   const [docIndex, setDocIndex] = useState(0);
   const [docW, setDocW] = useState<number | null>(null); // null = auto (fills)
   const [billW, setBillW] = useState(480);
+  const [billPinned, setBillPinned] = useState(false); // true once dragged
   const [sideW, setSideW] = useState(360);
   const docRef = useRef<HTMLDivElement>(null);
+  const billRef = useRef<HTMLDivElement>(null);
   const formRef = useRef<HTMLFormElement>(null);
 
   const safeIndex = Math.min(docIndex, Math.max(documents.length - 1, 0));
@@ -262,8 +264,15 @@ export function DetailSplit({
 
       {bill && (billOpen ? (
         <div
-          style={showDoc ? { width: billW } : undefined}
-          className={showDoc ? "flex-none" : "min-w-0 flex-1"}
+          ref={billRef}
+          style={
+            showDoc || billPinned ? { width: billW } : undefined
+          }
+          className={
+            showDoc || billPinned
+              ? "flex-none"
+              : "min-w-0 flex-1"
+          }
         >
           <BillPanel
             invoice={bill.invoice}
@@ -305,20 +314,29 @@ export function DetailSplit({
         </div>
       ))}
 
-      {/* Resize handle: bill pane's right edge (bill is fixed only when
-          the document is open; when it's hidden the bill flexes to fill) */}
-      {showDoc && billOpen && (
+      {/* Resize handle: bill pane's right edge. Always visible while the
+          bill is open; the first drag pins the bill to a fixed width (it
+          auto-fills when the document is hidden until then). */}
+      {billOpen && (
         <ResizeHandle
-          onDrag={(dx) =>
-            setBillW((w) => Math.min(1600, Math.max(320, w + dx)))
-          }
+          onDrag={(dx) => {
+            const base = billPinned
+              ? billW
+              : billRef.current?.offsetWidth ?? billW;
+            setBillPinned(true);
+            setBillW(Math.min(1600, Math.max(320, base + dx)));
+          }}
         />
       )}
 
       <div
-        style={docW != null ? { flexBasis: sideW } : { width: sideW }}
+        style={
+          docW != null || billPinned
+            ? { flexBasis: sideW }
+            : { width: sideW }
+        }
         className={
-          docW != null
+          docW != null || billPinned
             ? "min-w-0 flex-1 overflow-y-auto bg-white"
             : "flex-none overflow-y-auto bg-white"
         }
