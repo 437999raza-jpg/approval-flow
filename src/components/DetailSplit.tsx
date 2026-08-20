@@ -49,8 +49,10 @@ export function DetailSplit({
   const [showDoc, setShowDoc] = useState(false);
   const [billOpen, setBillOpen] = useState(true);
   const [docIndex, setDocIndex] = useState(0);
+  const [docW, setDocW] = useState<number | null>(null); // null = auto (fills)
   const [billW, setBillW] = useState(480);
   const [sideW, setSideW] = useState(360);
+  const docRef = useRef<HTMLDivElement>(null);
   const formRef = useRef<HTMLFormElement>(null);
 
   const safeIndex = Math.min(docIndex, Math.max(documents.length - 1, 0));
@@ -62,6 +64,11 @@ export function DetailSplit({
     setDocIndex(0);
   };
 
+  const hideDocument = () => {
+    setShowDoc(false);
+    setDocW(null); // back to auto (fills) on next open
+  };
+
   const prevDoc = () =>
     setDocIndex((i) => (i + documents.length - 1) % documents.length);
   const nextDoc = () => setDocIndex((i) => (i + 1) % documents.length);
@@ -69,12 +76,20 @@ export function DetailSplit({
   return (
     <div className="flex min-w-0 flex-1">
       {showDoc ? (
-        <div className="flex min-w-0 flex-1 flex-col border-r border-slate-200 bg-slate-100">
+        <div
+          ref={docRef}
+          style={docW != null ? { width: docW } : undefined}
+          className={
+            docW != null
+              ? "flex flex-none flex-col border-r border-slate-200 bg-slate-100"
+              : "flex min-w-0 flex-1 flex-col border-r border-slate-200 bg-slate-100"
+          }
+        >
           <div className="flex flex-none items-center justify-between gap-2 border-b border-slate-200 bg-white px-4 py-2">
             <span className="flex min-w-0 items-center gap-2">
               <button
                 type="button"
-                onClick={() => setShowDoc(false)}
+                onClick={hideDocument}
                 title="Hide document"
                 className="flex flex-none items-center gap-1 rounded-md border border-slate-200 px-2 py-1 text-xs font-medium text-slate-500 hover:bg-slate-50"
               >
@@ -278,16 +293,30 @@ export function DetailSplit({
         </div>
       ))}
       {showDoc && billOpen && (
-        <ResizeHandle
-          onDrag={(dx) =>
-            setBillW((w) => Math.min(800, Math.max(320, w + dx)))
-          }
-        />
+        <>
+          <ResizeHandle
+            onDrag={(dx) =>
+              setDocW((w) => {
+                const base = w ?? docRef.current?.offsetWidth ?? 560;
+                return Math.min(900, Math.max(240, base + dx));
+              })
+            }
+          />
+          <ResizeHandle
+            onDrag={(dx) =>
+              setBillW((w) => Math.min(800, Math.max(320, w + dx)))
+            }
+          />
+        </>
       )}
 
       <div
-        style={{ width: sideW }}
-        className="flex-none overflow-y-auto bg-white"
+        style={docW != null ? { flexBasis: sideW } : { width: sideW }}
+        className={
+          docW != null
+            ? "min-w-0 flex-1 overflow-y-auto bg-white"
+            : "flex-none overflow-y-auto bg-white"
+        }
       >
         {children}
       </div>
