@@ -1,0 +1,36 @@
+import { NextResponse } from "next/server";
+import type { EmailOtpType } from "@supabase/supabase-js";
+import { createClient } from "@/lib/supabase/server";
+
+// Companion to /auth/callback: handles the `token_hash` + `type` form of
+// email confirmation links (Supabase's documented pattern for OTP/magic-link
+// email templates), as opposed to the PKCE `?code=` form.
+export async function GET(request: Request) {
+  const { searchParams, origin } = new URL(request.url);
+  const tokenHash = searchParams.get("token_hash");
+  const type = searchParams.get("type") as EmailOtpType | null;
+  const next = searchParams.get("next") ?? "/dashboard";
+
+  if (tokenHash && type) {
+    const supabase = createClient();
+    const { error } = await supabase.auth.verifyOtp({
+      type,
+      token_hash: tokenHash,
+    });
+    if (!error) {
+      return NextResponse.redirect(`${origin}${next}`);
+    }
+
+    // The token is single-use. If something already consumed it (e.g. a
+    // browser/security prefetch of the link before the real click) but that
+    // earlier hit set a valid session, treat this as success too.
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (user) {
+      return NextResponse.redirect(`${origin}${next}`);
+    }
+  }
+
+  return NextResponse.redirect(`${origin}/login?error=auth_confirm_failed`);
+}
