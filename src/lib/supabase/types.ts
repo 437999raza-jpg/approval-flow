@@ -6,6 +6,7 @@ export type InvoiceStatus =
   | "pending_review"
   | "pending"
   | "in_review"
+  | "held"
   | "approved"
   | "rejected"
   | "paid";

@@ -240,6 +240,7 @@ export default async function ReportsPage({
                   <option value="pending_review">Pending review</option>
                   <option value="pending">Pending</option>
                   <option value="in_review">In review</option>
+                  <option value="held">On hold</option>
                   <option value="approved">Approved</option>
                   <option value="rejected">Rejected</option>
                   <option value="paid">Paid</option>

@@ -12,6 +12,7 @@ import { ApprovalStepper } from "@/components/ApprovalStepper";
 import { SearchInput } from "@/components/SearchInput";
 import { SignOutButton } from "@/components/SignOutButton";
 import { CollapsibleSection } from "@/components/CollapsibleSection";
+import { InstructionsBox } from "@/components/InstructionsBox";
 import { CollapsiblePane } from "@/components/CollapsiblePane";
 import { DetailSplit, type DocumentRef } from "@/components/DetailSplit";
 import { Sidebar } from "@/components/Sidebar";
@@ -291,11 +292,11 @@ async function canReview(supabase: ReturnType<typeof createClient>) {
   return org ? org.role === "admin" || org.role === "submitter" : false;
 }
 
-// Review Complete: saves the edited bill fields. When the invoice is still
-// in the Pending Review queue, it also routes the invoice into the approval
-// workflow (status -> pending, workflow re-picked by the rules engine now
-// that the project/line items may be known).
-async function reviewComplete(invoiceId: string, formData: FormData) {
+// Review Complete: moves an invoice out of the Pending Review queue into
+// the approval workflow (status -> pending, workflow re-picked by the rules
+// engine now that project/line items may be known). Bill fields save
+// themselves on blur, so this action only needs to route.
+async function reviewComplete(invoiceId: string) {
   "use server";
 
   const supabase = createClient();
@@ -312,67 +313,101 @@ async function reviewComplete(invoiceId: string, formData: FormData) {
     )
     .eq("id", invoiceId)
     .single();
-  if (!inv) return;
+  if (!inv || inv.status !== "pending_review") return;
 
-  const update: Database["public"]["Tables"]["invoices"]["Update"] = {
-    ...(parseBillForm(formData) as Database["public"]["Tables"]["invoices"]["Update"]),
-    updated_at: new Date().toISOString(),
-  };
+  const [{ data: project }, { data: profile }, { data: lineItems }] =
+    await Promise.all([
+      inv.project_id
+        ? supabase
+            .from("projects")
+            .select("name")
+            .eq("id", inv.project_id)
+            .maybeSingle()
+        : Promise.resolve({ data: null }),
+      inv.submitted_by
+        ? supabase
+            .from("profiles")
+            .select("full_name")
+            .eq("id", inv.submitted_by)
+            .maybeSingle()
+        : Promise.resolve({ data: null }),
+      supabase
+        .from("invoice_line_items")
+        .select("category, description, class, amount")
+        .eq("invoice_id", invoiceId),
+    ]);
 
-  if (inv.status === "pending_review") {
-    const [{ data: project }, { data: profile }, { data: lineItems }] =
-      await Promise.all([
-        inv.project_id
-          ? supabase
-              .from("projects")
-              .select("name")
-              .eq("id", inv.project_id)
-              .maybeSingle()
-          : Promise.resolve({ data: null }),
-        inv.submitted_by
-          ? supabase
-              .from("profiles")
-              .select("full_name")
-              .eq("id", inv.submitted_by)
-              .maybeSingle()
-          : Promise.resolve({ data: null }),
-        supabase
-          .from("invoice_line_items")
-          .select("category, description, class, amount")
-          .eq("invoice_id", invoiceId),
-      ]);
+  const workflowId = await selectWorkflowForInvoice(
+    supabase,
+    inv.organization_id,
+    {
+      amount: inv.amount,
+      vendorName: inv.vendor_name,
+      submittedBy: inv.submitted_by,
+      submitterName: profile?.full_name ?? null,
+      projectId: inv.project_id,
+      projectName: project?.name ?? null,
+      lineItems: lineItems ?? [],
+    }
+  );
 
-    const workflowId = await selectWorkflowForInvoice(
-      supabase,
-      inv.organization_id,
-      {
-        amount: inv.amount,
-        vendorName: inv.vendor_name,
-        submittedBy: inv.submitted_by,
-        submitterName: profile?.full_name ?? null,
-        projectId: inv.project_id,
-        projectName: project?.name ?? null,
-        lineItems: lineItems ?? [],
-      }
-    );
-
-    Object.assign(update, {
+  await supabase
+    .from("invoices")
+    .update({
       workflow_id: workflowId,
       status: "pending",
       current_step_order: 1,
-    });
-  }
-
-  await supabase.from("invoices").update(update).eq("id", invoiceId);
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", invoiceId);
 
   await supabase.from("audit_log").insert({
     organization_id: inv.organization_id,
     invoice_id: invoiceId,
     actor_id: user.id,
-    action:
-      inv.status === "pending_review"
-        ? "invoice.review_done"
-        : "invoice.review_complete",
+    action: "invoice.review_done",
+  });
+
+  revalidatePath("/dashboard", "layout");
+}
+
+// Hold: the current-step approver puts an in-flight invoice on hold (a
+// decision later — approve, reject, or return to review).
+async function holdInvoice(invoiceId: string) {
+  "use server";
+
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
+  const { data: invoice } = await supabase
+    .from("invoices")
+    .select("id, organization_id, status, workflow_id, current_step_order")
+    .eq("id", invoiceId)
+    .single();
+  if (!invoice || !invoice.workflow_id) return;
+  if (invoice.status !== "pending" && invoice.status !== "in_review") return;
+
+  const { data: currentStep } = await supabase
+    .from("approval_workflow_steps")
+    .select("approver_user_id")
+    .eq("workflow_id", invoice.workflow_id)
+    .eq("step_order", invoice.current_step_order)
+    .maybeSingle();
+  if (!currentStep || currentStep.approver_user_id !== user.id) return;
+
+  await supabase
+    .from("invoices")
+    .update({ status: "held", updated_at: new Date().toISOString() })
+    .eq("id", invoiceId);
+
+  await supabase.from("audit_log").insert({
+    organization_id: invoice.organization_id,
+    invoice_id: invoiceId,
+    actor_id: user.id,
+    action: "invoice.held",
   });
 
   revalidatePath("/dashboard", "layout");
@@ -615,6 +650,7 @@ export default async function DashboardPage({
   }
 
   const selectedId = params.id?.[0];
+  const canReviewNow = org.role === "admin" || org.role === "submitter";
   const view: View = VIEWS.includes(searchParams.view as View)
     ? (searchParams.view as View)
     : "all";
@@ -976,10 +1012,8 @@ export default async function DashboardPage({
                   saveLineItem: saveLineItem.bind(null, selected.id),
                   deleteLineItem,
                   reExtract: reExtract.bind(null, selected.id),
-                  reviewComplete: reviewComplete.bind(null, selected.id),
                   backToReview: backToReview.bind(null, selected.id),
-                  canReview:
-                    org.role === "admin" || org.role === "submitter",
+                  canReview: canReviewNow,
                 }}
               >
                 {/* Side panel content: header + collapsible sections */}
@@ -1030,21 +1064,40 @@ export default async function DashboardPage({
                       </div>
                     )}
                     {selected.status !== "approved" &&
-                      selected.status !== "rejected" && (
-                        <div className="mt-3 flex gap-3">
-                          {selected.status === "pending_review" ? (
+                      selected.status !== "paid" && (
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          {selected.status === "pending_review" &&
+                          canReviewNow ? (
+                            <form
+                              action={reviewComplete.bind(null, selected.id)}
+                            >
+                              <button className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700">
+                                Review Complete
+                              </button>
+                            </form>
+                          ) : null}
+                          {selected.status === "pending_review" &&
+                          !canReviewNow ? (
                             <p className="text-sm text-slate-500">
-                              Awaiting review of the extracted data — press
-                              Review Done in the Bill panel to send it into
-                              the approval workflow.
+                              Awaiting review of the extracted data — an
+                              admin or submitter must complete the review to
+                              send it into the approval workflow.
                             </p>
-                          ) : canDecide ? (
+                          ) : null}
+                          {canDecide ? (
                             <>
                               <form
                                 action={decide.bind(null, selected.id, "approved")}
                               >
                                 <button className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700">
                                   Approve
+                                </button>
+                              </form>
+                              <form
+                                action={holdInvoice.bind(null, selected.id)}
+                              >
+                                <button className="rounded-md border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-medium text-amber-800 hover:bg-amber-100">
+                                  Hold
                                 </button>
                               </form>
                               <form
@@ -1055,12 +1108,21 @@ export default async function DashboardPage({
                                 </button>
                               </form>
                             </>
-                          ) : (
+                          ) : null}
+                          {selected.status === "held" && (
                             <p className="text-sm text-slate-500">
-                              Waiting on the approver for step{" "}
-                              {selected.current_step_order}.
+                              On hold — return it to review or approve/reject
+                              once the decision is ready.
                             </p>
                           )}
+                          {selected.status !== "pending_review" &&
+                            selected.status !== "held" &&
+                            !canDecide && (
+                              <p className="text-sm text-slate-500">
+                                Waiting on the approver for step{" "}
+                                {selected.current_step_order}.
+                              </p>
+                            )}
                         </div>
                       )}
                   </CollapsibleSection>
@@ -1094,26 +1156,13 @@ export default async function DashboardPage({
                   </CollapsibleSection>
 
                   <CollapsibleSection title="Instructions for accounting">
-                    <p className="mt-2 text-xs text-slate-400">
-                      Internal guidance for your accounting team. On QBO sync
-                      this becomes the bill&apos;s memo (PrivateNote) — not
-                      printed on the invoice.
-                    </p>
-                    <form
-                      action={saveAccountingInstructions.bind(null, selected.id)}
-                      className="mt-2"
-                    >
-                      <textarea
-                        name="instructions"
-                        defaultValue={selected.accounting_instructions ?? ""}
-                        rows={3}
-                        placeholder="e.g. Allocate to job 12-45, net-30 terms, prior approval required…"
-                        className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
-                      />
-                      <button className="mt-2 rounded-md bg-slate-800 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-700">
-                        Save
-                      </button>
-                    </form>
+                    <InstructionsBox
+                      initialValue={selected.accounting_instructions ?? ""}
+                      saveInstructions={saveAccountingInstructions.bind(
+                        null,
+                        selected.id
+                      )}
+                    />
                   </CollapsibleSection>
 
                   <CollapsibleSection

@@ -18,7 +18,6 @@ export function BillPanel({
   saveLineItem,
   deleteLineItem,
   reExtract,
-  reviewComplete,
   backToReview,
   canReview,
   onOpenDocument,
@@ -35,7 +34,6 @@ export function BillPanel({
   ) => Promise<void>;
   deleteLineItem: (lineItemId: string) => Promise<void>;
   reExtract: () => Promise<void>;
-  reviewComplete: (formData: FormData) => Promise<void>;
   backToReview: () => Promise<void>;
   canReview: boolean;
   onOpenDocument: () => void;
@@ -55,6 +53,16 @@ export function BillPanel({
   const vendor = invoice.vendor_name ?? invoice.file_name ?? "Unknown vendor";
   const billNumber = invoice.invoice_number ?? "—";
   const billDateDefault = invoice.bill_date ?? invoice.created_at.slice(0, 10);
+
+  // Bill fields save automatically when a field loses focus (no Save
+  // button); Review Complete in the side panel then just routes.
+  const billFormRef = useRef<HTMLFormElement>(null);
+  const billBlur = {
+    onBlur: () => billFormRef.current?.requestSubmit(),
+  };
+  const billChange = {
+    onChange: () => billFormRef.current?.requestSubmit(),
+  };
 
   const inputCls =
     "mt-0.5 w-full rounded-md border border-slate-300 px-2 py-1 text-sm focus:border-blue-500 focus:outline-none";
@@ -86,44 +94,24 @@ export function BillPanel({
         </button>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
-        {/* Review actions — top of the bill (ApprovalMax-style) */}
-        {(["pending_review", "pending", "in_review", "rejected"].includes(
+        {/* Back to Review — top of the bill (ApprovalMax-style) */}
+        {["pending", "in_review", "held", "rejected"].includes(
           invoice.status
         ) &&
-          canReview) ||
-        (["pending", "in_review", "rejected"].includes(invoice.status) &&
-          canReview) ? (
-          <div className="flex flex-none items-center gap-2 border-b border-slate-200 px-4 py-2">
-            {[
-              "pending_review",
-              "pending",
-              "in_review",
-              "rejected",
-            ].includes(invoice.status) &&
-              canReview && (
-                <button
-                  type="submit"
-                  form="bill-form"
-                  formAction={reviewComplete}
-                  className="rounded-md bg-blue-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-blue-700"
-                >
-                  Review Complete
+          canReview && (
+            <div className="flex flex-none items-center gap-2 border-b border-slate-200 px-4 py-2">
+              <form action={backToReview}>
+                <button className="rounded-md border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50">
+                  Back to Review
                 </button>
-              )}
-            {["pending", "in_review", "rejected"].includes(invoice.status) &&
-              canReview && (
-                <form action={backToReview}>
-                  <button className="rounded-md border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50">
-                    Back to Review
-                  </button>
-                </form>
-              )}
-          </div>
-        ) : null}
+              </form>
+            </div>
+          )}
 
         {/* Editable bill fields — maps to the QBO bill on sync */}
         <form
           id="bill-form"
+          ref={billFormRef}
           action={saveBill}
           className="border-b border-slate-200 px-4 py-3"
         >
@@ -151,6 +139,7 @@ export function BillPanel({
                 name="vendor_name"
                 defaultValue={invoice.vendor_name ?? ""}
                 className={inputCls}
+                {...billBlur}
               />
             </label>
             <label className="col-span-2">
@@ -159,6 +148,7 @@ export function BillPanel({
                 name="source_email"
                 defaultValue={invoice.source_email ?? ""}
                 className={inputCls}
+                {...billBlur}
               />
             </label>
             <label>
@@ -167,6 +157,7 @@ export function BillPanel({
                 name="bill_number"
                 defaultValue={invoice.invoice_number ?? ""}
                 className={inputCls}
+                {...billBlur}
               />
             </label>
             <label>
@@ -184,6 +175,7 @@ export function BillPanel({
                 name="bill_date"
                 defaultValue={billDateDefault}
                 className={inputCls}
+                {...billBlur}
               />
             </label>
             <label>
@@ -193,6 +185,7 @@ export function BillPanel({
                 name="due_date"
                 defaultValue={invoice.due_date ?? ""}
                 className={inputCls}
+                {...billBlur}
               />
             </label>
             <label className="col-span-2">
@@ -201,6 +194,7 @@ export function BillPanel({
                 name="project_id"
                 defaultValue={invoice.project_id ?? ""}
                 className={inputCls}
+                {...billChange}
               >
                 <option value="">— none —</option>
                 {projects.map((p) => (
@@ -225,6 +219,7 @@ export function BillPanel({
                 step="0.01"
                 defaultValue={invoice.amount ?? ""}
                 className={inputCls}
+                {...billBlur}
               />
             </label>
             <label>
@@ -233,6 +228,7 @@ export function BillPanel({
                 name="currency"
                 defaultValue={invoice.currency}
                 className={inputCls}
+                {...billBlur}
               />
             </label>
             <label>
@@ -243,6 +239,7 @@ export function BillPanel({
                 step="0.01"
                 defaultValue={invoice.tax_amount ?? ""}
                 className={inputCls}
+                {...billBlur}
               />
             </label>
             <div>
