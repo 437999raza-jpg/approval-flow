@@ -304,12 +304,11 @@ async function saveBill(invoiceId: string, formData: FormData) {
   revalidatePath("/dashboard", "layout");
 }
 
-// Is the signed-in user allowed to review extracted data (admin or
-// submitter)? Used by the review actions and to gate the Bill panel
-// buttons.
+// Is the signed-in user allowed to review extracted data (admin only)?
+// Used by the review actions and to gate the Bill panel buttons.
 async function canReview(supabase: ReturnType<typeof createClient>) {
   const org = await getCurrentOrg(supabase);
-  return org ? org.role === "admin" || org.role === "submitter" : false;
+  return org ? org.role === "admin" : false;
 }
 
 // Review Complete: moves an invoice out of the Pending Review queue into
