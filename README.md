@@ -291,15 +291,17 @@ invoice metadata, the full approval trail, the chat history, and the raw
 `audit_log` — served as a downloadable attachment.
 
 **Bill panel** ([`src/components/BillPanel.tsx`](src/components/BillPanel.tsx)):
-an ApprovalMax-style preview of the QBO bill — vendor + bill number +
-amount header, Bill actions (bill date / due date / bill number), the
-Category-details line-items table, links ("Open the original document",
-"Open in QuickBooks Online" once sync lands), and tax-exclusive totals.
-This panel is exactly what gets pushed to QBO on sync.
+an ApprovalMax-style preview of the QBO bill — and every data item is
+**editable**: vendor/email, bill number, bill date, due date, total amount,
+currency, and tax (Subtotal is computed), plus a fully editable
+**Category-details** line-items table (Category, Description, Tax %, Class,
+Amount, Linked) with add/delete rows (migration 0005). On sync this is
+exactly what gets pushed to QBO — header fields to the bill, rows to line
+items.
 
 **Multi-document support** (migration 0003): an invoice can carry the
 primary file plus any number of additional pages (`invoice_documents`).
-The document viewer gets a page switcher ("2 / 3") and a **"+ Add page"**
+The document viewer gets a page switcher ("2 / 3") and an **"Add document"**
 button in its header. On sync, **everything** is attached to the bill:
 the audit-trail PDF + all documents ([`src/lib/qbo-attachments.ts`](src/lib/qbo-attachments.ts)).
 

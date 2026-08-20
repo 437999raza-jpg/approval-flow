@@ -5,6 +5,7 @@ import { BillPanel } from "./BillPanel";
 import type { Database } from "@/lib/supabase/types";
 
 type Invoice = Database["public"]["Tables"]["invoices"]["Row"];
+type LineItem = Database["public"]["Tables"]["invoice_line_items"]["Row"];
 
 export interface DocumentRef {
   name: string;
@@ -17,6 +18,13 @@ export interface BillData {
   invoice: Invoice;
   primaryFileUrl: string | null;
   documentCount: number;
+  lineItems: LineItem[];
+  saveBill: (formData: FormData) => Promise<void>;
+  saveLineItem: (
+    lineItemId: string,
+    formData: FormData
+  ) => Promise<void>;
+  deleteLineItem: (lineItemId: string) => Promise<void>;
 }
 
 interface DetailSplitProps {
@@ -227,6 +235,10 @@ export function DetailSplit({
             invoice={bill.invoice}
             primaryFileUrl={bill.primaryFileUrl}
             documentCount={bill.documentCount}
+            lineItems={bill.lineItems}
+            saveBill={bill.saveBill}
+            saveLineItem={bill.saveLineItem}
+            deleteLineItem={bill.deleteLineItem}
             onCollapse={() => setBillOpen(false)}
           />
         </div>

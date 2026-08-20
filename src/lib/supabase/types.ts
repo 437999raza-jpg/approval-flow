@@ -102,7 +102,9 @@ export interface Database {
           invoice_number: string | null;
           amount: number | null;
           currency: string;
+          bill_date: string | null;
           due_date: string | null;
+          tax_amount: number | null;
           status: InvoiceStatus;
           source: InvoiceSource;
           source_email: string | null;
@@ -175,6 +177,27 @@ export interface Database {
         > & { invoice_id: string; file_path: string; file_name: string };
         Update: Partial<
           Database["public"]["Tables"]["invoice_documents"]["Row"]
+        >;
+        Relationships: [];
+      };
+      invoice_line_items: {
+        Row: {
+          id: string;
+          invoice_id: string;
+          category: string | null;
+          description: string | null;
+          tax_rate: number | null;
+          class: string | null;
+          amount: number | null;
+          linked: boolean;
+          line_order: number;
+          created_at: string;
+        };
+        Insert: Partial<
+          Database["public"]["Tables"]["invoice_line_items"]["Row"]
+        > & { invoice_id: string };
+        Update: Partial<
+          Database["public"]["Tables"]["invoice_line_items"]["Row"]
         >;
         Relationships: [];
       };

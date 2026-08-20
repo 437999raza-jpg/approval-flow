@@ -229,6 +229,116 @@ async function saveAccountingInstructions(
   revalidatePath("/dashboard", "layout");
 }
 
+// Save the editable bill fields (migration 0005). These map 1:1 to the QBO
+// bill on sync (vendor, bill number, dates, amount, currency, tax).
+async function saveBill(invoiceId: string, formData: FormData) {
+  "use server";
+
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
+  const text = (key: string) =>
+    String(formData.get(key) ?? "").trim() || null;
+  const num = (key: string) => {
+    const raw = String(formData.get(key) ?? "").trim();
+    if (!raw) return null;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : null;
+  };
+  const date = (key: string) => {
+    const raw = String(formData.get(key) ?? "").trim();
+    return /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : null;
+  };
+
+  await supabase
+    .from("invoices")
+    .update({
+      vendor_name: text("vendor_name"),
+      source_email: text("source_email"),
+      invoice_number: text("bill_number"),
+      bill_date: date("bill_date"),
+      due_date: date("due_date"),
+      amount: num("amount"),
+      currency: text("currency")?.toUpperCase() || "USD",
+      tax_amount: num("tax_amount"),
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", invoiceId);
+
+  revalidatePath("/dashboard", "layout");
+}
+
+// Create or update one category-details line item.
+async function saveLineItem(
+  invoiceId: string,
+  lineItemId: string,
+  formData: FormData
+) {
+  "use server";
+
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
+  const text = (key: string) =>
+    String(formData.get(key) ?? "").trim() || null;
+  const num = (key: string) => {
+    const raw = String(formData.get(key) ?? "").trim();
+    if (!raw) return null;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : null;
+  };
+
+  const values = {
+    category: text("category"),
+    description: text("description"),
+    tax_rate: num("tax_rate"),
+    class: text("class"),
+    amount: num("amount"),
+    linked: formData.get("linked") === "on",
+  };
+
+  if (lineItemId === "new") {
+    const { data: last } = await supabase
+      .from("invoice_line_items")
+      .select("line_order")
+      .eq("invoice_id", invoiceId)
+      .order("line_order", { ascending: false })
+      .limit(1);
+    await supabase.from("invoice_line_items").insert({
+      ...values,
+      invoice_id: invoiceId,
+      line_order: (last?.[0]?.line_order ?? 0) + 1,
+    });
+  } else {
+    await supabase
+      .from("invoice_line_items")
+      .update(values)
+      .eq("id", lineItemId);
+  }
+
+  revalidatePath("/dashboard", "layout");
+}
+
+async function deleteLineItem(lineItemId: string) {
+  "use server";
+
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
+  await supabase.from("invoice_line_items").delete().eq("id", lineItemId);
+
+  revalidatePath("/dashboard", "layout");
+}
+
 // File-type helpers for previewing documents (allowed types are pdf, png,
 // jpeg, webp — see src/lib/invoices.ts).
 const extOf = (name: string) => name.split(".").pop()?.toLowerCase() ?? "";
@@ -334,26 +444,34 @@ export default async function DashboardPage({
   let approvalsForSelected: Database["public"]["Tables"]["invoice_approvals"]["Row"][] = [];
   let commentsForSelected: Database["public"]["Tables"]["invoice_comments"]["Row"][] = [];
   let documentsForSelected: DocumentRef[] = [];
+  let lineItemsForSelected: Database["public"]["Tables"]["invoice_line_items"]["Row"][] = [];
   let authorNameById = new Map<string, string>();
 
   if (selected) {
-    const [signed, approvalsRes, commentsRes, docsRes] = await Promise.all([
-      supabase.storage.from("invoices").createSignedUrl(selected.file_path, 60 * 10),
-      supabase.from("invoice_approvals").select("*").eq("invoice_id", selected.id),
-      supabase
-        .from("invoice_comments")
-        .select("*")
-        .eq("invoice_id", selected.id)
-        .order("created_at", { ascending: true }),
-      supabase
-        .from("invoice_documents")
-        .select("*")
-        .eq("invoice_id", selected.id)
-        .order("created_at", { ascending: true }),
-    ]);
+    const [signed, approvalsRes, commentsRes, docsRes, lineItemsRes] =
+      await Promise.all([
+        supabase.storage.from("invoices").createSignedUrl(selected.file_path, 60 * 10),
+        supabase.from("invoice_approvals").select("*").eq("invoice_id", selected.id),
+        supabase
+          .from("invoice_comments")
+          .select("*")
+          .eq("invoice_id", selected.id)
+          .order("created_at", { ascending: true }),
+        supabase
+          .from("invoice_documents")
+          .select("*")
+          .eq("invoice_id", selected.id)
+          .order("created_at", { ascending: true }),
+        supabase
+          .from("invoice_line_items")
+          .select("*")
+          .eq("invoice_id", selected.id)
+          .order("line_order", { ascending: true }),
+      ]);
     signedFileUrl = signed.data?.signedUrl ?? null;
     approvalsForSelected = approvalsRes.data ?? [];
     commentsForSelected = commentsRes.data ?? [];
+    lineItemsForSelected = lineItemsRes.data ?? [];
     stepsForSelected = (allSteps ?? []).filter((s) => s.workflow_id === selected.workflow_id);
 
     // Document list for the viewer: the primary file first, then any
@@ -537,6 +655,10 @@ export default async function DashboardPage({
                   invoice: selected,
                   primaryFileUrl: signedFileUrl,
                   documentCount: documentsForSelected.length,
+                  lineItems: lineItemsForSelected,
+                  saveBill: saveBill.bind(null, selected.id),
+                  saveLineItem: saveLineItem.bind(null, selected.id),
+                  deleteLineItem,
                 }}
               >
                 {/* Side panel content: header + collapsible sections */}
