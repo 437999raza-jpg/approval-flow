@@ -2,6 +2,7 @@ import { clsx } from "clsx";
 import type { InvoiceStatus } from "@/lib/supabase/types";
 
 const STYLES: Record<InvoiceStatus, string> = {
+  pending_review: "bg-violet-100 text-violet-800",
   pending: "bg-slate-100 text-slate-700",
   in_review: "bg-amber-100 text-amber-800",
   approved: "bg-emerald-100 text-emerald-800",
@@ -10,6 +11,7 @@ const STYLES: Record<InvoiceStatus, string> = {
 };
 
 const LABELS: Record<InvoiceStatus, string> = {
+  pending_review: "Pending review",
   pending: "Pending",
   in_review: "In review",
   approved: "Approved",

@@ -83,7 +83,8 @@ export async function createInvoiceFromFile({
     .insert({
       organization_id: organizationId,
       workflow_id: workflowId,
-      status: "pending",
+      status: "pending_review", // sits in the Pending Review queue until
+      // Review Done routes it into the approval workflow
       source,
       source_email: sourceEmail ?? null,
       submitted_by: submittedBy ?? null,

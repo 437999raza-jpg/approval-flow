@@ -3,6 +3,7 @@
 //   supabase gen types typescript --linked > src/lib/supabase/types.ts
 
 export type InvoiceStatus =
+  | "pending_review"
   | "pending"
   | "in_review"
   | "approved"

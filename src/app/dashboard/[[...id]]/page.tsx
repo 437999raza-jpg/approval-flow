@@ -20,10 +20,11 @@ import {
   extractInvoiceFields,
   mapExtractionToInvoice,
 } from "@/lib/extract-invoice";
+import { selectWorkflowForInvoice } from "@/lib/workflow-routing";
 
 type Invoice = Database["public"]["Tables"]["invoices"]["Row"];
 
-const VIEWS = ["all", "mine", "created", "approved", "rejected"] as const;
+const VIEWS = ["all", "review", "mine", "created", "approved", "rejected"] as const;
 type View = (typeof VIEWS)[number];
 
 const DECISION_ERRORS: Record<string, string> = {
@@ -233,17 +234,8 @@ async function saveAccountingInstructions(
   revalidatePath("/dashboard", "layout");
 }
 
-// Save the editable bill fields (migration 0005). These map 1:1 to the QBO
-// bill on sync (vendor, bill number, dates, amount, currency, tax).
-async function saveBill(invoiceId: string, formData: FormData) {
-  "use server";
-
-  const supabase = createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
-
+// Parse the Bill panel form into an invoices update object.
+function parseBillForm(formData: FormData): Record<string, unknown> {
   const text = (key: string) =>
     String(formData.get(key) ?? "").trim() || null;
   const num = (key: string) => {
@@ -257,21 +249,169 @@ async function saveBill(invoiceId: string, formData: FormData) {
     return /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : null;
   };
 
+  return {
+    vendor_name: text("vendor_name"),
+    source_email: text("source_email"),
+    invoice_number: text("bill_number"),
+    bill_date: date("bill_date"),
+    due_date: date("due_date"),
+    amount: num("amount"),
+    currency: text("currency")?.toUpperCase() || "USD",
+    tax_amount: num("tax_amount"),
+    project_id: text("project_id"),
+  };
+}
+
+// Persist the editable bill fields (also fired by Enter in the form).
+async function saveBill(invoiceId: string, formData: FormData) {
+  "use server";
+
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
   await supabase
     .from("invoices")
     .update({
-      vendor_name: text("vendor_name"),
-      source_email: text("source_email"),
-      invoice_number: text("bill_number"),
-      bill_date: date("bill_date"),
-      due_date: date("due_date"),
-      amount: num("amount"),
-      currency: text("currency")?.toUpperCase() || "USD",
-      tax_amount: num("tax_amount"),
-      project_id: text("project_id"),
+      ...parseBillForm(formData),
       updated_at: new Date().toISOString(),
     })
     .eq("id", invoiceId);
+
+  revalidatePath("/dashboard", "layout");
+}
+
+// Is the signed-in user allowed to review extracted data (admin or
+// submitter)? Used by the review actions and to gate the Bill panel
+// buttons.
+async function canReview(supabase: ReturnType<typeof createClient>) {
+  const org = await getCurrentOrg(supabase);
+  return org ? org.role === "admin" || org.role === "submitter" : false;
+}
+
+// Review Done: save the edited bill fields, then route the invoice into
+// the approval workflow (status -> pending, workflow re-picked by the
+// rules engine now that the project/line items may be known).
+async function reviewDone(invoiceId: string, formData: FormData) {
+  "use server";
+
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+  if (!(await canReview(supabase))) return;
+
+  const { data: inv } = await supabase
+    .from("invoices")
+    .select(
+      "id, organization_id, amount, vendor_name, submitted_by, project_id"
+    )
+    .eq("id", invoiceId)
+    .single();
+  if (!inv) return;
+
+  const [{ data: project }, { data: profile }, { data: lineItems }] =
+    await Promise.all([
+      inv.project_id
+        ? supabase
+            .from("projects")
+            .select("name")
+            .eq("id", inv.project_id)
+            .maybeSingle()
+        : Promise.resolve({ data: null }),
+      inv.submitted_by
+        ? supabase
+            .from("profiles")
+            .select("full_name")
+            .eq("id", inv.submitted_by)
+            .maybeSingle()
+        : Promise.resolve({ data: null }),
+      supabase
+        .from("invoice_line_items")
+        .select("category, description, class, amount")
+        .eq("invoice_id", invoiceId),
+    ]);
+
+  const workflowId = await selectWorkflowForInvoice(
+    supabase,
+    inv.organization_id,
+    {
+      amount: inv.amount,
+      vendorName: inv.vendor_name,
+      submittedBy: inv.submitted_by,
+      submitterName: profile?.full_name ?? null,
+      projectId: inv.project_id,
+      projectName: project?.name ?? null,
+      lineItems: lineItems ?? [],
+    }
+  );
+
+  await supabase
+    .from("invoices")
+    .update({
+      ...parseBillForm(formData),
+      workflow_id: workflowId,
+      status: "pending",
+      current_step_order: 1,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", invoiceId);
+
+  await supabase.from("audit_log").insert({
+    organization_id: inv.organization_id,
+    invoice_id: invoiceId,
+    actor_id: user.id,
+    action: "invoice.review_done",
+  });
+
+  revalidatePath("/dashboard", "layout");
+}
+
+// Back to Review: return a non-approved invoice to the Pending Review
+// queue. Approval decisions are reset (the workflow re-runs from step 1)
+// but the audit trail is preserved.
+async function backToReview(invoiceId: string) {
+  "use server";
+
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+  if (!(await canReview(supabase))) return;
+
+  const { data: inv } = await supabase
+    .from("invoices")
+    .select("id, organization_id")
+    .eq("id", invoiceId)
+    .single();
+  if (!inv) return;
+
+  await supabase
+    .from("invoices")
+    .update({
+      status: "pending_review",
+      current_step_order: 1,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", invoiceId);
+
+  // Reset approval decisions so the workflow re-runs cleanly.
+  await supabase
+    .from("invoice_approvals")
+    .delete()
+    .eq("invoice_id", invoiceId);
+
+  // Audit trail remains.
+  await supabase.from("audit_log").insert({
+    organization_id: inv.organization_id,
+    invoice_id: invoiceId,
+    actor_id: user.id,
+    action: "invoice.back_to_review",
+  });
 
   revalidatePath("/dashboard", "layout");
 }
@@ -512,6 +652,7 @@ export default async function DashboardPage({
 
   const counts = {
     all: invoices?.length ?? 0,
+    review: invoices?.filter((i) => i.status === "pending_review").length ?? 0,
     mine: invoices?.filter(requiresMyApproval).length ?? 0,
     created: invoices?.filter((i) => i.submitted_by === user.id).length ?? 0,
     approved: invoices?.filter((i) => i.status === "approved").length ?? 0,
@@ -519,7 +660,8 @@ export default async function DashboardPage({
   };
 
   let filtered = invoices ?? [];
-  if (view === "mine") filtered = filtered.filter(requiresMyApproval);
+  if (view === "review") filtered = filtered.filter((i) => i.status === "pending_review");
+  else if (view === "mine") filtered = filtered.filter(requiresMyApproval);
   else if (view === "created") filtered = filtered.filter((i) => i.submitted_by === user.id);
   else if (view === "approved") filtered = filtered.filter((i) => i.status === "approved");
   else if (view === "rejected") filtered = filtered.filter((i) => i.status === "rejected");
@@ -642,6 +784,7 @@ export default async function DashboardPage({
 
   const navItems: { key: View; label: string }[] = [
     { key: "all", label: "All invoices" },
+    { key: "review", label: "Pending Review" },
     { key: "mine", label: "Requires my approval" },
     { key: "created", label: "Created by me" },
     { key: "approved", label: "Approved" },
@@ -825,6 +968,10 @@ export default async function DashboardPage({
                   saveLineItem: saveLineItem.bind(null, selected.id),
                   deleteLineItem,
                   reExtract: reExtract.bind(null, selected.id),
+                  reviewDone: reviewDone.bind(null, selected.id),
+                  backToReview: backToReview.bind(null, selected.id),
+                  canReview:
+                    org.role === "admin" || org.role === "submitter",
                 }}
               >
                 {/* Side panel content: header + collapsible sections */}
@@ -877,7 +1024,13 @@ export default async function DashboardPage({
                     {selected.status !== "approved" &&
                       selected.status !== "rejected" && (
                         <div className="mt-3 flex gap-3">
-                          {canDecide ? (
+                          {selected.status === "pending_review" ? (
+                            <p className="text-sm text-slate-500">
+                              Awaiting review of the extracted data — press
+                              Review Done in the Bill panel to send it into
+                              the approval workflow.
+                            </p>
+                          ) : canDecide ? (
                             <>
                               <form
                                 action={decide.bind(null, selected.id, "approved")}

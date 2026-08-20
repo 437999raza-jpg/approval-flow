@@ -17,6 +17,9 @@ export function BillPanel({
   saveLineItem,
   deleteLineItem,
   reExtract,
+  reviewDone,
+  backToReview,
+  canReview,
   onOpenDocument,
   onCollapse,
 }: {
@@ -31,6 +34,9 @@ export function BillPanel({
   ) => Promise<void>;
   deleteLineItem: (lineItemId: string) => Promise<void>;
   reExtract: () => Promise<void>;
+  reviewDone: (formData: FormData) => Promise<void>;
+  backToReview: () => Promise<void>;
+  canReview: boolean;
   onOpenDocument: () => void;
   onCollapse: () => void;
 }) {
@@ -79,8 +85,38 @@ export function BillPanel({
         </button>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
+        {/* Review actions — top of the bill (ApprovalMax-style) */}
+        {(invoice.status === "pending_review" && canReview) ||
+        (["pending", "in_review", "rejected"].includes(invoice.status) &&
+          canReview) ? (
+          <div className="flex flex-none items-center gap-2 border-b border-slate-200 px-4 py-2">
+            {invoice.status === "pending_review" && canReview && (
+              <button
+                type="submit"
+                form="bill-form"
+                formAction={reviewDone}
+                className="rounded-md bg-blue-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-blue-700"
+              >
+                Review Done
+              </button>
+            )}
+            {["pending", "in_review", "rejected"].includes(invoice.status) &&
+              canReview && (
+                <form action={backToReview}>
+                  <button className="rounded-md border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50">
+                    Back to Review
+                  </button>
+                </form>
+              )}
+          </div>
+        ) : null}
+
         {/* Editable bill fields — maps to the QBO bill on sync */}
-        <form action={saveBill} className="border-b border-slate-200 px-4 py-3">
+        <form
+          id="bill-form"
+          action={saveBill}
+          className="border-b border-slate-200 px-4 py-3"
+        >
           {/* Summary (updates after save) */}
           <div className="text-sm font-semibold text-slate-800">
             Bill {billNumber} from {vendor}
@@ -206,10 +242,6 @@ export function BillPanel({
               </div>
             </div>
           </div>
-
-          <button className="mt-3 rounded-md bg-slate-800 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-700">
-            Save bill
-          </button>
         </form>
 
         {/* Category details — editable line items */}
