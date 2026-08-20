@@ -1,10 +1,13 @@
 // Robust invoice extraction via OpenRouter (model-agnostic).
 //
-// Sends the invoice document (PDF or image) to the configured OpenRouter
-// model and asks for a strict JSON object covering far more than the basic
-// fields — line items, tax, subtotal, PO number, vendor contact details,
-// customer, description — so the Bill panel and routing engine have real
-// data to work with.
+// Sends the invoice document to the configured OpenRouter model and asks
+// for a strict JSON object covering far more than the basic fields — line
+// items, tax, subtotal, PO number, vendor contact details, customer,
+// description — so the Bill panel and routing engine have real data.
+//
+// PDFs are rendered to PNG pages with mupdf (WASM, no native deps) because
+// OpenRouter vision models accept images, not raw PDFs. The OCR text is
+// also included as prompt context for extra robustness.
 //
 // Env:
 //   OPENROUTER_API_KEY  — required for extraction (best-effort without it)
@@ -12,6 +15,8 @@
 //
 // Best-effort: any failure resolves to null rather than blocking ingestion.
 // Authored by Araza.
+
+import * as mupdf from "mupdf";
 
 export interface ExtractedLineItem {
   description: string | null;
@@ -43,6 +48,7 @@ export interface ExtractedInvoiceData {
 }
 
 const DEFAULT_MODEL = "anthropic/claude-sonnet-4.5";
+const MAX_PDF_PAGES = 3;
 
 const SYSTEM_PROMPT = `You are an invoice data extraction engine. Extract every field you can find from the invoice document and return ONLY a JSON object (no markdown, no commentary) with exactly this shape:
 {
@@ -69,6 +75,10 @@ Rules:
 - If no line items are visible, return an empty array for line_items.
 - Put each visible line item of the invoice into line_items.`;
 
+type ContentPart =
+  | { type: "image_url"; image_url: { url: string } }
+  | { type: "text"; text: string };
+
 export async function extractInvoiceFields(
   file: File
 ): Promise<ExtractedInvoiceData | null> {
@@ -79,51 +89,90 @@ export async function extractInvoiceFields(
   }
 
   const model = process.env.OPENROUTER_MODEL || DEFAULT_MODEL;
-  const mime = file.type;
 
   try {
-    const base64 = Buffer.from(await file.arrayBuffer()).toString("base64");
+    const content: ContentPart[] = [];
+    let textContext = "";
 
-    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model,
-        max_tokens: 2048,
-        response_format: { type: "json_object" },
-        messages: [
-          { role: "system", content: SYSTEM_PROMPT },
-          {
-            role: "user",
-            content: [
-              {
-                type: "image_url",
-                image_url: {
-                  url: `data:${mime};base64,${base64}`,
-                },
-              },
-              {
-                type: "text",
-                text: "Extract the invoice fields from this document now.",
-              },
-            ],
-          },
-        ],
-      }),
+    if (file.type === "application/pdf") {
+      const data = new Uint8Array(await file.arrayBuffer());
+      const doc = mupdf.Document.openDocument(data, "application/pdf");
+      try {
+        const pageCount = doc.countPages();
+        for (let i = 0; i < Math.min(pageCount, MAX_PDF_PAGES); i++) {
+          const page = doc.loadPage(i);
+          const pix = page.toPixmap(
+            mupdf.Matrix.scale(2, 2),
+            mupdf.ColorSpace.DeviceRGB,
+            true,
+            true
+          );
+          const png = pix.asPNG();
+          content.push({
+            type: "image_url",
+            image_url: {
+              url: `data:image/png;base64,${Buffer.from(png).toString("base64")}`,
+            },
+          });
+        }
+        try {
+          const st = doc
+            .loadPage(0)
+            .toStructuredText("preserve-whitespace");
+          textContext = st.asText().slice(0, 4000);
+        } catch {
+          // text extraction is a bonus; images carry the content
+        }
+      } finally {
+        doc.destroy();
+      }
+      if (content.length === 0 && !textContext) return null;
+    } else {
+      const base64 = Buffer.from(await file.arrayBuffer()).toString("base64");
+      content.push({
+        type: "image_url",
+        image_url: { url: `data:${file.type};base64,${base64}` },
+      });
+    }
+
+    content.push({
+      type: "text",
+      text:
+        "Extract the invoice fields from this document now." +
+        (textContext
+          ? `\n\nOCR text for reference (may contain errors):\n${textContext}`
+          : ""),
     });
+
+    const response = await fetch(
+      "https://openrouter.ai/api/v1/chat/completions",
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model,
+          max_tokens: 2048,
+          response_format: { type: "json_object" },
+          messages: [
+            { role: "system", content: SYSTEM_PROMPT },
+            { role: "user", content },
+          ],
+        }),
+      }
+    );
 
     if (!response.ok) return null;
 
     const body = (await response.json()) as {
       choices?: { message?: { content?: string } }[];
     };
-    const content = body.choices?.[0]?.message?.content;
-    if (!content) return null;
+    const contentText = body.choices?.[0]?.message?.content;
+    if (!contentText) return null;
 
-    return parseExtraction(content);
+    return parseExtraction(contentText);
   } catch {
     return null;
   }
