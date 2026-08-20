@@ -12,6 +12,7 @@ export function BillPanel({
   invoice,
   documentCount,
   lineItems,
+  projects,
   saveBill,
   saveLineItem,
   deleteLineItem,
@@ -21,6 +22,7 @@ export function BillPanel({
   invoice: Invoice;
   documentCount: number;
   lineItems: LineItem[];
+  projects: { id: string; name: string }[];
   saveBill: (formData: FormData) => Promise<void>;
   saveLineItem: (
     lineItemId: string,
@@ -144,6 +146,21 @@ export function BillPanel({
                 defaultValue={invoice.due_date ?? ""}
                 className={inputCls}
               />
+            </label>
+            <label className="col-span-2">
+              <span className={labelCls}>Project / customer</span>
+              <select
+                name="project_id"
+                defaultValue={invoice.project_id ?? ""}
+                className={inputCls}
+              >
+                <option value="">— none —</option>
+                {projects.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
             </label>
           </div>
 

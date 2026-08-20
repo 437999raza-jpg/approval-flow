@@ -20,6 +20,7 @@ export interface BillData {
   primaryFileUrl: string | null;
   documentCount: number;
   lineItems: LineItem[];
+  projects: { id: string; name: string }[];
   saveBill: (formData: FormData) => Promise<void>;
   saveLineItem: (
     lineItemId: string,
@@ -283,6 +284,7 @@ export function DetailSplit({
             invoice={bill.invoice}
             documentCount={bill.documentCount}
             lineItems={bill.lineItems}
+            projects={bill.projects}
             saveBill={bill.saveBill}
             saveLineItem={bill.saveLineItem}
             deleteLineItem={bill.deleteLineItem}

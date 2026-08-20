@@ -61,6 +61,22 @@ export interface Database {
         >;
         Relationships: [];
       };
+      projects: {
+        Row: {
+          id: string;
+          organization_id: string;
+          name: string;
+          qbo_id: string | null;
+          source: "manual" | "qbo";
+          active: boolean;
+          created_at: string;
+        };
+        Insert: Partial<
+          Database["public"]["Tables"]["projects"]["Row"]
+        > & { organization_id: string; name: string };
+        Update: Partial<Database["public"]["Tables"]["projects"]["Row"]>;
+        Relationships: [];
+      };
       approval_workflows: {
         Row: {
           id: string;
@@ -105,6 +121,7 @@ export interface Database {
           bill_date: string | null;
           due_date: string | null;
           tax_amount: number | null;
+          project_id: string | null;
           status: InvoiceStatus;
           source: InvoiceSource;
           source_email: string | null;
