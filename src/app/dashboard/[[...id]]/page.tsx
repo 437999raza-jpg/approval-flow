@@ -11,6 +11,7 @@ import { InvoiceStatusBadge } from "@/components/InvoiceStatusBadge";
 import { ApprovalStepper } from "@/components/ApprovalStepper";
 import { SearchInput } from "@/components/SearchInput";
 import { SignOutButton } from "@/components/SignOutButton";
+import { CollapsibleSection } from "@/components/CollapsibleSection";
 import type { Database } from "@/lib/supabase/types";
 
 type Invoice = Database["public"]["Tables"]["invoices"]["Row"];
@@ -421,26 +422,52 @@ export default async function DashboardPage({
               </div>
             ) : (
               <>
-                {/* Left: the invoice document */}
-                <div className="flex min-w-0 flex-1 flex-col border-r border-slate-200 bg-slate-100">
-                  <div className="flex flex-none items-center justify-between gap-2 border-b border-slate-200 bg-white px-4 py-2">
-                    <span className="truncate text-sm font-medium text-slate-700">
-                      {selected.file_name}
-                    </span>
-                    {signedFileUrl && (
-                      <a
-                        href={signedFileUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="flex-none text-xs font-medium text-blue-600 hover:underline"
+                {/* Left: the invoice document (collapsible vertically) */}
+                <details
+                  open
+                  className="group flex min-w-0 flex-1 flex-col border-r border-slate-200 bg-slate-100"
+                >
+                  <summary className="flex cursor-pointer list-none select-none items-center justify-between gap-2 border-b border-slate-200 bg-white px-4 py-2 hover:bg-slate-50 [&::-webkit-details-marker]:hidden">
+                    <span className="flex min-w-0 items-center gap-2">
+                      <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        className="flex-none text-slate-400 transition-transform group-open:rotate-180"
                       >
-                        Open in new tab ↗
-                      </a>
-                    )}
-                  </div>
+                        <path
+                          d="M6 9l6 6 6-6"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                      <span className="truncate text-sm font-medium text-slate-700">
+                        {selected.file_name}
+                      </span>
+                    </span>
+                    <span className="flex flex-none items-center gap-3">
+                      {signedFileUrl && (
+                        <a
+                          href={signedFileUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-xs font-medium text-blue-600 hover:underline"
+                        >
+                          Open in new tab ↗
+                        </a>
+                      )}
+                    </span>
+                  </summary>
                   <div className="min-h-0 flex-1 overflow-auto p-4">
                     {signedFileUrl ? (
                       isImage ? (
+                        // Deliberately a plain <img>: the source is an
+                        // expiring signed URL for a user-uploaded document,
+                        // not something next/image can optimize.
+                        // eslint-disable-next-line @next/next/no-img-element
                         <img
                           src={signedFileUrl}
                           alt={selected.file_name}
@@ -485,173 +512,209 @@ export default async function DashboardPage({
                       </p>
                     )}
                   </div>
-                </div>
+                </details>
 
-                {/* Right: data + approvals + discussion */}
-                <div className="w-[400px] flex-none overflow-y-auto">
-                  <div className="p-6">
-                {searchParams.error && (
-                  <div className="mb-6 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                    {DECISION_ERRORS[searchParams.error] ??
-                      "That action could not be completed."}
-                  </div>
-                )}
-                <div className="flex items-start justify-between">
-                  <div>
-                    <h1 className="text-xl font-semibold">
-                      {selected.vendor_name ?? selected.file_name}
-                    </h1>
-                    {selected.invoice_number && (
-                      <p className="text-sm text-slate-500">
-                        Invoice #{selected.invoice_number}
-                      </p>
-                    )}
-                  </div>
-                  <div className="text-right">
-                    {selected.amount != null && (
-                      <div className="text-lg font-semibold">
-                        {selected.amount.toLocaleString(undefined, {
-                          style: "currency",
-                          currency: selected.currency,
-                        })}
+                {/* Right: collapsible sections — status, extracted fields,
+                    discussion, document details */}
+                <div className="w-[400px] flex-none overflow-y-auto bg-white">
+                  <div className="border-b border-slate-200 px-4 py-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <h1 className="truncate text-base font-semibold">
+                          {selected.vendor_name ?? selected.file_name}
+                        </h1>
+                        {selected.invoice_number && (
+                          <p className="text-sm text-slate-500">
+                            Invoice #{selected.invoice_number}
+                          </p>
+                        )}
                       </div>
-                    )}
-                    <div className="mt-1">
-                      <InvoiceStatusBadge status={selected.status} />
+                      <div className="text-right">
+                        {selected.amount != null && (
+                          <div className="text-lg font-semibold">
+                            {selected.amount.toLocaleString(undefined, {
+                              style: "currency",
+                              currency: selected.currency,
+                            })}
+                          </div>
+                        )}
+                        <div className="mt-1">
+                          <InvoiceStatusBadge status={selected.status} />
+                        </div>
+                      </div>
                     </div>
                   </div>
-                </div>
 
-                {stepsForSelected.length > 0 && (
-                  <div className="mt-6 rounded-lg border border-slate-200 p-4">
-                    <ApprovalStepper
-                      steps={stepsForSelected}
-                      approvals={approvalsForSelected}
-                      currentStepOrder={selected.current_step_order}
-                      invoiceStatus={selected.status}
-                    />
-                  </div>
-                )}
-
-                {selected.status !== "approved" && selected.status !== "rejected" && (
-                  <div className="mt-6 flex gap-3">
-                    {canDecide ? (
-                      <>
-                        <form action={decide.bind(null, selected.id, "approved")}>
-                          <button className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700">
-                            Approve
-                          </button>
-                        </form>
-                        <form action={decide.bind(null, selected.id, "rejected")}>
-                          <button className="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700">
-                            Reject
-                          </button>
-                        </form>
-                      </>
-                    ) : (
-                      <p className="text-sm text-slate-500">
-                        Waiting on the approver for step{" "}
-                        {selected.current_step_order}.
-                      </p>
-                    )}
-                  </div>
-                )}
-
-                {/* Discussion — the chat foundation. Real-time updates via
-                    Supabase Realtime can layer on top of invoice_comments. */}
-                <div className="mt-6 rounded-lg border border-slate-200 p-4">
-                  <h2 className="text-sm font-semibold text-slate-700">
-                    Discussion
-                  </h2>
-                  <div className="mt-3 space-y-3">
-                    {commentsForSelected.length === 0 ? (
-                      <p className="text-sm text-slate-400">
-                        No comments yet. Chat with your team about this invoice
-                        here.
-                      </p>
-                    ) : (
-                      commentsForSelected.map((comment) => (
-                        <div
-                          key={comment.id}
-                          className="rounded-md bg-slate-50 px-3 py-2"
-                        >
-                          <div className="flex items-baseline justify-between gap-2">
-                            <span className="text-xs font-medium text-slate-700">
-                              {comment.author_id
-                                ? (authorNameById.get(comment.author_id) ??
-                                  "Team member")
-                                : "System"}
-                            </span>
-                            <span className="text-xs text-slate-400">
-                              {new Date(comment.created_at).toLocaleString()}
-                            </span>
-                          </div>
-                          <p className="mt-1 whitespace-pre-wrap text-sm text-slate-700">
-                            {comment.body}
-                          </p>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                  <form
-                    action={addComment.bind(null, selected.id)}
-                    className="mt-3 flex gap-2"
-                  >
-                    <input
-                      name="body"
-                      required
-                      placeholder="Ask a question or leave a note…"
-                      className="min-w-0 flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
-                    />
-                    <button className="rounded-md bg-slate-800 px-3 py-2 text-sm font-medium text-white hover:bg-slate-700">
-                      Post
-                    </button>
-                  </form>
-                </div>
-
-                <dl className="mt-6 grid grid-cols-2 gap-x-4 gap-y-3 border-t border-slate-200 pt-6 text-sm">
-                  {selected.due_date && (
-                    <>
-                      <dt className="text-slate-500">Due date</dt>
-                      <dd>{new Date(selected.due_date).toLocaleDateString()}</dd>
-                    </>
+                  {searchParams.error && (
+                    <div className="mx-4 mt-4 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                      {DECISION_ERRORS[searchParams.error] ??
+                        "That action could not be completed."}
+                    </div>
                   )}
-                  <dt className="text-slate-500">Source</dt>
-                  <dd className="capitalize">
-                    {selected.source}
-                    {selected.source_email ? ` (${selected.source_email})` : ""}
-                  </dd>
-                  <dt className="text-slate-500">File</dt>
-                  <dd>
-                    {signedFileUrl ? (
-                      <a
-                        href={signedFileUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-blue-600 hover:underline"
-                      >
-                        {selected.file_name}
-                      </a>
-                    ) : (
-                      selected.file_name
+
+                  <CollapsibleSection title="Status & approval">
+                    {stepsForSelected.length > 0 && (
+                      <div className="mt-3">
+                        <ApprovalStepper
+                          steps={stepsForSelected}
+                          approvals={approvalsForSelected}
+                          currentStepOrder={selected.current_step_order}
+                          invoiceStatus={selected.status}
+                        />
+                      </div>
                     )}
-                  </dd>
-                  <dt className="text-slate-500">Received</dt>
-                  <dd>{new Date(selected.created_at).toLocaleString()}</dd>
-                  <dt className="text-slate-500">Audit trail</dt>
-                  <dd>
-                    <a
-                      href={`/api/invoices/${selected.id}/audit-trail`}
-                      className="text-blue-600 hover:underline"
+                    {selected.status !== "approved" &&
+                      selected.status !== "rejected" && (
+                        <div className="mt-3 flex gap-3">
+                          {canDecide ? (
+                            <>
+                              <form
+                                action={decide.bind(null, selected.id, "approved")}
+                              >
+                                <button className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700">
+                                  Approve
+                                </button>
+                              </form>
+                              <form
+                                action={decide.bind(null, selected.id, "rejected")}
+                              >
+                                <button className="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700">
+                                  Reject
+                                </button>
+                              </form>
+                            </>
+                          ) : (
+                            <p className="text-sm text-slate-500">
+                              Waiting on the approver for step{" "}
+                              {selected.current_step_order}.
+                            </p>
+                          )}
+                        </div>
+                      )}
+                  </CollapsibleSection>
+
+                  <CollapsibleSection title="Extracted fields">
+                    <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
+                      <dt className="text-slate-500">Vendor</dt>
+                      <dd>{selected.vendor_name ?? "—"}</dd>
+                      <dt className="text-slate-500">Invoice #</dt>
+                      <dd>{selected.invoice_number ?? "—"}</dd>
+                      <dt className="text-slate-500">Amount</dt>
+                      <dd>
+                        {selected.amount != null
+                          ? selected.amount.toLocaleString(undefined, {
+                              style: "currency",
+                              currency: selected.currency,
+                            })
+                          : "—"}
+                      </dd>
+                      <dt className="text-slate-500">Currency</dt>
+                      <dd>{selected.currency}</dd>
+                      {selected.due_date && (
+                        <>
+                          <dt className="text-slate-500">Due date</dt>
+                          <dd>
+                            {new Date(selected.due_date).toLocaleDateString()}
+                          </dd>
+                        </>
+                      )}
+                    </dl>
+                  </CollapsibleSection>
+
+                  <CollapsibleSection
+                    title="Discussion"
+                    badge={
+                      commentsForSelected.length > 0
+                        ? commentsForSelected.length
+                        : undefined
+                    }
+                  >
+                    <div className="mt-3 space-y-3">
+                      {commentsForSelected.length === 0 ? (
+                        <p className="text-sm text-slate-400">
+                          No comments yet. Chat with your team about this
+                          invoice here.
+                        </p>
+                      ) : (
+                        commentsForSelected.map((comment) => (
+                          <div
+                            key={comment.id}
+                            className="rounded-md bg-slate-50 px-3 py-2"
+                          >
+                            <div className="flex items-baseline justify-between gap-2">
+                              <span className="text-xs font-medium text-slate-700">
+                                {comment.author_id
+                                  ? (authorNameById.get(comment.author_id) ??
+                                    "Team member")
+                                  : "System"}
+                              </span>
+                              <span className="text-xs text-slate-400">
+                                {new Date(comment.created_at).toLocaleString()}
+                              </span>
+                            </div>
+                            <p className="mt-1 whitespace-pre-wrap text-sm text-slate-700">
+                              {comment.body}
+                            </p>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                    <form
+                      action={addComment.bind(null, selected.id)}
+                      className="mt-3 flex gap-2"
                     >
-                      Download
-                    </a>
-                    <span className="ml-1 text-xs text-slate-400">
-                      (approvals + chat)
-                    </span>
-                  </dd>
-                </dl>
-                  </div>
+                      <input
+                        name="body"
+                        required
+                        placeholder="Ask a question or leave a note…"
+                        className="min-w-0 flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+                      />
+                      <button className="rounded-md bg-slate-800 px-3 py-2 text-sm font-medium text-white hover:bg-slate-700">
+                        Post
+                      </button>
+                    </form>
+                  </CollapsibleSection>
+
+                  <CollapsibleSection title="Document details">
+                    <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
+                      <dt className="text-slate-500">Source</dt>
+                      <dd className="capitalize">
+                        {selected.source}
+                        {selected.source_email
+                          ? ` (${selected.source_email})`
+                          : ""}
+                      </dd>
+                      <dt className="text-slate-500">File</dt>
+                      <dd>
+                        {signedFileUrl ? (
+                          <a
+                            href={signedFileUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-blue-600 hover:underline"
+                          >
+                            {selected.file_name}
+                          </a>
+                        ) : (
+                          selected.file_name
+                        )}
+                      </dd>
+                      <dt className="text-slate-500">Received</dt>
+                      <dd>{new Date(selected.created_at).toLocaleString()}</dd>
+                      <dt className="text-slate-500">Audit trail</dt>
+                      <dd>
+                        <a
+                          href={`/api/invoices/${selected.id}/audit-trail`}
+                          className="text-blue-600 hover:underline"
+                        >
+                          Download
+                        </a>
+                        <span className="ml-1 text-xs text-slate-400">
+                          (approvals + chat)
+                        </span>
+                      </dd>
+                    </dl>
+                  </CollapsibleSection>
                 </div>
               </>
             )}
