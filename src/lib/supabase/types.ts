@@ -92,6 +92,39 @@ export interface Database {
         >;
         Relationships: [];
       };
+      approval_workflow_rules: {
+        Row: {
+          id: string;
+          workflow_id: string;
+          rule_type:
+            | "total_amount"
+            | "requester"
+            | "supplier"
+            | "product_service"
+            | "category"
+            | "class"
+            | "customer";
+          operator:
+            | "any"
+            | "between"
+            | "under"
+            | "over"
+            | "equal"
+            | "matches"
+            | "not_matches";
+          value: string | null;
+          value2: string | null;
+          rule_order: number;
+          created_at: string;
+        };
+        Insert: Partial<
+          Database["public"]["Tables"]["approval_workflow_rules"]["Row"]
+        > & { workflow_id: string; rule_type: string; operator: string };
+        Update: Partial<
+          Database["public"]["Tables"]["approval_workflow_rules"]["Row"]
+        >;
+        Relationships: [];
+      };
       approval_workflows: {
         Row: {
           id: string;
