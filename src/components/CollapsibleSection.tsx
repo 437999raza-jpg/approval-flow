@@ -35,19 +35,25 @@ export function CollapsibleSection({
             </span>
           )}
         </span>
-        <svg
-          width="14"
-          height="14"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          className={`flex-none text-slate-400 transition-transform ${
-            open ? "rotate-180" : ""
+        <span
+          className={`flex h-6 w-6 flex-none items-center justify-center rounded-full border transition-colors ${
+            open
+              ? "border-slate-300 bg-slate-100 text-slate-600"
+              : "border-slate-200 bg-white text-slate-400"
           }`}
         >
-          <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            className={`transition-transform ${open ? "rotate-180" : ""}`}
+          >
+            <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </span>
       </button>
       {open && <div className="px-4 pb-4">{children}</div>}
     </div>

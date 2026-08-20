@@ -33,11 +33,11 @@ export function DetailSplit({
                 type="button"
                 onClick={() => setShowDoc(false)}
                 title="Hide document"
-                className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+                className="flex flex-none items-center gap-1 rounded-md border border-slate-200 px-2 py-1 text-xs font-medium text-slate-500 hover:bg-slate-50"
               >
                 <svg
-                  width="14"
-                  height="14"
+                  width="12"
+                  height="12"
                   viewBox="0 0 24 24"
                   fill="none"
                   stroke="currentColor"
@@ -49,6 +49,7 @@ export function DetailSplit({
                     strokeLinejoin="round"
                   />
                 </svg>
+                Hide
               </button>
               <span className="truncate text-sm font-medium text-slate-700">
                 {fileName}

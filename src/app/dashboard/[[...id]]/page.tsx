@@ -12,7 +12,9 @@ import { ApprovalStepper } from "@/components/ApprovalStepper";
 import { SearchInput } from "@/components/SearchInput";
 import { SignOutButton } from "@/components/SignOutButton";
 import { CollapsibleSection } from "@/components/CollapsibleSection";
+import { CollapsiblePane } from "@/components/CollapsiblePane";
 import { DetailSplit } from "@/components/DetailSplit";
+import { Sidebar } from "@/components/Sidebar";
 import type { Database } from "@/lib/supabase/types";
 
 type Invoice = Database["public"]["Tables"]["invoices"]["Row"];
@@ -323,8 +325,8 @@ export default async function DashboardPage({
 
   return (
     <div className="flex h-screen bg-slate-50 text-slate-900">
-      {/* Sidebar */}
-      <aside className="flex w-60 flex-none flex-col border-r border-slate-200 bg-white">
+      {/* Sidebar (collapsible via hamburger) */}
+      <Sidebar>
         <div className="border-b border-slate-200 p-4">
           <div className="text-sm font-semibold">{org.name}</div>
           <div className="mt-0.5 truncate text-xs text-slate-400" title={`${org.inbound_email_token}@${process.env.INBOUND_EMAIL_DOMAIN}`}>
@@ -359,7 +361,7 @@ export default async function DashboardPage({
           <span className="truncate text-xs text-slate-500">{user.email}</span>
           <SignOutButton />
         </div>
-      </aside>
+      </Sidebar>
 
       <div className="flex min-w-0 flex-1 flex-col">
         {/* Top bar */}
@@ -377,8 +379,8 @@ export default async function DashboardPage({
         </header>
 
         <div className="flex min-h-0 flex-1">
-          {/* List pane */}
-          <div className="w-96 flex-none overflow-y-auto border-r border-slate-200">
+          {/* List pane (collapsible) */}
+          <CollapsiblePane title="Invoices">
             {filtered.length === 0 ? (
               <div className="p-8 text-center text-sm text-slate-500">
                 No invoices in this view.
@@ -413,7 +415,7 @@ export default async function DashboardPage({
                 </Link>
               ))
             )}
-          </div>
+          </CollapsiblePane>
 
           {/* Detail pane: document viewer + side panel (Dext/ApprovalMax-style split) */}
           <div className="flex min-w-0 flex-1">
