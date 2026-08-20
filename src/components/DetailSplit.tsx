@@ -228,7 +228,7 @@ export function DetailSplit({
       {bill && (billOpen ? (
         <div
           className={
-            showDoc ? "w-[380px] flex-none" : "min-w-0 flex-1"
+            showDoc ? "w-[480px] flex-none" : "min-w-0 flex-[3]"
           }
         >
           <BillPanel
@@ -275,7 +275,7 @@ export function DetailSplit({
         className={
           showDoc
             ? "w-[360px] flex-none overflow-y-auto bg-white"
-            : "min-w-0 flex-1 overflow-y-auto bg-white"
+            : "min-w-0 flex-[2] overflow-y-auto bg-white"
         }
       >
         {children}
