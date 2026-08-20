@@ -195,6 +195,13 @@ export default async function SettingsPage({
           Your account isn&apos;t attached to an organization yet. See the
           README first-org-setup steps.
         </p>
+        <div className="mt-4 flex items-center gap-3 rounded-md border border-slate-200 bg-white px-4 py-3 text-sm">
+          <span className="truncate text-slate-600">
+            Signed in as <strong>{user.email}</strong>
+          </span>
+          <span className="flex-1" />
+          <SignOutButton />
+        </div>
       </main>
     );
   }

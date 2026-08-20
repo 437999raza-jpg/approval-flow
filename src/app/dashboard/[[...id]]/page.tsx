@@ -372,6 +372,13 @@ export default async function DashboardPage({
           and <code className="mx-1 rounded bg-slate-100 px-1">organization_members</code>
           to get started (see the README).
         </p>
+        <div className="mt-4 flex items-center gap-3 rounded-md border border-slate-200 bg-white px-4 py-3 text-sm">
+          <span className="truncate text-slate-600">
+            Signed in as <strong>{user.email}</strong>
+          </span>
+          <span className="flex-1" />
+          <SignOutButton />
+        </div>
       </main>
     );
   }
