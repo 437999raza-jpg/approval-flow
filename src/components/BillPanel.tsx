@@ -1,3 +1,6 @@
+"use client";
+
+import { useState } from "react";
 import type { Database } from "@/lib/supabase/types";
 
 type Invoice = Database["public"]["Tables"]["invoices"]["Row"];
@@ -5,8 +8,8 @@ type Invoice = Database["public"]["Tables"]["invoices"]["Row"];
 // ApprovalMax-style "Bill" panel: the QBO bill as it will appear in the
 // accounting system. This is exactly what gets pushed to QuickBooks on sync
 // — vendor, bill actions, category line items, and tax-exclusive totals —
-// together with every attached document + the audit-trail PDF.
-// Authored by Araza.
+// together with every attached document + the audit-trail PDF. Collapses to
+// a slim strip (client state). Authored by Araza.
 export function BillPanel({
   invoice,
   primaryFileUrl,
@@ -16,6 +19,8 @@ export function BillPanel({
   primaryFileUrl: string | null;
   documentCount: number;
 }) {
+  const [open, setOpen] = useState(true);
+
   const amount =
     invoice.amount != null
       ? invoice.amount.toLocaleString(undefined, {
@@ -26,8 +31,58 @@ export function BillPanel({
   const vendor = invoice.vendor_name ?? invoice.file_name ?? "Unknown vendor";
   const billNumber = invoice.invoice_number ?? "—";
 
+  if (!open) {
+    return (
+      <div className="flex flex-none flex-col items-center gap-3 border-r border-slate-200 bg-white py-3">
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          title="Show bill"
+          className="rounded-md p-1.5 text-slate-400 hover:bg-slate-100"
+        >
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+          >
+            <path d="M9 6l6 6-6 6" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
+        <span className="text-[11px] font-medium text-slate-400 [writing-mode:vertical-rl]">
+          Bill
+        </span>
+      </div>
+    );
+  }
+
   return (
-    <div className="w-[380px] flex-none overflow-y-auto border-r border-slate-200 bg-white">
+    <div className="flex w-[380px] flex-none flex-col border-r border-slate-200 bg-white">
+      <div className="flex flex-none items-center justify-between border-b border-slate-200 px-4 py-2">
+        <span className="text-xs font-bold uppercase tracking-wide text-slate-400">
+          Bill
+        </span>
+        <button
+          type="button"
+          onClick={() => setOpen(false)}
+          title="Hide bill"
+          className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+        >
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+          >
+            <path d="M15 6l-6 6 6 6" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto">
       {/* Bill header */}
       <div className="border-b border-slate-200 px-4 py-3">
         <div className="text-sm font-semibold text-slate-800">
@@ -151,6 +206,7 @@ export function BillPanel({
             <dd>{amount}</dd>
           </div>
         </dl>
+      </div>
       </div>
     </div>
   );

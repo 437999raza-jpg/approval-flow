@@ -202,6 +202,34 @@ async function addDocument(invoiceId: string, formData: FormData) {
   revalidatePath("/dashboard", "layout");
 }
 
+// Save the accounting instructions for an invoice (migration 0004). On QBO
+// sync this becomes the bill's memo (PrivateNote) — internal guidance for
+// the accounting team, not printed on the invoice.
+async function saveAccountingInstructions(
+  invoiceId: string,
+  formData: FormData
+) {
+  "use server";
+
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
+  const instructions = String(formData.get("instructions") ?? "").trim();
+
+  await supabase
+    .from("invoices")
+    .update({
+      accounting_instructions: instructions || null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", invoiceId);
+
+  revalidatePath("/dashboard", "layout");
+}
+
 // File-type helpers for previewing documents (allowed types are pdf, png,
 // jpeg, webp — see src/lib/invoices.ts).
 const extOf = (name: string) => name.split(".").pop()?.toLowerCase() ?? "";
@@ -617,6 +645,29 @@ export default async function DashboardPage({
                         </>
                       )}
                     </dl>
+                  </CollapsibleSection>
+
+                  <CollapsibleSection title="Instructions for accounting">
+                    <p className="mt-2 text-xs text-slate-400">
+                      Internal guidance for your accounting team. On QBO sync
+                      this becomes the bill&apos;s memo (PrivateNote) — not
+                      printed on the invoice.
+                    </p>
+                    <form
+                      action={saveAccountingInstructions.bind(null, selected.id)}
+                      className="mt-2"
+                    >
+                      <textarea
+                        name="instructions"
+                        defaultValue={selected.accounting_instructions ?? ""}
+                        rows={3}
+                        placeholder="e.g. Allocate to job 12-45, net-30 terms, prior approval required…"
+                        className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+                      />
+                      <button className="mt-2 rounded-md bg-slate-800 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-700">
+                        Save
+                      </button>
+                    </form>
                   </CollapsibleSection>
 
                   <CollapsibleSection

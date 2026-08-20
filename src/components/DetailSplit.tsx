@@ -107,7 +107,7 @@ export function DetailSplit({
               {uploadAction && (
                 <form ref={formRef} action={uploadAction} className="flex-none">
                   <label className="cursor-pointer rounded-md border border-slate-200 px-2 py-1 text-xs font-medium text-slate-500 hover:bg-slate-50">
-                    + Add page
+                    Add document
                     <input
                       type="file"
                       name="file"
