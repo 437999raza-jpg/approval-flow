@@ -12,6 +12,7 @@ import { ApprovalStepper } from "@/components/ApprovalStepper";
 import { SearchInput } from "@/components/SearchInput";
 import { SignOutButton } from "@/components/SignOutButton";
 import { CollapsibleSection } from "@/components/CollapsibleSection";
+import { DetailSplit } from "@/components/DetailSplit";
 import type { Database } from "@/lib/supabase/types";
 
 type Invoice = Database["public"]["Tables"]["invoices"]["Row"];
@@ -421,102 +422,13 @@ export default async function DashboardPage({
                 Select an invoice to view details.
               </div>
             ) : (
-              <>
-                {/* Left: the invoice document (collapsible vertically) */}
-                <details
-                  open
-                  className="group flex min-w-0 flex-1 flex-col border-r border-slate-200 bg-slate-100"
-                >
-                  <summary className="flex cursor-pointer list-none select-none items-center justify-between gap-2 border-b border-slate-200 bg-white px-4 py-2 hover:bg-slate-50 [&::-webkit-details-marker]:hidden">
-                    <span className="flex min-w-0 items-center gap-2">
-                      <svg
-                        width="14"
-                        height="14"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        className="flex-none text-slate-400 transition-transform group-open:rotate-180"
-                      >
-                        <path
-                          d="M6 9l6 6 6-6"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        />
-                      </svg>
-                      <span className="truncate text-sm font-medium text-slate-700">
-                        {selected.file_name}
-                      </span>
-                    </span>
-                    <span className="flex flex-none items-center gap-3">
-                      {signedFileUrl && (
-                        <a
-                          href={signedFileUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-xs font-medium text-blue-600 hover:underline"
-                        >
-                          Open in new tab ↗
-                        </a>
-                      )}
-                    </span>
-                  </summary>
-                  <div className="min-h-0 flex-1 overflow-auto p-4">
-                    {signedFileUrl ? (
-                      isImage ? (
-                        // Deliberately a plain <img>: the source is an
-                        // expiring signed URL for a user-uploaded document,
-                        // not something next/image can optimize.
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={signedFileUrl}
-                          alt={selected.file_name}
-                          className="mx-auto max-w-full rounded-md shadow"
-                        />
-                      ) : isPdf ? (
-                        <object
-                          data={signedFileUrl}
-                          type="application/pdf"
-                          className="h-full w-full"
-                        >
-                          <p className="text-sm text-slate-500">
-                            Your browser can&apos;t display this PDF.{" "}
-                            <a
-                              href={signedFileUrl}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="text-blue-600 underline"
-                            >
-                              Open it instead
-                            </a>
-                            .
-                          </p>
-                        </object>
-                      ) : (
-                        <p className="text-sm text-slate-500">
-                          No preview for this file type.{" "}
-                          <a
-                            href={signedFileUrl}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="text-blue-600 underline"
-                          >
-                            Open file
-                          </a>
-                          .
-                        </p>
-                      )
-                    ) : (
-                      <p className="text-sm text-slate-500">
-                        File preview unavailable.
-                      </p>
-                    )}
-                  </div>
-                </details>
-
-                {/* Right: collapsible sections — status, extracted fields,
-                    discussion, document details */}
-                <div className="w-[400px] flex-none overflow-y-auto bg-white">
+              <DetailSplit
+                fileName={selected.file_name}
+                fileUrl={signedFileUrl}
+                isPdf={isPdf}
+                isImage={isImage}
+              >
+                {/* Side panel content: header + collapsible sections */}
                   <div className="border-b border-slate-200 px-4 py-4">
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
@@ -715,8 +627,7 @@ export default async function DashboardPage({
                       </dd>
                     </dl>
                   </CollapsibleSection>
-                </div>
-              </>
+              </DetailSplit>
             )}
           </div>
         </div>

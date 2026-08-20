@@ -1,7 +1,11 @@
-import type { ReactNode } from "react";
+"use client";
 
-// A collapsible (vertical accordion) panel built on native <details>, so it
-// works without JavaScript even in server components. Authored by Araza.
+import { useState, type ReactNode } from "react";
+
+// A collapsible (vertical accordion) panel. Client component with explicit
+// state so toggling is guaranteed to work (native <details> + React's `open`
+// handling proved unreliable) and stays collapsed across re-renders.
+// Authored by Araza.
 export function CollapsibleSection({
   title,
   badge,
@@ -13,9 +17,16 @@ export function CollapsibleSection({
   children: ReactNode;
   defaultOpen?: boolean;
 }) {
+  const [open, setOpen] = useState(defaultOpen);
+
   return (
-    <details open={defaultOpen} className="group border-b border-slate-200">
-      <summary className="flex cursor-pointer list-none select-none items-center justify-between gap-2 px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 [&::-webkit-details-marker]:hidden">
+    <div className="border-b border-slate-200">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="flex w-full cursor-pointer select-none items-center justify-between gap-2 px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+      >
         <span className="flex min-w-0 items-center gap-2">
           <span className="truncate">{title}</span>
           {badge !== undefined && (
@@ -31,12 +42,14 @@ export function CollapsibleSection({
           fill="none"
           stroke="currentColor"
           strokeWidth="2"
-          className="flex-none text-slate-400 transition-transform group-open:rotate-180"
+          className={`flex-none text-slate-400 transition-transform ${
+            open ? "rotate-180" : ""
+          }`}
         >
           <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
-      </summary>
-      <div className="px-4 pb-4">{children}</div>
-    </details>
+      </button>
+      {open && <div className="px-4 pb-4">{children}</div>}
+    </div>
   );
 }
