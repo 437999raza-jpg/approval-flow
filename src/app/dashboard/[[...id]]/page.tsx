@@ -43,7 +43,16 @@ const DECISION_ERRORS: Record<string, string> = {
 // recorded for this step. The (invoice_id, step_order) unique constraint
 // added in migration 0002 makes double-decisions impossible even under a
 // race.
-async function decide(invoiceId: string, decision: "approved" | "rejected") {
+//
+// When the form carries an "instructions" field (the Approve button lives
+// in the Instructions for accounting section), it is saved as the bill
+// memo before the decision — so "type the note, press Approve" works in
+// one motion.
+async function decide(
+  invoiceId: string,
+  decision: "approved" | "rejected",
+  formData: FormData
+) {
   "use server";
 
   const supabase = createClient();
@@ -51,6 +60,17 @@ async function decide(invoiceId: string, decision: "approved" | "rejected") {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) redirect("/login");
+
+  const instructions = String(formData.get("instructions") ?? "").trim();
+  if (instructions) {
+    await supabase
+      .from("invoices")
+      .update({
+        accounting_instructions: instructions,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", invoiceId);
+  }
 
   const { data: invoice } = await supabase
     .from("invoices")
@@ -1087,13 +1107,6 @@ export default async function DashboardPage({
                           {canDecide ? (
                             <>
                               <form
-                                action={decide.bind(null, selected.id, "approved")}
-                              >
-                                <button className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700">
-                                  Approve
-                                </button>
-                              </form>
-                              <form
                                 action={holdInvoice.bind(null, selected.id)}
                               >
                                 <button className="rounded-md border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-medium text-amber-800 hover:bg-amber-100">
@@ -1162,6 +1175,11 @@ export default async function DashboardPage({
                         null,
                         selected.id
                       )}
+                      approve={
+                        canDecide
+                          ? decide.bind(null, selected.id, "approved")
+                          : undefined
+                      }
                     />
                   </CollapsibleSection>
 
