@@ -62,13 +62,18 @@ export function DetailSplit({
   const multi = documents.length > 1;
 
   const openDocument = () => {
+    // Always reopen in the clean "auto" layout — any pinned widths from a
+    // previous drag are reset so nothing gets squeezed.
     setShowDoc(true);
     setDocIndex(0);
+    setDocW(null);
+    setBillPinned(false);
   };
 
   const hideDocument = () => {
     setShowDoc(false);
     setDocW(null); // back to auto (fills) on next open
+    setBillPinned(false);
   };
 
   const prevDoc = () =>
@@ -225,7 +230,7 @@ export function DetailSplit({
         <div className="flex flex-none flex-col items-center gap-3 border-r border-slate-200 bg-slate-100 py-3">
           <button
             type="button"
-            onClick={() => setShowDoc(true)}
+            onClick={openDocument}
             title="Show document"
             className="rounded-md p-1.5 text-slate-500 hover:bg-slate-200"
           >
@@ -329,14 +334,18 @@ export function DetailSplit({
         />
       )}
 
+      {/* The side panel absorbs surplus only when nothing else can: the
+          document is pinned fixed, or the document is hidden AND the bill
+          is pinned. When the document is auto (flex-1) it absorbs instead,
+          so the two never fight over the space. */}
       <div
         style={
-          docW != null || billPinned
+          docW != null || (!showDoc && billPinned)
             ? { flexBasis: sideW }
             : { width: sideW }
         }
         className={
-          docW != null || billPinned
+          docW != null || (!showDoc && billPinned)
             ? "min-w-0 flex-1 overflow-y-auto bg-white"
             : "flex-none overflow-y-auto bg-white"
         }
