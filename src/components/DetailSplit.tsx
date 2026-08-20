@@ -1,6 +1,10 @@
 "use client";
 
 import { useRef, useState, type ReactNode } from "react";
+import { BillPanel } from "./BillPanel";
+import type { Database } from "@/lib/supabase/types";
+
+type Invoice = Database["public"]["Tables"]["invoices"]["Row"];
 
 export interface DocumentRef {
   name: string;
@@ -9,24 +13,32 @@ export interface DocumentRef {
   isImage: boolean;
 }
 
+export interface BillData {
+  invoice: Invoice;
+  primaryFileUrl: string | null;
+  documentCount: number;
+}
+
 interface DetailSplitProps {
   documents: DocumentRef[];
-  middle?: ReactNode; // ApprovalMax-style bill panel
-  uploadAction?: (formData: FormData) => Promise<void>; // add a document page
+  bill?: BillData;
+  uploadAction?: (formData: FormData) => Promise<void>; // add a document
   children: ReactNode; // side panel content (server-rendered)
 }
 
-// Dext/ApprovalMax-style split: the invoice document(s) on the left, the
-// bill panel in the middle, and the side panel on the right. The document
-// pane collapses to a slim strip and the panels take the full width. Client
-// component with explicit state. Authored by Araza.
+// Three-pane detail: invoice document(s), the ApprovalMax-style bill panel,
+// and the side panel. The document starts COLLAPSED (the bill is the main
+// focus — that's where the detail lives); click the strip to view the
+// document. The bill panel flexes like the side panel: fixed width when the
+// document is open, expanding to fill when it's hidden. Authored by Araza.
 export function DetailSplit({
   documents,
-  middle,
+  bill,
   uploadAction,
   children,
 }: DetailSplitProps) {
-  const [showDoc, setShowDoc] = useState(true);
+  const [showDoc, setShowDoc] = useState(false);
+  const [billOpen, setBillOpen] = useState(true);
   const [docIndex, setDocIndex] = useState(0);
   const formRef = useRef<HTMLFormElement>(null);
 
@@ -200,12 +212,52 @@ export function DetailSplit({
             </svg>
           </button>
           <span className="text-[11px] font-medium text-slate-400 [writing-mode:vertical-rl]">
-            Document
+            Documents ({documents.length})
           </span>
         </div>
       )}
 
-      {middle}
+      {bill && (billOpen ? (
+        <div
+          className={
+            showDoc ? "w-[380px] flex-none" : "min-w-0 flex-1"
+          }
+        >
+          <BillPanel
+            invoice={bill.invoice}
+            primaryFileUrl={bill.primaryFileUrl}
+            documentCount={bill.documentCount}
+            onCollapse={() => setBillOpen(false)}
+          />
+        </div>
+      ) : (
+        <div className="flex flex-none flex-col items-center gap-3 border-r border-slate-200 bg-white py-3">
+          <button
+            type="button"
+            onClick={() => setBillOpen(true)}
+            title="Show bill"
+            className="rounded-md p-1.5 text-slate-400 hover:bg-slate-100"
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+            >
+              <path
+                d="M9 6l6 6-6 6"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </button>
+          <span className="text-[11px] font-medium text-slate-400 [writing-mode:vertical-rl]">
+            Bill
+          </span>
+        </div>
+      ))}
 
       <div
         className={

@@ -14,7 +14,6 @@ import { SignOutButton } from "@/components/SignOutButton";
 import { CollapsibleSection } from "@/components/CollapsibleSection";
 import { CollapsiblePane } from "@/components/CollapsiblePane";
 import { DetailSplit, type DocumentRef } from "@/components/DetailSplit";
-import { BillPanel } from "@/components/BillPanel";
 import { Sidebar } from "@/components/Sidebar";
 import type { Database } from "@/lib/supabase/types";
 
@@ -534,13 +533,11 @@ export default async function DashboardPage({
               <DetailSplit
                 documents={documentsForSelected}
                 uploadAction={addDocument.bind(null, selected.id)}
-                middle={
-                  <BillPanel
-                    invoice={selected}
-                    primaryFileUrl={signedFileUrl}
-                    documentCount={documentsForSelected.length}
-                  />
-                }
+                bill={{
+                  invoice: selected,
+                  primaryFileUrl: signedFileUrl,
+                  documentCount: documentsForSelected.length,
+                }}
               >
                 {/* Side panel content: header + collapsible sections */}
                   <div className="border-b border-slate-200 px-4 py-4">
