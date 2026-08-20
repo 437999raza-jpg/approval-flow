@@ -374,7 +374,10 @@ export default async function DashboardPage({
         </p>
         <div className="mt-4 flex items-center gap-3 rounded-md border border-slate-200 bg-white px-4 py-3 text-sm">
           <span className="truncate text-slate-600">
-            Signed in as <strong>{user.email}</strong>
+            Signed in as <strong>{user.email}</strong>{" "}
+            <span className="text-xs text-slate-400">
+              (user id {user.id.slice(0, 8)}…)
+            </span>
           </span>
           <span className="flex-1" />
           <SignOutButton />
