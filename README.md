@@ -121,7 +121,7 @@ cp .env.example .env.local   # then fill in the values above
 ```
 
 1. **Create a Supabase project** at supabase.com.
-2. **Run the migrations**: paste [`supabase/migrations/0001_init.sql`](supabase/migrations/0001_init.sql) **and** [`supabase/migrations/0002_approval_hardening.sql`](supabase/migrations/0002_approval_hardening.sql) into the SQL editor and run them, or `supabase db push` if you have the CLI linked.
+2. **Run the migrations**: paste [`supabase/migrations/0001_init.sql`](supabase/migrations/0001_init.sql) **and** [`supabase/migrations/0002_approval_hardening.sql`](supabase/migrations/0002_approval_hardening.sql) into the SQL editor and run them, or `supabase db push` if you have the CLI linked. `0002` is **idempotent** — safe to re-run any number of times.
 3. **Create the storage bucket**: Storage → New bucket → name `invoices`, **Public off**. (Or run the commented `insert into storage.buckets` line at the bottom of the migration.)
 4. **Run the dev server** — see below.
 5. **Bootstrap your first org and user** — see [First org setup](#first-org-setup).
