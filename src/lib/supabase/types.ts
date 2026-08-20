@@ -110,6 +110,7 @@ export interface Database {
           file_name: string;
           submitted_by: string | null;
           current_step_order: number;
+          notes: string | null;
           created_at: string;
           updated_at: string;
         };

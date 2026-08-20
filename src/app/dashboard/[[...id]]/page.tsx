@@ -159,6 +159,56 @@ async function addComment(invoiceId: string, formData: FormData) {
   revalidatePath("/dashboard", "layout");
 }
 
+// Save the internal notes for an invoice (Info > Notes panel). Any org
+// member who can see the invoice can edit them.
+async function saveNotes(invoiceId: string, formData: FormData) {
+  "use server";
+
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
+  const notes = String(formData.get("notes") ?? "").trim();
+
+  await supabase
+    .from("invoices")
+    .update({
+      notes: notes || null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", invoiceId);
+
+  revalidatePath("/dashboard", "layout");
+}
+
+// One label/value row in the extracted-fields grid (Dext-style).
+function Field({
+  label,
+  value,
+}: {
+  label: string;
+  value: string | null;
+}) {
+  const isEmpty = !value;
+  return (
+    <div className="min-w-0">
+      <div className="text-[11px] font-medium uppercase tracking-wide text-slate-400">
+        {label}
+      </div>
+      <div
+        className={`mt-0.5 truncate text-sm ${
+          isEmpty ? "text-slate-300" : "text-slate-700"
+        }`}
+        title={value ?? ""}
+      >
+        {value || "—"}
+      </div>
+    </div>
+  );
+}
+
 export default async function DashboardPage({
   params,
   searchParams,
@@ -256,43 +306,74 @@ export default async function DashboardPage({
   let stepsForSelected: NonNullable<typeof allSteps> = [];
   let approvalsForSelected: Database["public"]["Tables"]["invoice_approvals"]["Row"][] = [];
   let commentsForSelected: Database["public"]["Tables"]["invoice_comments"]["Row"][] = [];
-  let authorNameById = new Map<string, string>();
+  let auditForSelected: Database["public"]["Tables"]["audit_log"]["Row"][] = [];
+  let emailForSelected: {
+    from_address: string | null;
+    to_address: string | null;
+    subject: string | null;
+  } | null = null;
+  let nameById = new Map<string, string>();
 
   if (selected) {
-    const [signed, approvalsRes, commentsRes] = await Promise.all([
-      supabase.storage.from("invoices").createSignedUrl(selected.file_path, 60 * 10),
-      supabase.from("invoice_approvals").select("*").eq("invoice_id", selected.id),
-      supabase
-        .from("invoice_comments")
-        .select("*")
-        .eq("invoice_id", selected.id)
-        .order("created_at", { ascending: true }),
-    ]);
+    const [signed, approvalsRes, commentsRes, auditRes, emailRes] =
+      await Promise.all([
+        supabase.storage
+          .from("invoices")
+          .createSignedUrl(selected.file_path, 60 * 10),
+        supabase
+          .from("invoice_approvals")
+          .select("*")
+          .eq("invoice_id", selected.id),
+        supabase
+          .from("invoice_comments")
+          .select("*")
+          .eq("invoice_id", selected.id)
+          .order("created_at", { ascending: true }),
+        supabase
+          .from("audit_log")
+          .select("*")
+          .eq("invoice_id", selected.id)
+          .order("created_at", { ascending: true }),
+        supabase
+          .from("inbound_email_log")
+          .select("from_address, to_address, subject")
+          .contains("invoice_ids", [selected.id])
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle(),
+      ]);
     signedFileUrl = signed.data?.signedUrl ?? null;
     approvalsForSelected = approvalsRes.data ?? [];
     commentsForSelected = commentsRes.data ?? [];
-    stepsForSelected = (allSteps ?? []).filter((s) => s.workflow_id === selected.workflow_id);
+    auditForSelected = auditRes.data ?? [];
+    emailForSelected = emailRes.data ?? null;
+    stepsForSelected = (allSteps ?? []).filter(
+      (s) => s.workflow_id === selected.workflow_id
+    );
 
-    // Resolve comment author names (profiles RLS lets org members read each
-    // other since migration 0002).
-    const authorIds = [
-      ...new Set(
-        commentsForSelected
-          .map((c) => c.author_id)
-          .filter((id): id is string => !!id)
-      ),
-    ];
-    const { data: authors } =
-      authorIds.length > 0
+    // Resolve display names for the document owner, comment authors, and
+    // audit actors (profiles RLS lets org members read each other since
+    // migration 0002).
+    const profileIds = [
+      selected.submitted_by,
+      ...commentsForSelected.map((c) => c.author_id),
+      ...auditForSelected.map((a) => a.actor_id),
+    ].filter((id): id is string => !!id);
+    const uniqueIds = [...new Set(profileIds)];
+    const { data: profiles } =
+      uniqueIds.length > 0
         ? await supabase
             .from("profiles")
             .select("id, full_name")
-            .in("id", authorIds)
+            .in("id", uniqueIds)
         : { data: [] };
-    authorNameById = new Map(
-      (authors ?? []).map((a) => [a.id, a.full_name ?? "Team member"])
+    nameById = new Map(
+      (profiles ?? []).map((p) => [p.id, p.full_name ?? "Team member"])
     );
   }
+
+  const displayName = (id: string | null) =>
+    id ? (nameById.get(id) ?? id.slice(0, 8)) : null;
 
   const currentStepApprover =
     selected?.workflow_id != null
@@ -508,126 +589,223 @@ export default async function DashboardPage({
                   </CollapsibleSection>
 
                   <CollapsibleSection title="Extracted fields">
-                    <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
-                      <dt className="text-slate-500">Vendor</dt>
-                      <dd>{selected.vendor_name ?? "—"}</dd>
-                      <dt className="text-slate-500">Invoice #</dt>
-                      <dd>{selected.invoice_number ?? "—"}</dd>
-                      <dt className="text-slate-500">Amount</dt>
-                      <dd>
-                        {selected.amount != null
+                    {(() => {
+                      const amountText =
+                        selected.amount != null
                           ? selected.amount.toLocaleString(undefined, {
                               style: "currency",
                               currency: selected.currency,
                             })
-                          : "—"}
-                      </dd>
-                      <dt className="text-slate-500">Currency</dt>
-                      <dd>{selected.currency}</dd>
-                      {selected.due_date && (
-                        <>
-                          <dt className="text-slate-500">Due date</dt>
-                          <dd>
-                            {new Date(selected.due_date).toLocaleDateString()}
-                          </dd>
-                        </>
-                      )}
-                    </dl>
+                          : null;
+                      const fields: [string, string | null][] = [
+                        ["Item ID", selected.id.slice(0, 8)],
+                        ["Document owner", displayName(selected.submitted_by)],
+                        ["Type", selected.source],
+                        [
+                          "Date",
+                          new Date(selected.created_at).toLocaleDateString(),
+                        ],
+                        ["Supplier", selected.vendor_name],
+                        ["Set supplier rules", null],
+                        ["Extracted PO Number", null],
+                        ["Integration", null],
+                        ["Document reference", selected.invoice_number],
+                        [
+                          "Due date",
+                          selected.due_date
+                            ? new Date(selected.due_date).toLocaleDateString()
+                            : null,
+                        ],
+                        ["Category", null],
+                        ["Product/Service", null],
+                        ["Customer", null],
+                        ["Mark as rebillable", null],
+                        ["Class", null],
+                        ["Description", null],
+                        ["Amount", amountText],
+                        ["Currency", selected.currency],
+                        ["Total amount", amountText],
+                        ["Tax", null],
+                        ["Tax amount", null],
+                        ["Net amount", null],
+                        ["Payment", null],
+                        ["Paid", null],
+                        ["Payment method", null],
+                        ["Add payment method", null],
+                        ["Publish to", null],
+                      ];
+                      return (
+                        <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2.5">
+                          {fields.map(([label, value]) => (
+                            <Field key={label} label={label} value={value} />
+                          ))}
+                        </div>
+                      );
+                    })()}
                   </CollapsibleSection>
 
-                  <CollapsibleSection
-                    title="Discussion"
-                    badge={
-                      commentsForSelected.length > 0
-                        ? commentsForSelected.length
-                        : undefined
-                    }
-                  >
-                    <div className="mt-3 space-y-3">
-                      {commentsForSelected.length === 0 ? (
-                        <p className="text-sm text-slate-400">
-                          No comments yet. Chat with your team about this
-                          invoice here.
-                        </p>
-                      ) : (
-                        commentsForSelected.map((comment) => (
-                          <div
-                            key={comment.id}
-                            className="rounded-md bg-slate-50 px-3 py-2"
-                          >
-                            <div className="flex items-baseline justify-between gap-2">
-                              <span className="text-xs font-medium text-slate-700">
-                                {comment.author_id
-                                  ? (authorNameById.get(comment.author_id) ??
-                                    "Team member")
-                                  : "System"}
-                              </span>
-                              <span className="text-xs text-slate-400">
-                                {new Date(comment.created_at).toLocaleString()}
-                              </span>
-                            </div>
-                            <p className="mt-1 whitespace-pre-wrap text-sm text-slate-700">
-                              {comment.body}
+                  <CollapsibleSection title="Info">
+                    <div className="mt-2 space-y-2">
+                      <CollapsibleSection
+                        compact
+                        title="Chat"
+                        badge={
+                          commentsForSelected.length > 0
+                            ? commentsForSelected.length
+                            : undefined
+                        }
+                      >
+                        <div className="mt-1 space-y-3">
+                          {commentsForSelected.length === 0 ? (
+                            <p className="text-sm text-slate-400">
+                              No comments yet. Chat with your team about this
+                              invoice here.
                             </p>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                    <form
-                      action={addComment.bind(null, selected.id)}
-                      className="mt-3 flex gap-2"
-                    >
-                      <input
-                        name="body"
-                        required
-                        placeholder="Ask a question or leave a note…"
-                        className="min-w-0 flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
-                      />
-                      <button className="rounded-md bg-slate-800 px-3 py-2 text-sm font-medium text-white hover:bg-slate-700">
-                        Post
-                      </button>
-                    </form>
-                  </CollapsibleSection>
-
-                  <CollapsibleSection title="Document details">
-                    <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
-                      <dt className="text-slate-500">Source</dt>
-                      <dd className="capitalize">
-                        {selected.source}
-                        {selected.source_email
-                          ? ` (${selected.source_email})`
-                          : ""}
-                      </dd>
-                      <dt className="text-slate-500">File</dt>
-                      <dd>
-                        {signedFileUrl ? (
-                          <a
-                            href={signedFileUrl}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="text-blue-600 hover:underline"
-                          >
-                            {selected.file_name}
-                          </a>
-                        ) : (
-                          selected.file_name
-                        )}
-                      </dd>
-                      <dt className="text-slate-500">Received</dt>
-                      <dd>{new Date(selected.created_at).toLocaleString()}</dd>
-                      <dt className="text-slate-500">Audit trail</dt>
-                      <dd>
-                        <a
-                          href={`/api/invoices/${selected.id}/audit-trail`}
-                          className="text-blue-600 hover:underline"
+                          ) : (
+                            commentsForSelected.map((comment) => (
+                              <div
+                                key={comment.id}
+                                className="rounded-md bg-slate-50 px-3 py-2"
+                              >
+                                <div className="flex items-baseline justify-between gap-2">
+                                  <span className="text-xs font-medium text-slate-700">
+                                    {comment.author_id
+                                      ? (displayName(comment.author_id) ??
+                                        "Team member")
+                                      : "System"}
+                                  </span>
+                                  <span className="text-xs text-slate-400">
+                                    {new Date(
+                                      comment.created_at
+                                    ).toLocaleString()}
+                                  </span>
+                                </div>
+                                <p className="mt-1 whitespace-pre-wrap text-sm text-slate-700">
+                                  {comment.body}
+                                </p>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                        <form
+                          action={addComment.bind(null, selected.id)}
+                          className="mt-2 flex gap-2"
                         >
-                          Download
-                        </a>
-                        <span className="ml-1 text-xs text-slate-400">
-                          (approvals + chat)
-                        </span>
-                      </dd>
-                    </dl>
+                          <input
+                            name="body"
+                            required
+                            placeholder="Ask a question or leave a note…"
+                            className="min-w-0 flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+                          />
+                          <button className="rounded-md bg-slate-800 px-3 py-2 text-sm font-medium text-white hover:bg-slate-700">
+                            Post
+                          </button>
+                        </form>
+                      </CollapsibleSection>
+
+                      <CollapsibleSection compact title="Email Details">
+                        <dl className="mt-1 grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+                          <dt className="text-slate-500">Source</dt>
+                          <dd className="capitalize">{selected.source}</dd>
+                          <dt className="text-slate-500">From</dt>
+                          <dd
+                            className="truncate"
+                            title={selected.source_email ?? undefined}
+                          >
+                            {selected.source_email ?? "—"}
+                          </dd>
+                          <dt className="text-slate-500">Subject</dt>
+                          <dd
+                            className="truncate"
+                            title={emailForSelected?.subject ?? undefined}
+                          >
+                            {emailForSelected?.subject ?? "—"}
+                          </dd>
+                          <dt className="text-slate-500">To</dt>
+                          <dd
+                            className="truncate"
+                            title={emailForSelected?.to_address ?? undefined}
+                          >
+                            {emailForSelected?.to_address ?? "—"}
+                          </dd>
+                          <dt className="text-slate-500">Received</dt>
+                          <dd>
+                            {new Date(selected.created_at).toLocaleString()}
+                          </dd>
+                          <dt className="text-slate-500">Attached file</dt>
+                          <dd className="truncate">
+                            {signedFileUrl ? (
+                              <a
+                                href={signedFileUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="text-blue-600 hover:underline"
+                              >
+                                {selected.file_name}
+                              </a>
+                            ) : (
+                              selected.file_name
+                            )}
+                          </dd>
+                        </dl>
+                      </CollapsibleSection>
+
+                      <CollapsibleSection compact title="Notes">
+                        <form
+                          action={saveNotes.bind(null, selected.id)}
+                          className="mt-1"
+                        >
+                          <textarea
+                            name="notes"
+                            defaultValue={selected.notes ?? ""}
+                            rows={4}
+                            placeholder="Internal notes about this invoice…"
+                            className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+                          />
+                          <button className="mt-2 rounded-md bg-slate-800 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-700">
+                            Save notes
+                          </button>
+                        </form>
+                      </CollapsibleSection>
+
+                      <CollapsibleSection compact title="History">
+                        <div className="mt-1 space-y-2">
+                          <a
+                            href={`/api/invoices/${selected.id}/audit-trail`}
+                            className="inline-block text-xs font-medium text-blue-600 hover:underline"
+                          >
+                            Download audit PDF (approvals + chat)
+                          </a>
+                          {auditForSelected.length === 0 ? (
+                            <p className="text-sm text-slate-400">
+                              No history yet.
+                            </p>
+                          ) : (
+                            auditForSelected.map((entry) => (
+                              <div
+                                key={entry.id}
+                                className="flex items-start justify-between gap-2 text-xs"
+                              >
+                                <span className="text-slate-600">
+                                  {entry.action}
+                                  {entry.actor_id
+                                    ? ` — by ${
+                                        displayName(entry.actor_id) ??
+                                        "team member"
+                                      }`
+                                    : ""}
+                                </span>
+                                <span className="flex-none text-slate-400">
+                                  {new Date(
+                                    entry.created_at
+                                  ).toLocaleString()}
+                                </span>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      </CollapsibleSection>
+                    </div>
                   </CollapsibleSection>
               </DetailSplit>
             )}

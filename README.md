@@ -266,11 +266,18 @@ is a master-detail interface, all server-rendered:
 - **Search**: `?q=` filters the list by vendor/file name/invoice number.
 - **List pane**: clicking a row navigates to `/dashboard/[id]?...` (filters
   preserved in the query string), which server-renders the detail pane.
-- **Detail pane**: amount/status header, an approval stepper built from
-  `approval_workflow_steps` + `invoice_approvals` (green = decided, blue =
-  current step, grey = upcoming), Approve/Reject buttons (Server Actions),
-  the extracted metadata + signed file link, a **discussion thread** per
-  invoice (chat foundation — see below), and an **audit-trail download**.
+- **Detail pane** (all server-rendered, everything collapsible):
+  - **Sidebar** collapses via a hamburger; **invoice list** and **document
+    viewer** collapse to slim strips.
+  - **Extracted fields**: a Dext-style grid (Item ID, Document owner, Type,
+    Date, Supplier, Document reference, Due date, Amount, Currency, Total
+    amount, … — fields without data render "—").
+  - **Status & approval**: the stepper (green = decided, blue = current step,
+    grey = upcoming) + Approve/Reject Server Actions.
+  - **Info** panel with four collapsible sub-panels: **Chat** (discussion
+    thread), **Email Details** (from/subject/to/received/file, pulled from
+    `inbound_email_log`), **Notes** (free-text, stored on `invoices.notes`),
+    and **History** (the raw `audit_log` + audit-PDF download).
 
 **Approval decisions are enforced server-side**: only the approver assigned
 to the current step can decide, prior steps must be approved first, and the
@@ -279,8 +286,8 @@ decisions impossible. The buttons only render for the current approver;
 anyone else sees "Waiting on the approver for step N." Failures redirect to
 `?error=...` and are shown as a banner in the detail pane.
 
-**Discussion / chat foundation**: org members can post and read comments on
-each invoice (stored in `invoice_comments`, authored by the signed-in user).
+**Chat / discussion**: org members can post and read comments on each
+invoice (stored in `invoice_comments`, authored by the signed-in user).
 This is deliberately a simple thread today; a real-time chat window can be
 layered on top by subscribing to `invoice_comments` with Supabase Realtime.
 

@@ -11,11 +11,13 @@ export function CollapsibleSection({
   badge,
   children,
   defaultOpen = true,
+  compact = false,
 }: {
   title: string;
   badge?: string | number;
   children: ReactNode;
   defaultOpen?: boolean;
+  compact?: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);
 
@@ -25,7 +27,9 @@ export function CollapsibleSection({
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
-        className="flex w-full cursor-pointer select-none items-center justify-between gap-2 px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+        className={`flex w-full cursor-pointer select-none items-center justify-between gap-2 text-slate-700 hover:bg-slate-50 ${
+          compact ? "px-3 py-2 text-xs font-semibold" : "px-4 py-3 text-sm font-semibold"
+        }`}
       >
         <span className="flex min-w-0 items-center gap-2">
           <span className="truncate">{title}</span>
@@ -55,7 +59,9 @@ export function CollapsibleSection({
           </svg>
         </span>
       </button>
-      {open && <div className="px-4 pb-4">{children}</div>}
+      {open && (
+        <div className={compact ? "px-3 pb-3" : "px-4 pb-4"}>{children}</div>
+      )}
     </div>
   );
 }
