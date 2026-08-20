@@ -285,11 +285,15 @@ This is deliberately a simple thread today; a real-time chat window can be
 layered on top by subscribing to `invoice_comments` with Supabase Realtime.
 
 **Audit trail document**: `/api/invoices/[id]/audit-trail`
-([`src/lib/audit-trail.ts`](src/lib/audit-trail.ts)) builds a plain-text
-document combining the invoice metadata, the full approval trail, the chat
-history, and the raw `audit_log` — served as a downloadable attachment. This
-is the same document that will be attached to the corresponding bill when
-accounting sync (QBO) lands.
+([`src/lib/audit-trail.ts`](src/lib/audit-trail.ts)) generates a **PDF**
+(dependency-free writer in [`src/lib/pdf.ts`](src/lib/pdf.ts)) combining the
+invoice metadata, the full approval trail, the chat history, and the raw
+`audit_log` — served as a downloadable attachment. This is one of the two
+files attached to the QBO bill on sync; the exact two-file bundle is
+assembled by [`src/lib/qbo-attachments.ts`](src/lib/qbo-attachments.ts):
+
+1. **`audit-trail-<vendor>-<id>.pdf`** — chat history + approval audit trail (one PDF)
+2. **the original invoice document** — the invoice PDF/image as uploaded
 
 `/invoices/[id]` still exists as a redirect to `/dashboard/[id]`, in case
 anything links to the old URL shape.
@@ -311,7 +315,7 @@ This is groundwork, not a finished product. In priority-ish order:
 
 - **Org signup/invite flow** — currently: manual SQL insert (see [First org setup](#first-org-setup)). No UI to create an org, invite teammates, or assign roles.
 - **Multi-step / conditional approval workflows** — the schema supports ordered steps and multiple workflows per org, but nothing in the UI creates a second workflow, routes by amount threshold, or routes by vendor. Every invoice currently goes through the single default workflow.
-- **Accounting system sync** (Xero/QuickBooks/NetSuite) — the other half of what makes a tool like ApprovalMax useful; not started. When QBO sync lands, the [audit trail document](#dashboard-ui) (approvals + chat history) gets attached to the pushed bill.
+- **Accounting system sync** (Xero/QuickBooks/NetSuite) — the other half of what makes a tool like ApprovalMax useful; not started. When QBO sync lands, the bill gets **two attachments**: the [audit-trail PDF](#dashboard-ui) (chat history + approval audit trail) and the original invoice document ([`src/lib/qbo-attachments.ts`](src/lib/qbo-attachments.ts)).
 - **Real-time chat window** — a basic comment thread exists on each invoice; the full chat experience (live updates, mentions, typing indicators) is not built.
 - **Visual polish** — functional Tailwind, not a designed product.
 - **Rejection detail** — a rejected invoice records the decision but there's no UI to see *why* (no comment prompt on reject).
@@ -331,8 +335,9 @@ end-to-end vision:
 4. Authorized people **chat about the invoice** in a full chat window —
    the discussion thread here is the foundation for it.
 5. On approval, the invoice syncs to the customer's accounting system
-   (Xero / QuickBooks), and the **chat history + approval audit trail is
-   attached as a file** on the synced record (see the audit-trail download).
+   (Xero / QuickBooks) as a bill with **two attachments**: the
+   **audit-trail PDF** (chat history + approval audit trail, one file) and
+   the **original invoice PDF** ([`src/lib/qbo-attachments.ts`](src/lib/qbo-attachments.ts)).
 
 A production domain/brand is coming; `INBOUND_EMAIL_DOMAIN` and the org
 inbound addresses already flow from env vars, so rebranding is config, not
