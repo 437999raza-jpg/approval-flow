@@ -1,7 +1,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database, InvoiceSource } from "@/lib/supabase/types";
-import { extractInvoiceFields, computeInvoiceTotal } from "@/lib/extract-invoice";
+import { extractInvoiceFields } from "@/lib/extract-invoice";
 import { selectWorkflowForInvoice } from "@/lib/workflow-routing";
+import { computeLineItemTotals } from "@/lib/invoice-totals";
 
 const INVOICE_BUCKET = "invoices";
 const MAX_FILE_BYTES = 20 * 1024 * 1024; // 20MB
@@ -92,9 +93,50 @@ export async function createInvoiceFromFile({
     throw new InvoiceIngestError(`Upload failed: ${uploadError.message}`);
   }
 
-  // The real total: the sum of the line items we picked up (plus tax),
-  // not the document's own printed total — see computeInvoiceTotal.
-  const computedAmount = extracted ? computeInvoiceTotal(extracted) : null;
+  // Dext/ApprovalMax-style: a saved supplier rule wins over whatever the
+  // extraction guessed for the fields it covers — it's a business rule a
+  // human configured on purpose, not a best-effort read of the document.
+  const supplierDefaults = await getSupplierDefaults(
+    supabase,
+    organizationId,
+    extracted?.vendor_name ?? null
+  );
+
+  // Build the line items with any supplier-rule overrides applied first,
+  // then derive the invoice's amount/tax from THOSE final line items (tax
+  // per line as amount × tax rate%, blank rate = no tax) — not the
+  // document's own printed totals, and not the pre-override tax rates.
+  // When extraction found no line items there's nothing to derive from,
+  // so the whole-document totals are the only numbers available.
+  const hasLineItems = !!extracted && extracted.line_items.length > 0;
+  const finalLineItems = hasLineItems
+    ? extracted!.line_items.map((li) => ({
+        description: li.description,
+        amount: li.amount,
+        tax_rate: supplierDefaults?.tax_rate ?? li.tax_rate,
+        category: supplierDefaults?.category ?? li.category,
+        class: supplierDefaults?.class ?? li.class,
+        project_id: supplierDefaults?.project_id ?? null,
+      }))
+    : supplierDefaults
+      ? [
+          {
+            description: null,
+            amount: extracted?.total_amount ?? null,
+            tax_rate: supplierDefaults.tax_rate,
+            category: supplierDefaults.category,
+            class: supplierDefaults.class,
+            project_id: supplierDefaults.project_id,
+          },
+        ]
+      : [];
+
+  const computedAmount = hasLineItems
+    ? computeLineItemTotals(finalLineItems).total
+    : (extracted?.total_amount ?? null);
+  const computedTax = hasLineItems
+    ? computeLineItemTotals(finalLineItems).tax
+    : (extracted?.tax_amount ?? null);
 
   // Route the invoice to the first workflow whose items all match; fall
   // back to the org's default workflow.
@@ -114,14 +156,6 @@ export async function createInvoiceFromFile({
     lineItems: [],
   });
 
-  // Dext/ApprovalMax-style: a saved supplier rule wins over whatever the
-  // extraction guessed for the fields it covers — it's a business rule a
-  // human configured on purpose, not a best-effort read of the document.
-  const supplierDefaults = await getSupplierDefaults(
-    supabase,
-    organizationId,
-    extracted?.vendor_name ?? null
-  );
   const billDate = extracted?.bill_date ?? null;
   const dueDate =
     supplierDefaults?.payment_terms_days != null && billDate
@@ -146,7 +180,7 @@ export async function createInvoiceFromFile({
       currency: supplierDefaults?.currency ?? extracted?.currency ?? "USD",
       bill_date: billDate,
       due_date: dueDate,
-      tax_amount: extracted?.tax_amount ?? null,
+      tax_amount: computedTax,
       extraction: (extracted ?? null) as Record<string, unknown> | null,
     })
     .select()
@@ -159,37 +193,12 @@ export async function createInvoiceFromFile({
     );
   }
 
-  // Populate the Bill panel's Category details from the extracted line
-  // items (best-effort), with any saved supplier rule overriding
-  // Category/Class/Project/Tax rate on every line. If extraction found no
-  // line items but a supplier rule exists, create one line item from the
-  // invoice total so the rule still has somewhere to apply.
-  const lineItemsToInsert =
-    extracted && extracted.line_items.length > 0
-      ? extracted.line_items.map((li, i) => ({
-          invoice_id: invoice.id,
-          description: li.description,
-          amount: li.amount,
-          tax_rate: supplierDefaults?.tax_rate ?? li.tax_rate,
-          category: supplierDefaults?.category ?? li.category,
-          class: supplierDefaults?.class ?? li.class,
-          project_id: supplierDefaults?.project_id ?? null,
-          line_order: i + 1,
-        }))
-      : supplierDefaults
-        ? [
-            {
-              invoice_id: invoice.id,
-              description: null,
-              amount: computedAmount,
-              tax_rate: supplierDefaults.tax_rate,
-              category: supplierDefaults.category,
-              class: supplierDefaults.class,
-              project_id: supplierDefaults.project_id,
-              line_order: 1,
-            },
-          ]
-        : [];
+  // Populate the Bill panel's Category details from the final line items.
+  const lineItemsToInsert = finalLineItems.map((li, i) => ({
+    ...li,
+    invoice_id: invoice.id,
+    line_order: i + 1,
+  }));
 
   if (lineItemsToInsert.length > 0) {
     await supabase.from("invoice_line_items").insert(lineItemsToInsert);

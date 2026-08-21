@@ -17,6 +17,7 @@
 // Authored by Araza.
 
 import * as mupdf from "mupdf";
+import { computeLineItemTotals } from "@/lib/invoice-totals";
 
 export interface ExtractedLineItem {
   description: string | null;
@@ -246,22 +247,28 @@ function parseExtraction(content: string): ExtractedInvoiceData | null {
   };
 }
 
-// The invoice's real total: the sum of the line items we actually picked
-// up, plus tax — not whatever number the document prints as "Total". A
-// document's printed total can be wrong (bad OCR, a math error on the
-// document itself, or a tampered/faked total that doesn't match its own
-// line items) while the line items are what the Bill panel and the
-// approver actually review. Falls back to the extracted total only when
-// no line item amounts were found to sum.
-export function computeInvoiceTotal(
-  extracted: ExtractedInvoiceData
-): number | null {
-  const lineItemAmounts = extracted.line_items
-    .map((li) => li.amount)
-    .filter((a): a is number => a != null);
-  if (lineItemAmounts.length === 0) return extracted.total_amount ?? null;
-  const subtotal = lineItemAmounts.reduce((sum, a) => sum + a, 0);
-  return subtotal + (extracted.tax_amount ?? 0);
+// The invoice's real amount and tax: derived from the line items we
+// actually picked up (amount × each line's own tax rate%, blank rate =
+// no tax for that line) — not whatever numbers the document prints as
+// "Tax"/"Total". A document's printed totals can be wrong (bad OCR, a
+// math error on the document itself, or a tampered/faked total that
+// doesn't match its own line items) while the line items are what the
+// Bill panel and the approver actually review. Falls back to the
+// extracted whole-document totals only when no line item amounts were
+// found to sum.
+export function computeInvoiceTotals(extracted: ExtractedInvoiceData): {
+  amount: number | null;
+  tax_amount: number | null;
+} {
+  const validLineItems = extracted.line_items.filter((li) => li.amount != null);
+  if (validLineItems.length === 0) {
+    return {
+      amount: extracted.total_amount ?? null,
+      tax_amount: extracted.tax_amount ?? null,
+    };
+  }
+  const { tax, total } = computeLineItemTotals(validLineItems);
+  return { amount: total, tax_amount: tax };
 }
 
 // Map the extraction onto the invoices row columns (shared by ingestion
@@ -270,14 +277,15 @@ export function computeInvoiceTotal(
 export function mapExtractionToInvoice(
   extracted: ExtractedInvoiceData
 ): Record<string, unknown> {
+  const { amount, tax_amount } = computeInvoiceTotals(extracted);
   return {
     vendor_name: extracted.vendor_name ?? null,
     invoice_number: extracted.invoice_number ?? null,
     bill_date: extracted.bill_date ?? null,
     due_date: extracted.due_date ?? null,
-    amount: computeInvoiceTotal(extracted),
+    amount,
     currency: extracted.currency ?? "USD",
-    tax_amount: extracted.tax_amount ?? null,
+    tax_amount,
     extraction: extracted,
   };
 }

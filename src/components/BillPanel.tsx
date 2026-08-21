@@ -1,6 +1,7 @@
 import { useRef } from "react";
 import { SupplierRulesModal, type SupplierDefaultsValues } from "./SupplierRulesModal";
 import type { Database } from "@/lib/supabase/types";
+import { computeLineItemTotals } from "@/lib/invoice-totals";
 
 type Invoice = Database["public"]["Tables"]["invoices"]["Row"];
 type LineItem = Database["public"]["Tables"]["invoice_line_items"]["Row"];
@@ -61,11 +62,24 @@ export function BillPanel({
           currency: invoice.currency,
         })
       : "—";
-  const num2 = (n: number | null) => (n != null ? n.toFixed(2) : "");
-  const amount = invoice.amount;
-  const tax = invoice.tax_amount;
-  const subtotal =
-    amount != null && tax != null ? amount - tax : amount;
+  // Subtotal/tax/total are derived live from the line items shown below
+  // (amount × each line's own tax rate%, blank rate = no tax) so the
+  // totals block always matches what's actually in the table — not a
+  // separately-typed figure that can drift out of sync. Before any line
+  // items exist there's nothing to derive from, so fall back to the
+  // invoice's own (extracted) figures.
+  const hasLineItems = lineItems.length > 0;
+  const derivedTotals = computeLineItemTotals(lineItems);
+  const subtotal = hasLineItems ? derivedTotals.subtotal : invoice.amount;
+  const tax = hasLineItems ? derivedTotals.tax : invoice.tax_amount;
+  const amount = hasLineItems ? derivedTotals.total : invoice.amount;
+  const num2 = (n: number | null) =>
+    n != null
+      ? n.toLocaleString(undefined, {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        })
+      : "";
   const vendor = invoice.vendor_name ?? invoice.file_name ?? "Unknown vendor";
   const billNumber = invoice.invoice_number ?? "—";
   const billDateDefault = invoice.bill_date ?? invoice.created_at.slice(0, 10);
@@ -242,7 +256,7 @@ export function BillPanel({
                   tax_rate: item.tax_rate ?? "",
                   class: item.class ?? "",
                   project_id: item.project_id ?? "",
-                  amount: item.amount != null ? item.amount.toFixed(2) : "",
+                  amount: num2(item.amount),
                   linked: item.linked,
                 }}
                 projects={projects}
@@ -271,8 +285,10 @@ export function BillPanel({
             )}
           </div>
 
-          {/* Totals — Amount/Tax post through bill-form via the `form`
-              attribute even though they render down here, after the table. */}
+          {/* Totals — derived from the line items above (Amount × each
+              line's Tax %); not separately editable. currency still
+              submits through bill-form so autosaving other fields on
+              this form doesn't reset it. */}
           <div className="mt-4 flex justify-end">
             <div className="w-56 space-y-1.5">
               <div className="flex items-center justify-between text-sm text-slate-500">
@@ -281,30 +297,11 @@ export function BillPanel({
               </div>
               <div className="flex items-center justify-between text-sm text-slate-500">
                 <span>Tax</span>
-                <input
-                  form="bill-form"
-                  name="tax_amount"
-                  type="text"
-                  inputMode="decimal"
-                  defaultValue={num2(invoice.tax_amount)}
-                  className="w-[6ch] border-b border-transparent bg-transparent text-right text-sm tabular-nums text-slate-700 hover:border-slate-200 focus:border-blue-500 focus:outline-none"
-                  {...billBlur}
-                />
+                <span className="tabular-nums">{num2(tax)}</span>
               </div>
               <div className="flex items-center justify-between border-t border-slate-200 pt-1.5 text-base font-semibold text-slate-900">
                 <span>Total</span>
-                <input
-                  form="bill-form"
-                  name="amount"
-                  type="text"
-                  inputMode="decimal"
-                  defaultValue={num2(invoice.amount)}
-                  className="w-[8ch] border-b border-transparent bg-transparent text-right font-semibold tabular-nums hover:border-slate-200 focus:border-blue-500 focus:outline-none"
-                  {...billBlur}
-                />
-                {/* currency is shown once, in the header — not repeated
-                    here — but still submits with the form so autosaving
-                    other fields doesn't reset it. */}
+                <span className="tabular-nums">{num2(amount)}</span>
                 <input
                   form="bill-form"
                   type="hidden"

@@ -26,6 +26,7 @@ import {
   mapExtractionToInvoice,
 } from "@/lib/extract-invoice";
 import { selectWorkflowForInvoice } from "@/lib/workflow-routing";
+import { computeLineItemTotals } from "@/lib/invoice-totals";
 
 type Invoice = Database["public"]["Tables"]["invoices"]["Row"];
 
@@ -280,15 +281,11 @@ async function saveAccountingInstructions(
 }
 
 // Parse the Bill panel form into an invoices update object.
+// amount/tax_amount are intentionally not parsed here — they're owned by
+// the line items (see recomputeInvoiceTotals) and derived, not typed in.
 function parseBillForm(formData: FormData): Record<string, unknown> {
   const text = (key: string) =>
     String(formData.get(key) ?? "").trim() || null;
-  const num = (key: string) => {
-    const raw = String(formData.get(key) ?? "").trim();
-    if (!raw) return null;
-    const n = Number(raw);
-    return Number.isFinite(n) ? n : null;
-  };
   const date = (key: string) => {
     const raw = String(formData.get(key) ?? "").trim();
     return /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : null;
@@ -300,10 +297,27 @@ function parseBillForm(formData: FormData): Record<string, unknown> {
     invoice_number: text("bill_number"),
     bill_date: date("bill_date"),
     due_date: date("due_date"),
-    amount: num("amount"),
     currency: text("currency")?.toUpperCase() || "USD",
-    tax_amount: num("tax_amount"),
   };
+}
+
+// Recompute and persist the invoice's amount/tax_amount from its current
+// line items — the single source of truth after any add/edit/delete, so
+// everything downstream (the Bill panel header, invoice list, reports,
+// duplicate-amount comparison, workflow routing) stays in sync.
+async function recomputeInvoiceTotals(
+  supabase: ReturnType<typeof createClient>,
+  invoiceId: string
+) {
+  const { data: items } = await supabase
+    .from("invoice_line_items")
+    .select("amount, tax_rate")
+    .eq("invoice_id", invoiceId);
+  const { total, tax } = computeLineItemTotals(items ?? []);
+  await supabase
+    .from("invoices")
+    .update({ amount: total, tax_amount: tax, updated_at: new Date().toISOString() })
+    .eq("id", invoiceId);
 }
 
 // Persist the editable bill fields (also fired by Enter in the form).
@@ -777,7 +791,7 @@ async function saveLineItem(
   const text = (key: string) =>
     String(formData.get(key) ?? "").trim() || null;
   const num = (key: string) => {
-    const raw = String(formData.get(key) ?? "").trim();
+    const raw = String(formData.get(key) ?? "").replace(/,/g, "").trim();
     if (!raw) return null;
     const n = Number(raw);
     return Number.isFinite(n) ? n : null;
@@ -812,10 +826,11 @@ async function saveLineItem(
       .eq("id", lineItemId);
   }
 
+  await recomputeInvoiceTotals(supabase, invoiceId);
   revalidatePath("/dashboard", "layout");
 }
 
-async function deleteLineItem(lineItemId: string) {
+async function deleteLineItem(invoiceId: string, lineItemId: string) {
   "use server";
 
   const supabase = createClient();
@@ -826,6 +841,7 @@ async function deleteLineItem(lineItemId: string) {
 
   await supabase.from("invoice_line_items").delete().eq("id", lineItemId);
 
+  await recomputeInvoiceTotals(supabase, invoiceId);
   revalidatePath("/dashboard", "layout");
 }
 
@@ -1608,7 +1624,7 @@ export default async function DashboardPage({
                   })),
                   saveBill: saveBill.bind(null, selected.id),
                   saveLineItem: saveLineItem.bind(null, selected.id),
-                  deleteLineItem,
+                  deleteLineItem: deleteLineItem.bind(null, selected.id),
                   reExtract: reExtract.bind(null, selected.id),
                   backToReview: backToReview.bind(null, selected.id),
                   canReview: canReviewNow,
