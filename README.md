@@ -188,6 +188,9 @@ Copy `.env.example` → `.env.local` and fill in:
 | `INBOUND_EMAIL_DOMAIN` | Yes (for email ingestion) | A subdomain you control, e.g. `invoices.yourapp.com` |
 | `OPENROUTER_API_KEY` | For extraction | openrouter.ai — required for invoice field/line-item extraction (without it, extraction silently no-ops rather than failing ingestion) |
 | `OPENROUTER_MODEL` | No | Any OpenRouter model id, e.g. `anthropic/claude-sonnet-4.5`, `openai/gpt-4o`, `google/gemini-2.0-flash-001` — defaults to `anthropic/claude-sonnet-4.5`. This is the knob for testing extraction quality across models. |
+| `QBO_CLIENT_ID` | For QBO sync | Intuit Developer app client id (developer.intuit.com) |
+| `QBO_CLIENT_SECRET` | For QBO sync | Intuit Developer app client secret |
+| `QBO_REDIRECT_URI` | For QBO sync | Must match the app's registered Redirect URI exactly, e.g. `http://localhost:3210/api/qbo/callback` |
 | `RESEND_API_KEY` | No | resend.com — @mention notification emails; without it, mentions still create the in-app `notifications` row, just no email |
 | `RESEND_FROM_EMAIL` | No (required if `RESEND_API_KEY` is set) | Must be a verified sender/domain in your Resend account |
 
@@ -801,6 +804,28 @@ This is groundwork, not a finished product. In priority-ish order:
   there's no UI prompt to capture *why* at reject time.
 
 ---
+
+## QuickBooks Online sync
+
+Admins connect the org to a QBO company once (Settings → QuickBooks Online,
+or the Connect button in the Bill panel). Approved bills are pushed to QBO
+with:
+
+- vendor (looked up or created), line items (category → expense account),
+  tax, due date, and the **accounting instructions as the bill memo
+  (PrivateNote)** — internal, not printed on the invoice
+- **attachments**: the audit-trail PDF (chat + approval history) and every
+  invoice document (primary + added pages)
+
+Sync is manual per invoice ("Sync to QuickBooks" in the Bill panel) until a
+queue/auto-sync on approval is added. Status is tracked on the invoice
+(synced / error), and synced bills link straight to QBO.
+
+Requires an Intuit Developer app: create one at developer.intuit.com,
+register `QBO_REDIRECT_URI` in its Redirect URIs (exact match), and set the
+three `QBO_*` env vars. OAuth uses `com.intuit.quickbooks.accounting` scope;
+tokens are stored per-org in `qbo_connections` (RLS: admins only) and
+refresh automatically.
 
 ## Product direction
 
