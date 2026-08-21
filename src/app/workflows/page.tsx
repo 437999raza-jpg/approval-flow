@@ -17,6 +17,10 @@ import {
   type RuleType,
 } from "@/lib/workflow-rules";
 import type { Database } from "@/lib/supabase/types";
+import {
+  recordStepChangeImpact,
+  fetchStepApproverSnapshot,
+} from "@/lib/workflow-impact";
 
 type RuleRow = Database["public"]["Tables"]["approval_workflow_rules"]["Row"];
 
@@ -181,6 +185,22 @@ async function saveStepApprover(
   const isDefault = formData.get("is_default") === "on";
   const conditions = isDefault ? [] : parseStepConditions(formData);
 
+  const { data: step } = await supabase
+    .from("approval_workflow_steps")
+    .select("workflow_id, step_order, name")
+    .eq("id", stepId)
+    .single();
+  if (!step) return;
+  const { data: workflow } = await supabase
+    .from("approval_workflows")
+    .select("organization_id")
+    .eq("id", step.workflow_id)
+    .single();
+  if (!workflow) return;
+
+  const before = await fetchStepApproverSnapshot(supabase, stepId);
+  const isNew = approverRowId === "new";
+
   let stepApproverId = approverRowId;
   if (approverRowId === "new") {
     const { data: last } = await supabase
@@ -218,6 +238,26 @@ async function saveStepApprover(
     );
   }
 
+  const { data: approverProfile } = await supabase
+    .from("profiles")
+    .select("full_name")
+    .eq("id", approverUserId)
+    .single();
+  const approverLabel = approverProfile?.full_name ?? "an approver";
+  const stepLabel = step.name || `Step ${step.step_order}`;
+  const after = await fetchStepApproverSnapshot(supabase, stepId);
+  await recordStepChangeImpact(supabase, {
+    organizationId: workflow.organization_id,
+    workflowId: step.workflow_id,
+    stepId,
+    stepOrder: step.step_order,
+    stepLabel,
+    actorId: user.id,
+    summary: `${isNew ? "Added" : "Updated"} approver ${approverLabel} on step "${stepLabel}"`,
+    before,
+    after,
+  });
+
   revalidatePath("/workflows");
 }
 
@@ -230,10 +270,50 @@ async function deleteStepApprover(approverRowId: string) {
   } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
+  const { data: approverRow } = await supabase
+    .from("approval_workflow_step_approvers")
+    .select("step_id, approver_user_id")
+    .eq("id", approverRowId)
+    .single();
+  if (!approverRow) return;
+
+  const { data: step } = await supabase
+    .from("approval_workflow_steps")
+    .select("workflow_id, step_order, name")
+    .eq("id", approverRow.step_id)
+    .single();
+  if (!step) return;
+  const { data: workflow } = await supabase
+    .from("approval_workflows")
+    .select("organization_id")
+    .eq("id", step.workflow_id)
+    .single();
+  if (!workflow) return;
+
+  const [before, { data: approverProfile }] = await Promise.all([
+    fetchStepApproverSnapshot(supabase, approverRow.step_id),
+    supabase.from("profiles").select("full_name").eq("id", approverRow.approver_user_id).single(),
+  ]);
+  const approverLabel = approverProfile?.full_name ?? "an approver";
+  const stepLabel = step.name || `Step ${step.step_order}`;
+
   await supabase
     .from("approval_workflow_step_approvers")
     .delete()
     .eq("id", approverRowId);
+
+  const after = await fetchStepApproverSnapshot(supabase, approverRow.step_id);
+  await recordStepChangeImpact(supabase, {
+    organizationId: workflow.organization_id,
+    workflowId: step.workflow_id,
+    stepId: approverRow.step_id,
+    stepOrder: step.step_order,
+    stepLabel,
+    actorId: user.id,
+    summary: `Removed approver ${approverLabel} from step "${stepLabel}"`,
+    before,
+    after,
+  });
 
   revalidatePath("/workflows");
 }
@@ -356,6 +436,23 @@ async function deleteRule(ruleId: string) {
   revalidatePath("/workflows");
 }
 
+async function dismissImpactReport(impactId: string) {
+  "use server";
+
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
+  await supabase
+    .from("workflow_change_impacts")
+    .update({ dismissed_at: new Date().toISOString() })
+    .eq("id", impactId);
+
+  revalidatePath("/workflows");
+}
+
 // ---------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------
@@ -382,6 +479,16 @@ export default async function WorkflowsPage() {
   }
 
   const isAdmin = org.role === "admin";
+
+  const { data: pendingImpacts } = isAdmin
+    ? await supabase
+        .from("workflow_change_impacts")
+        .select("*")
+        .eq("organization_id", org.id)
+        .is("dismissed_at", null)
+        .order("created_at", { ascending: false })
+        .limit(5)
+    : { data: [] };
 
   const { data: workflows } = await supabase
     .from("approval_workflows")
@@ -534,6 +641,59 @@ export default async function WorkflowsPage() {
             (routing rules) only decide which workflow an invoice uses, if
             you have more than one.
           </p>
+
+          {isAdmin && (pendingImpacts ?? []).length > 0 && (
+            <div className="mt-4 space-y-3">
+              {(pendingImpacts ?? []).map((impact) => (
+                <div
+                  key={impact.id}
+                  className="rounded-lg border border-amber-300 bg-amber-50 p-4"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-medium text-amber-900">
+                        {impact.summary} — affected {impact.affected.length} in-flight{" "}
+                        {impact.affected.length === 1 ? "bill" : "bills"}
+                      </p>
+                      <p className="mt-0.5 text-xs text-amber-700">
+                        This app doesn&apos;t &quot;restart&quot; a workflow — the
+                        change took effect immediately. Nothing was
+                        auto-fixed; review below and reassign anything that
+                        needs it.
+                      </p>
+                    </div>
+                    <form action={dismissImpactReport.bind(null, impact.id)}>
+                      <button className="whitespace-nowrap text-xs text-amber-700 hover:underline">
+                        Dismiss
+                      </button>
+                    </form>
+                  </div>
+                  <ul className="mt-3 space-y-1.5">
+                    {impact.affected.map((a) => (
+                      <li key={a.invoice_id} className="text-sm text-amber-900">
+                        <Link
+                          href={`/dashboard/${a.invoice_id}`}
+                          className="font-medium hover:underline"
+                        >
+                          {a.invoice_label}
+                        </Link>
+                        {" — "}
+                        {a.before.length > 0 ? a.before.join(", ") : "nobody"}
+                        {" → "}
+                        {a.after.length > 0 ? (
+                          a.after.join(", ")
+                        ) : (
+                          <span className="font-medium text-red-700">
+                            nobody (stuck — needs reassignment)
+                          </span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          )}
 
           {isAdmin && (
             <form

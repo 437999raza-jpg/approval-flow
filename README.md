@@ -5,10 +5,14 @@ Vercel, with Supabase for Postgres, Auth, and Storage, and an OpenRouter
 model for invoice field extraction.
 
 Status: **early-stage groundwork**, not a finished product. Auth, invoice
-ingestion (manual + email), a rules-based routing engine, role-scoped
-visibility, a review queue, per-supplier default rules, and a master-detail
-dashboard UI are all working end to end. See [What's not built
-yet](#whats-not-built-yet) for the real gaps.
+ingestion (manual + email, with multi-invoice split detection), a
+workflow-selection routing engine, ApprovalMax-style conditional per-step
+approval routing (multiple approvers per step, each eligible only when an
+invoice's Class/Category/Supplier/Customer matches their own conditions),
+role-scoped visibility, a review queue, per-supplier default rules,
+@mention notifications, and a master-detail dashboard UI are all working
+end to end. See [What's not built yet](#whats-not-built-yet) for the real
+gaps.
 
 ---
 
@@ -22,6 +26,7 @@ yet](#whats-not-built-yet) for the real gaps.
 | Styling | Tailwind CSS | Fast iteration, no component library |
 | Invoice field extraction | OpenRouter (any model, default `anthropic/claude-sonnet-4.5`) | Currently how extraction quality gets **tested** across models — not a locked-in production choice. Swap `OPENROUTER_MODEL` to compare. |
 | Email ingestion | SendGrid Inbound Parse (webhook) | Forwards email attachments to our API as multipart form data |
+| Outbound email | Resend (HTTP API, no SDK) | @mention notification emails — optional, best-effort (see [Dashboard UI](#dashboard-ui)) |
 
 ---
 
@@ -32,15 +37,21 @@ yet](#whats-not-built-yet) for the real gaps.
   "Add invoice" ───▶│ /api/invoices/upload│──┐
   (dropzone, UI)     └─────────────────────┘  │
                                                 ▼
-                                     createInvoiceFromFile()
-                                     (src/lib/invoices.ts)
+                                      ingestInvoiceFile()
+                                    (src/lib/invoice-ingest.ts)
+                                                │  ├─ classifyMultiPageInvoice() — multiple
+  Forwarded email ─▶┌──────────────────────┐   │  │  invoices stapled together? → pending_invoice_splits,
+  (SendGrid parse)   │/api/webhooks/        │──┘  │  stop here for human review. Otherwise ↓
+                      │inbound-email        │      │
+                      └──────────────────────┘      ▼
+                                          createInvoiceFromFile()
+                                          (src/lib/invoices.ts)
                                                 │  ├─ upload file → Supabase Storage
-  Forwarded email ─▶┌──────────────────────┐   │  ├─ extractInvoiceFields() → OpenRouter
-  (SendGrid parse)   │/api/webhooks/        │──┘  ├─ apply supplier_defaults, if matched
-                      │inbound-email        │      ├─ route → selectWorkflowForInvoice()
-                      └──────────────────────┘      ├─ insert `invoices` row (status: on_review)
-                                                      └─ insert `audit_log` row
-                                                │
+                                                │  ├─ extractInvoiceFields() → OpenRouter
+                                                │  ├─ apply supplier_defaults, if matched
+                                                │  ├─ route → selectWorkflowForInvoice()
+                                                │  ├─ insert `invoices` row (status: on_review)
+                                                │  └─ insert `audit_log` row
                                                 ▼
                               Supabase Postgres (RLS-scoped by org + role)
                                                 │
@@ -51,19 +62,22 @@ yet](#whats-not-built-yet) for the real gaps.
 ```
 
 Both ingestion paths — the "Add invoice" button/dropzone and the inbound
-email webhook — funnel through the single `createInvoiceFromFile()` function
-in [`src/lib/invoices.ts`](src/lib/invoices.ts), so they get identical
-validation, storage, field extraction, supplier-default overrides, and audit
-logging. Every new invoice lands in `on_review` — an admin has to run
-Review Complete before it's actually routed into an approval workflow (see
-[Invoice lifecycle](#invoice-lifecycle--statuses)).
+email webhook — funnel through the single `ingestInvoiceFile()` function
+in [`src/lib/invoice-ingest.ts`](src/lib/invoice-ingest.ts) (which itself
+calls `createInvoiceFromFile()` for the normal single-invoice case — see
+[Multi-invoice split detection](#multi-invoice-split-detection) for the
+other case), so they get identical validation, storage, field extraction,
+supplier-default overrides, and audit logging. Every new invoice lands in
+`on_review` — an admin has to run Review Complete before it's actually
+routed into an approval workflow (see [Invoice
+lifecycle](#invoice-lifecycle--statuses)).
 
 ---
 
 ## Data model
 
-Full schema: [`supabase/migrations/`](supabase/migrations/) (21 migrations,
-`0001` → `0021`; see [Migration history](#migration-history) for what each
+Full schema: [`supabase/migrations/`](supabase/migrations/) (29 migrations,
+`0001` → `0029`; see [Migration history](#migration-history) for what each
 one added).
 
 | Table | Purpose |
@@ -73,23 +87,31 @@ one added).
 | `profiles` | Mirrors `auth.users` (display name + `avatar_url`) so app tables can join without touching the `auth` schema. |
 | `projects` | Org-scoped customers/jobs/classes. `qbo_id` is reserved for QuickBooks sync. Manually entered today. |
 | `approval_workflows` | Named workflow per org; one is flagged `is_default`. |
-| `approval_workflow_steps` | Ordered approval chain per workflow — `step_order` + `approver_user_id`. |
-| `approval_workflow_rules` | Routing conditions per workflow (amount/requester/supplier/customer/category/class/product) — see [Workflow routing](#workflow-routing--rules). |
-| `approval_workflow_projects` | Links a project to the workflow that manages access to it (see [Projects & visibility](#projects--visibility)). |
+| `approval_workflow_steps` | Ordered approval chain per workflow — `step_order`, a `name`, and `approval_mode` (`all`/`any`, see [Workflow routing](#workflow-routing--rules)). No longer holds an approver directly — see the next two tables. |
+| `approval_workflow_step_approvers` | The approvers on one step — zero or more, each either conditional or flagged `is_default` (the fallback when no conditional approver matches). |
+| `approval_workflow_step_conditions` | Per-approver conditions (`field` — class/category/supplier/customer, `operator` — matches/not_matches, `match_values`) — what makes that approver eligible for a given invoice. See [Workflow routing](#workflow-routing--rules). |
+| `approval_workflow_rules` | **Workflow-selection** routing conditions (amount/requester/supplier/customer/category/class/product) — decides which *workflow* an invoice uses, not who approves within it. See [Workflow routing](#workflow-routing--rules). |
 | `supplier_defaults` | Per-supplier default rules (Category/Class/Project/Tax rate/Payment terms/Currency), matched by normalized vendor name — see [Supplier default rules](#supplier-default-rules). |
 | `invoices` | The core record. `status`: one of 6 values, see [Invoice lifecycle](#invoice-lifecycle--statuses). `source`: `manual`/`email`. Holds both the mapped extracted fields and the full raw `extraction` JSON. `step_override_approver_id` is an admin's per-invoice reassignment (see [Admin overrides](#admin-overrides)). |
-| `invoice_line_items` | Category-details rows (Category/Description/Tax rate/Class/**Project**/Amount/Linked) — a bill can split across multiple projects, one per line. |
+| `invoice_line_items` | Category-details rows (Category/Description/Tax rate/Class/**Project**/Amount/Linked) — a bill can split across multiple projects, one per line. Subtotal/tax/total are derived from these rows ([`src/lib/invoice-totals.ts`](src/lib/invoice-totals.ts)), not read off the document's printed total. |
 | `invoice_documents` | Extra pages beyond the primary file (multi-document support). |
 | `invoice_approvals` | One row per approve/reject decision, keyed by `invoice_id` + `step_order`, unique-constrained so double-decisions are impossible even under a race. |
-| `invoice_comments` | Discussion thread per invoice. |
+| `invoice_comments` | Discussion thread per invoice. `mentioned_user_ids` records who was @mentioned in that comment (resolved server-side, not parsed from free text) — see [Dashboard UI](#dashboard-ui). |
+| `notifications` | In-app "you were mentioned" inbox — one row per mention, read/unread. Shown at `/notifications`; a matching email goes out separately via Resend if configured. |
+| `pending_invoice_splits` | An upload that looked like it contains more than one invoice, awaiting human review at `/invoices/pending-splits` before any invoice rows are created — see [Invoice ingestion](#invoice-ingestion). |
+| `workflow_change_impacts` | One row per step edit that changed who's required to approve some in-flight (`on_approval`/`on_hold`) invoice — shown as a dismissible banner on `/workflows`. See [Workflow change impact reports](#workflow-change-impact-reports). |
 | `saved_reports` | Saved report configs (metric/group-by/filters) for the [Reports](#reports) page. |
 | `audit_log` | Append-only activity trail per org/invoice. |
 | `inbound_email_log` | Raw record of every inbound-email webhook hit, matched or not — the debugging trail for email ingestion. |
 
 **Row Level Security** is enabled on every table. Visibility is enforced by
 SECURITY DEFINER functions: `is_org_member`/`is_org_admin`/`is_org_auditor`
-(role checks) and `can_see_invoice(inv_id)` (the per-invoice visibility
-rule — see [Projects & visibility](#projects--visibility)), used by
+(role checks), `is_eligible_approver(invoice_id, user_id)` (would this user
+end up as the effective approver of some step on this invoice's workflow,
+given its actual class/category/supplier/customer data — see [Workflow
+routing](#workflow-routing--rules)), and `can_see_invoice(inv_id)` (the
+per-invoice visibility rule, built on top of `is_eligible_approver` — see
+[Projects & visibility](#projects--visibility)), used by
 `invoice_approvals`/`invoice_comments`/`invoice_documents`/
 `invoice_line_items`'s policies. The `invoices` table's **own** read/update
 policies (migration 0021) inline that same rule against the row's own
@@ -141,6 +163,14 @@ written to be idempotent (safe to re-run). Roughly:
 | 0019 | `project_id` on `invoice_line_items` — bills can split across multiple projects; `can_see_invoice()` extended to match on any line item's project. |
 | 0020 | `supplier_defaults` — per-supplier default rules, matched by normalized vendor name. |
 | 0021 | Fixes `"new row violates row-level security policy for table invoices"` on every new invoice insert — see the RLS note above. |
+| 0022 | Admin-only permanent invoice deletion; `audit_log.invoice_id` switched to `on delete set null` so the "invoice.deleted" entry itself survives the deletion it records. |
+| 0023 | Fixes a silent gap since day one: `audit_log` had RLS enabled but no INSERT policy, so every non-service-role audit-log write failed quietly. |
+| 0024 | `pending_invoice_splits` — multi-invoice upload detection holds a suspect upload for human review instead of silently keeping only the first invoice. |
+| 0025 | Fixes the storage-side twin of 0023: the `invoices` bucket had no DELETE policy, so file cleanup (invoice deletion, dismissed splits) was a silent no-op. |
+| 0026 | `notifications` + `mentioned_user_ids` on `invoice_comments` — @mention teammates in Discussion, with an in-app inbox and (optionally) email via Resend. |
+| 0027 | **The conditional-approval redesign.** Replaces `approval_workflow_steps.approver_user_id` (one approver per step) with `approval_workflow_step_approvers` + `approval_workflow_step_conditions` — a step can now have several approvers, each eligible only when their own Class/Supplier/Customer condition matches, plus an optional default approver fallback. `is_eligible_approver()` replaces the old `approval_workflow_projects`-based visibility join (that table is dropped). See [Workflow routing](#workflow-routing--rules). |
+| 0028 | Adds `category` as a fourth condition field alongside Class/Supplier/Customer. |
+| 0029 | `workflow_change_impacts` — after-save reports of which in-flight bills a step's approver/condition edit affected. See [Workflow change impact reports](#workflow-change-impact-reports). |
 
 ---
 
@@ -157,6 +187,8 @@ Copy `.env.example` → `.env.local` and fill in:
 | `INBOUND_EMAIL_DOMAIN` | Yes (for email ingestion) | A subdomain you control, e.g. `invoices.yourapp.com` |
 | `OPENROUTER_API_KEY` | For extraction | openrouter.ai — required for invoice field/line-item extraction (without it, extraction silently no-ops rather than failing ingestion) |
 | `OPENROUTER_MODEL` | No | Any OpenRouter model id, e.g. `anthropic/claude-sonnet-4.5`, `openai/gpt-4o`, `google/gemini-2.0-flash-001` — defaults to `anthropic/claude-sonnet-4.5`. This is the knob for testing extraction quality across models. |
+| `RESEND_API_KEY` | No | resend.com — @mention notification emails; without it, mentions still create the in-app `notifications` row, just no email |
+| `RESEND_FROM_EMAIL` | No (required if `RESEND_API_KEY` is set) | Must be a verified sender/domain in your Resend account |
 
 Supabase renamed its API keys at some point — you may see either
 **"Publishable and secret API keys"** or **"Legacy anon, service_role API
@@ -175,9 +207,9 @@ cp .env.example .env.local   # then fill in the values above
 ```
 
 1. **Create a Supabase project** at supabase.com.
-2. **Run all 21 migrations**, in order — paste each file in
+2. **Run all 29 migrations**, in order — paste each file in
    [`supabase/migrations/`](supabase/migrations/) into the SQL editor and
-   run it (`0001` through `0021`), or `supabase db push` if you have the CLI
+   run it (`0001` through `0029`), or `supabase db push` if you have the CLI
    linked. All of them are idempotent — safe to re-run.
 3. **Create the storage buckets**: Storage → New bucket → `invoices`
    (Public **off**) and `avatars` (Public **on**) — or let migration 0016
@@ -224,8 +256,15 @@ insert into organization_members (organization_id, user_id, role)
 insert into approval_workflows (organization_id, name, is_default)
   values ('<org id above>', 'Default', true) returning id;
 
-insert into approval_workflow_steps (workflow_id, step_order, approver_user_id)
-  values ('<workflow id above>', 1, '<your auth.users id>');
+insert into approval_workflow_steps (workflow_id, step_order, name)
+  values ('<workflow id above>', 1, 'Approval') returning id;
+
+-- Make yourself the step's default approver (the fallback used when no
+-- conditional approver's Class/Category/Supplier/Customer rules match —
+-- see Workflow routing below). With no other approvers on the step,
+-- you're eligible for every invoice on this workflow.
+insert into approval_workflow_step_approvers (step_id, approver_user_id, is_default)
+  values ('<step id above>', '<your auth.users id>', true);
 ```
 
 Find your `auth.users` id in Supabase → Authentication → Users, or via
@@ -276,7 +315,7 @@ Three roles on `organization_members.role`, managed in [Settings](#settings):
 |---|---|---|
 | `admin` | Every invoice | Everything — review, approve at any step, manage members/projects/workflows/rules, admin overrides |
 | `auditor` | Every invoice | **Read-only** — no edits, no decisions, anywhere (enforced in RLS, not just the UI) |
-| `user` | Invoices they submitted, project-less invoices, and invoices whose project is covered by a workflow they're an approver on (see [Projects & visibility](#projects--visibility)) | Submit invoices, act as an approver on steps assigned to them, comment |
+| `user` | Invoices they submitted, project-less invoices, and invoices where they're an eligible approver on some step of the workflow — i.e. their Class/Category/Supplier/Customer conditions match, or they're a default approver (see [Projects & visibility](#projects--visibility)) | Submit invoices, act as an approver on steps they're eligible for, comment |
 
 `user` never sees invoices still in `on_review` (Review Complete is
 admin-only) — enforced by `can_see_invoice()` at the database level, not
@@ -325,11 +364,32 @@ double-decisions impossible even under a race. Failures redirect to
 
 ## Invoice ingestion
 
+Both entry points below funnel through
+[`ingestInvoiceFile()`](src/lib/invoice-ingest.ts), which classifies the
+upload before committing to "this is one invoice" — see [Multi-invoice
+split detection](#multi-invoice-split-detection) — and, for the normal
+single-invoice case, calls `createInvoiceFromFile()`
+([`src/lib/invoices.ts`](src/lib/invoices.ts)) to do the actual work:
+upload to Storage, extract fields, apply supplier defaults, route to a
+workflow, insert the `invoices` row.
+
 ### Manual upload
 
 UI: [`src/components/InvoiceUploadDropzone.tsx`](src/components/InvoiceUploadDropzone.tsx)
 (click or drag-and-drop) on `/invoices/new` → `POST /api/invoices/upload`
-(authenticated, uses the signed-in user's session) → `createInvoiceFromFile()`.
+(authenticated, uses the signed-in user's session) → `ingestInvoiceFile()`.
+
+### Multi-invoice split detection
+
+([`src/lib/invoice-split.ts`](src/lib/invoice-split.ts)) A multi-page PDF
+upload might be one invoice plus supporting pages (a PO, packing slip,
+T&Cs — handled fine, becomes one invoice with extra documents) or several
+completely separate invoices stapled into one file. `ingestInvoiceFile()`
+classifies which case it is; if it looks like several invoices, nothing is
+created yet — the upload lands in `pending_invoice_splits` for a human to
+review at `/invoices/pending-splits`, confirm the page ranges, and create
+the resulting invoices (or dismiss it as a false positive). Applies to
+both manual upload and email ingestion.
 
 ### Email ingestion (SendGrid Inbound Parse)
 
@@ -342,7 +402,7 @@ dashboard sidebar.
 2. **Subdomain**: the value of `INBOUND_EMAIL_DOMAIN` (e.g. `invoices.yourapp.com`).
 3. Add an MX record for that subdomain pointing to `mx.sendgrid.net` (priority 10), per SendGrid's instructions.
 4. **Destination URL**: `https://<your-domain>/api/webhooks/inbound-email?token=<INBOUND_EMAIL_WEBHOOK_SECRET>`.
-5. Forwarding/CC'ing an email to an org's inbound address creates one invoice per PDF/image attachment.
+5. Forwarding/CC'ing an email to an org's inbound address creates one invoice per PDF/image attachment (or queues it for split review — see above — if a single attachment looks like several stapled-together invoices).
 6. Every hit (matched or not, invoice created or not) is logged to `inbound_email_log` for debugging.
 
 **Testing the webhook locally without SendGrid** — simulate the POST with curl:
@@ -371,8 +431,13 @@ models take images, not raw PDF bytes); the raw OCR text rides along as
 extra context.
 
 Line items populate the Bill panel's Category details automatically, and
-extraction failures resolve to `null` rather than blocking ingestion. A
-**"Re-extract document fields"** button in the Bill panel re-runs the
+extraction failures resolve to `null` rather than blocking ingestion. **The
+invoice's subtotal/tax/total shown in the app are derived from the line
+items** ([`src/lib/invoice-totals.ts`](src/lib/invoice-totals.ts): tax is
+computed per line as amount × tax rate%, summed) rather than trusted from
+the document's own printed total — line items are the thing a human
+actually edits, so they're the source of truth once extraction hands off.
+A **"Re-extract document fields"** button in the Bill panel re-runs the
 engine on the primary document (Dext-style re-process) and replaces the
 fields + line items. Requires `OPENROUTER_API_KEY`.
 
@@ -388,45 +453,95 @@ authoritative than a best-effort read of the document.
 
 ## Workflow routing & rules
 
-`/workflows` (admin-managed, `user`/`auditor` see it read-only):
+`/workflows` (admin-managed, `user`/`auditor` see it read-only) has **two
+separate routing layers** — easy to conflate since both are called "rules"
+in the UI, but they answer different questions:
 
-- Each **workflow** has an ordered list of **approval steps** (who approves,
-  in what order) and a list of **workflow items** (routing rules).
-- **Routing** ([`src/lib/workflow-routing.ts`](src/lib/workflow-routing.ts)):
-  evaluated at Review Complete, in workflow creation order — the **first**
-  workflow whose rules **all** match wins; if none match, the org's default
-  workflow is used.
-- **Rule types**: `total_amount` (any/between/under/over/equal),
-  `requester`, `supplier`, `product_service`, `category`, `class`,
-  `customer` (any/matches/not_matches). `customer` matches against *every*
-  project touched by the invoice's line items (a bill can split across
-  several — see [Projects & visibility](#projects--visibility)), not a
-  single field.
-- A workflow with **no rules** matches every invoice — that's how the
-  default workflow is meant to be configured.
+1. **Which workflow does this invoice use?** — the coarse layer, unchanged
+   since 0009.
+2. **Within that workflow's steps, who actually approves *this* invoice?**
+   — the layer migrations 0027/0028 rebuilt, replacing "one approver per
+   step" with ApprovalMax-style conditional multi-approver routing. This
+   is what makes **one workflow** cover every project/customer instead of
+   needing a separate workflow per project (previously each step could
+   only name a single approver, so different approvers per
+   project/customer meant either linking projects to different whole
+   workflows, or maintaining dozens of near-duplicate workflows).
+
+### 1. Which workflow an invoice uses
+
+([`src/lib/workflow-routing.ts`](src/lib/workflow-routing.ts)) — each
+**workflow** has a list of **workflow items** (routing rules), evaluated at
+Review Complete in workflow creation order: the **first** workflow whose
+items **all** match wins; if none match, the org's default workflow is
+used. Rule types: `total_amount` (any/between/under/over/equal),
+`requester`, `supplier`, `product_service`, `category`, `class`, `customer`
+(any/matches/not_matches). `customer` matches against *every* project
+touched by the invoice's line items (a bill can split across several — see
+[Projects & visibility](#projects--visibility)), not a single field. A
+workflow with **no** items matches every invoice — that's how the default
+workflow is meant to be configured. In practice most orgs need only one
+workflow (see below), so this layer mainly matters once you actually want
+different step chains for, say, high-value vs. routine bills.
+
+### 2. Who approves within that workflow — conditional per-step routing
+
+Each workflow has an ordered list of **approval steps** (a `name` and an
+`approval_mode`: `all` requires every matching approver on the step to
+approve, `any` completes the step on the first approval). A step can have
+**several approvers**, each either:
+
+- **Conditional** — eligible only when the invoice matches their own
+  AND-ed conditions across up to four fields: Class, Category, Supplier
+  (free text — e.g. "does not match Ferrari & Associates Insurance") and
+  Customer (picked from real `projects`, matched by project id). Each
+  condition can hold several values (OR within that one condition — e.g.
+  Class matches "GE" or "HB").
+- **Default** — the fallback approver(s) for the step, used only when
+  *no* conditional approver's rules match. A step with only a default
+  approver behaves like the old single-approver-per-step model.
+
+The admin UI for this is the **"Approval matrix"** modal on `/workflows`
+(click a step's approver-count button) — approvers as rows, condition
+fields as columns with tag-chip pickers, matching ApprovalMax's own
+editor. Matching logic lives in two places kept deliberately in sync:
+[`src/lib/workflow-conditions.ts`](src/lib/workflow-conditions.ts)
+(`effectiveApproversForStep`, used app-side to decide who sees the
+Approve/Reject buttons and who shows as "currently holding" an invoice)
+and `is_eligible_approver()` in migration 0027/0028 (the same logic in
+SQL, driving RLS visibility). If you change the matching rules, update
+both.
 
 ---
 
 ## Projects & visibility
 
-`projects` (Settings-managed) are org-scoped customers/jobs/classes. Two
+`projects` (Settings-managed) are org-scoped customers/jobs/classes. Three
 separate things depend on them:
 
 1. **Access control** — a `user`-role member can only see an invoice if
-   they're an approver on a workflow linked (via `approval_workflow_projects`)
-   to a project the invoice touches, or if they submitted it, or if it has
-   no project at all. Enforced by `can_see_invoice()` in Postgres, not the
-   UI.
-2. **Routing** — the `customer` rule type in [workflow
-   rules](#workflow-routing--rules).
+   they submitted it, it has no project at all, or `is_eligible_approver()`
+   says they'd end up as the effective approver of some step on the
+   invoice's workflow — i.e. either they're a default approver on some
+   step, or a conditional approver whose Customer condition (among
+   others) matches a project the invoice touches. Enforced in Postgres,
+   not the UI. (Through migration 0026, this ran through
+   `approval_workflow_projects` — "any approver on a workflow linked to
+   this project" — a coarser, project-linked model; 0027 replaced it with
+   the per-approver-condition check described above, and dropped that
+   table.)
+2. **Workflow-selection routing** — the `customer` rule type in [workflow
+   routing](#workflow-routing--rules), part 1.
+3. **Per-step approval routing** — the Customer condition on individual
+   step approvers, [workflow routing](#workflow-routing--rules) part 2.
 
 **A bill can split across multiple projects** (migration 0019): Project is
 a field on each **line item** (Category details), not a single
 invoice-level field — because a real invoice might have some cost going to
-Project A and some to Project B. Visibility and routing both match on *any*
-of the projects an invoice's line items touch (deliberately permissive — in
-practice a split only ever happens across projects the same PM already
-covers).
+Project A and some to Project B. Visibility and both routing layers match
+on *any* of the projects an invoice's line items touch (deliberately
+permissive — in practice a split only ever happens across projects the
+same PM already covers).
 
 ---
 
@@ -472,12 +587,15 @@ reassignment](#admin-overrides)) — is a field ApprovalMax's *own* search
 screen doesn't have (it only offers Requester and Approved by); shown both
 as a filter and directly on each invoice row/detail view.
 
-**Possible-duplicate detection**: opening an invoice checks (live, not
-stored) for another non-cancelled/rejected invoice from the same normalized
-vendor with the same invoice number. Shows an orange banner linking to the
-match(es); if the amount differs, notes it as a likely price-corrected
-resubmission rather than a true duplicate. Purely informational — nothing
-is auto-blocked or auto-linked.
+**Possible-duplicate detection**: computed live (not stored) across
+non-cancelled/rejected invoices from the same normalized vendor with the
+same invoice number. Any invoice in a duplicate group gets an orange
+left-border marker in the list, and **every group is pinned together at
+the top of the list pane** (in front of the normal filter/sort order) so
+the matches are visible without having to hunt for them; opening one also
+shows a banner linking to the others, noting a differing amount as a
+likely price-corrected resubmission rather than a true duplicate. Purely
+informational — nothing is auto-blocked or auto-linked.
 
 ---
 
@@ -498,6 +616,50 @@ pane:
   misrepresent who actually decided it) — the `audit_log` entry
   (`invoice.admin_override_status`, with from/to) is the honest record.
 
+**Reassign to** is also the escape hatch for a real edge case in the
+conditional routing model ([Workflow routing](#workflow-routing--rules)):
+a step with only conditional approvers and no default fallback can end up
+matching *nobody* for a given invoice — e.g. an approver's Category
+condition, and the invoice's line items just don't carry that category. An
+`on_approval` invoice stuck this way shows an explicit amber warning in
+Status & approval (rather than the normal, silent "Waiting on the
+approver" message) telling an admin it can't be approved as-is, and
+pointing at Reassign to (which bypasses conditions entirely) as the fix —
+alongside the longer-term fix of adding a default approver or correcting
+the step's conditions in `/workflows`.
+
+---
+
+## Workflow change impact reports
+
+Deliberate design choice, not a missing feature: **there is no "restart
+the workflow" step.** ApprovalMax snapshots a workflow onto a bill when it
+enters approval, so editing the workflow later doesn't affect bills
+already in flight until you explicitly restart them — and restarting
+resets the audit trail, forcing the whole approval process to be redone.
+Approval Flow never snapshots anything: `effectiveApproversForStep()` /
+`is_eligible_approver()` are recomputed live from the current workflow
+definition on every read and decide, so a step edit takes effect on every
+in-flight invoice at that step **immediately** — nothing to restart, and
+nothing ever wipes `invoice_approvals` or `audit_log`.
+
+The tradeoff: a step edit *can* silently strand an in-flight bill (its
+previously-eligible approver no longer matches, no default to fall back
+to — see [Admin overrides](#admin-overrides) above). Rather than gate
+saves behind a confirmation prompt, the blast radius is reported **after**
+the save: `saveStepApprover`/`deleteStepApprover`
+([`src/app/workflows/page.tsx`](src/app/workflows/page.tsx)) snapshot the
+step's approvers/conditions before and after the edit, and
+[`recordStepChangeImpact()`](src/lib/workflow-impact.ts) re-evaluates
+`effectiveApproversForStep()` against every `on_approval`/`on_hold`
+invoice currently sitting at that step, both ways. Any invoice whose
+required-approver set changed gets written to `workflow_change_impacts`
+(migration 0029) and shown as a dismissible amber banner at the top of
+`/workflows` — who it was with before, who it's with now (or "nobody —
+needs reassignment"), linking straight to each affected invoice.
+Admin-only (`is_org_admin` RLS); dismissing just sets `dismissed_at`, it
+doesn't delete the row.
+
 ---
 
 ## Dashboard UI
@@ -514,20 +676,45 @@ is a master-detail interface, all server-rendered:
 - **List pane**: clicking a row navigates to `/dashboard/[id]?...` (filters
   preserved in the query string), which server-renders the detail pane.
 - **Detail pane**: amount/status header, a possible-duplicate warning if
-  relevant, an approval stepper (green = decided, blue = current step, grey
-  = upcoming), the Approve/Reject/Hold/Cancel/Review-Complete buttons for
-  whichever apply, [admin overrides](#admin-overrides), a discussion
-  thread, and an audit-trail PDF download.
+  relevant (pinned together at the top of the list when present — see
+  below), an approval stepper (green = decided, blue = current step, grey
+  = upcoming — reflecting **all** of a step's required approvers under the
+  conditional routing model, not just one), the
+  Approve/Reject/Hold/Cancel/Review-Complete buttons for whichever apply,
+  [admin overrides](#admin-overrides), and admin-only permanent invoice
+  deletion.
 
 **Bill panel** ([`src/components/BillPanel.tsx`](src/components/BillPanel.tsx)):
 redesigned to read like an actual invoice document rather than a form —
 every field uses a "ghost" style (invisible border at rest, a line appears
 on hover/focus) instead of a boxed input, still fully editable in place:
 vendor/email, bill date/due date/bill number, total/tax/currency (Subtotal
-computed), and a **Category-details table** (Category, Description,
-**Project/customer**, Tax %, Class, Amount, Linked) with add/delete rows.
-On sync this maps directly to the QBO bill — header fields to the bill,
-rows to line items.
+computed — see [Field extraction](#field-extraction-openrouter-model-agnostic)
+for how totals are derived), and a **Category-details table** (Category,
+Description, **Project/customer**, Tax %, Class, Amount, Linked) with
+add/delete rows. On sync this maps directly to the QBO bill — header
+fields to the bill, rows to line items. The panel also now holds the
+**Discussion** thread (@mention teammates — see below — with a real-time
+unread badge) and the **Audit trail** (a chronological, human-readable
+timeline of everything that happened on the invoice, built from
+`audit_log` + comments by
+[`src/lib/audit-timeline.ts`](src/lib/audit-timeline.ts), shared by the
+in-app view and the downloadable PDF so the two never drift apart) — moved
+in from the side panel, and a redundant "Document details" panel (fields
+that just duplicated the audit trail) was removed.
+
+**@mention notifications** (migration 0026): typing `@name` in the
+Discussion composer ([`src/components/MentionComposer.tsx`](src/components/MentionComposer.tsx))
+resolves to real org members and records `mentioned_user_ids` on the
+comment server-side (not parsed from free text). Each mention creates a
+`notifications` row (inbox at `/notifications`) and, if `RESEND_API_KEY`
+is configured, a best-effort email
+([`src/lib/notify.ts`](src/lib/notify.ts)) — a missing key or failed send
+never blocks posting the comment itself.
+
+**Possible-duplicate detection** pins matched invoices together at the top
+of the list pane (not just an inline banner) when opening one — see
+[Document search](#document-search).
 
 **Multi-document support**: an invoice can carry the primary file plus any
 number of additional pages (`invoice_documents`). The document viewer gets
@@ -550,10 +737,11 @@ name/photo):
   genuinely read from Supabase's enrolled-factors data, not a placeholder),
   search, and an **Add new users** modal (creates the `auth.users` account
   if needed, sets an initial name). Role changes and removal are inline.
-- **Approval workflows** — read-only summary here; full management is on
-  [`/workflows`](#workflow-routing--rules).
-- **Projects / customers** — create/edit/deactivate, and link each one to
-  the workflow that manages access to it.
+- **Projects / customers** — create/edit/deactivate. No longer linked to a
+  workflow here — since migration 0027, which project(s) an approver
+  covers is expressed as a Customer condition on that approver, configured
+  on [`/workflows`](#workflow-routing--rules) itself, not on the project
+  record.
 
 ---
 
@@ -602,9 +790,10 @@ This is groundwork, not a finished product. In priority-ish order:
   supplier's name comes through spelled differently across invoices.
 - **Reports vs. per-line-item projects** — see the gap noted in
   [Reports](#reports).
-- **Real-time chat** — the comment thread is a simple list today; live
-  updates (Supabase Realtime), mentions, and typing indicators aren't
-  built.
+- **Real-time chat** — @mention notifications exist (migration 0026), but
+  the comment thread itself is still a simple list: no live updates
+  (Supabase Realtime — posting a comment doesn't push to other open tabs,
+  it needs a refresh) and no typing indicators.
 - **Visual polish** — functional Tailwind, not a designed product, outside
   the Bill panel's document-style pass.
 - **Rejection detail** — a rejected invoice records the decision but

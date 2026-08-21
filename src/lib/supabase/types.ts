@@ -181,6 +181,26 @@ export interface Database {
         >;
         Relationships: [];
       };
+      workflow_change_impacts: {
+        Row: {
+          id: string;
+          organization_id: string;
+          workflow_id: string;
+          step_id: string | null;
+          actor_id: string | null;
+          summary: string;
+          affected: { invoice_id: string; invoice_label: string; before: string[]; after: string[] }[];
+          created_at: string;
+          dismissed_at: string | null;
+        };
+        Insert: Partial<
+          Database["public"]["Tables"]["workflow_change_impacts"]["Row"]
+        > & { organization_id: string; workflow_id: string; summary: string };
+        Update: Partial<
+          Database["public"]["Tables"]["workflow_change_impacts"]["Row"]
+        >;
+        Relationships: [];
+      };
       invoices: {
         Row: {
           id: string;
