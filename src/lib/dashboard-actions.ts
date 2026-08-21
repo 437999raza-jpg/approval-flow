@@ -1380,6 +1380,60 @@ export async function syncQboCategories() {
 }
 
 
+// Pull QuickBooks SUPPLIERS (Vendor list) into the app. READ-ONLY against
+// QBO — Flow never creates suppliers in QuickBooks; this mirror is what OCR
+// matching and bill sync run against. Admin only.
+export async function syncQboSuppliers() {
+  "use server";
+
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
+  const org = await getCurrentOrg(supabase);
+  if (!org || org.role !== "admin") {
+    redirect("/settings?qbo=error");
+  }
+
+  const conn = await getQboConnection(supabase, org.id);
+  if (!conn) {
+    redirect("/settings?qbo=error");
+  }
+
+  let suppliers: Awaited<ReturnType<typeof listSuppliers>> = [];
+  try {
+    suppliers = await listSuppliers(conn);
+    if (suppliers.length > 0) {
+      const { error } = await supabase.from("qbo_suppliers").upsert(
+        suppliers.map((s) => ({
+          organization_id: org.id,
+          qbo_vendor_id: s.qboVendorId,
+          name: s.name,
+          name_normalized: s.name
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, " ")
+            .trim(),
+          active: s.active,
+          synced_at: new Date().toISOString(),
+        })),
+        { onConflict: "organization_id,qbo_vendor_id" }
+      );
+      if (error) throw error;
+    }
+  } catch (e) {
+    console.error("syncQboSuppliers failed:", e);
+    redirect("/settings?qbo=error");
+  }
+
+  // redirect() throws internally — keep it OUTSIDE the try/catch so a
+  // successful sync doesn't get mislabeled as a failure.
+  revalidatePath("/settings");
+  redirect(`/settings?qbo=suppliers_synced&count=${suppliers.length}`);
+}
+
+
 // One-click refresh: pulls tax rates, classes, categories (Divisions 5 & 6),
 // and suppliers from QuickBooks in a single action. READ-ONLY against QBO —
 // nothing is ever written to QuickBooks. Admin only.

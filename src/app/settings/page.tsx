@@ -5,7 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentOrg } from "@/lib/current-org";
 import { SignOutButton } from "@/components/SignOutButton";
-import { disconnectQbo, refreshQboData, syncQboTaxes, syncQboClasses, syncQboCategories } from "@/lib/dashboard-actions";
+import { disconnectQbo, refreshQboData, syncQboTaxes, syncQboClasses, syncQboCategories, syncQboSuppliers } from "@/lib/dashboard-actions";
 import { qboEnv } from "@/lib/qbo";
 import { Avatar } from "@/components/Avatar";
 import { AvatarUploadForm } from "@/components/AvatarUploadForm";
@@ -480,6 +480,11 @@ export default async function SettingsPage({
                 Refreshed {searchParams.count ?? 0} items from QuickBooks (read-only).
               </div>
             )}
+            {searchParams.qbo === "suppliers_synced" && (
+              <div className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+                Synced {searchParams.count ?? 0} suppliers from QuickBooks (read-only).
+              </div>
+            )}
             {searchParams.qbo === "error" && (
               <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
                 The QuickBooks connection failed. If you cancelled the
@@ -640,9 +645,9 @@ export default async function SettingsPage({
                       Suppliers
                     </span>
                     {isAdmin && (
-                      <form action={refreshQboData}>
+                      <form action={syncQboSuppliers}>
                         <button className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">
-                          Refresh suppliers
+                          Sync suppliers from QuickBooks
                         </button>
                       </form>
                     )}
