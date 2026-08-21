@@ -76,8 +76,8 @@ lifecycle](#invoice-lifecycle--statuses)).
 
 ## Data model
 
-Full schema: [`supabase/migrations/`](supabase/migrations/) (29 migrations,
-`0001` → `0029`; see [Migration history](#migration-history) for what each
+Full schema: [`supabase/migrations/`](supabase/migrations/) (30 migrations,
+`0001` → `0030`; see [Migration history](#migration-history) for what each
 one added).
 
 | Table | Purpose |
@@ -171,6 +171,7 @@ written to be idempotent (safe to re-run). Roughly:
 | 0027 | **The conditional-approval redesign.** Replaces `approval_workflow_steps.approver_user_id` (one approver per step) with `approval_workflow_step_approvers` + `approval_workflow_step_conditions` — a step can now have several approvers, each eligible only when their own Class/Supplier/Customer condition matches, plus an optional default approver fallback. `is_eligible_approver()` replaces the old `approval_workflow_projects`-based visibility join (that table is dropped). See [Workflow routing](#workflow-routing--rules). |
 | 0028 | Adds `category` as a fourth condition field alongside Class/Supplier/Customer. |
 | 0029 | `workflow_change_impacts` — after-save reports of which in-flight bills a step's approver/condition edit affected. See [Workflow change impact reports](#workflow-change-impact-reports). |
+| 0030 | Fixes another silent auditor gap: `"invoices: members can insert"` (0001) only ever checked `is_org_member()`, true for auditors too, so an auditor could create a new invoice via manual upload despite the role being documented everywhere else as fully read-only. Adds the missing `is_org_auditor()` exclusion here, plus on `audit_log`/`notifications` inserts for defense in depth. Matching app-layer checks: the upload API route 403s an auditor, `/invoices/new` redirects them, and the dashboard hides "+ Add invoice" for the role. |
 
 ---
 
@@ -207,9 +208,9 @@ cp .env.example .env.local   # then fill in the values above
 ```
 
 1. **Create a Supabase project** at supabase.com.
-2. **Run all 29 migrations**, in order — paste each file in
+2. **Run all 30 migrations**, in order — paste each file in
    [`supabase/migrations/`](supabase/migrations/) into the SQL editor and
-   run it (`0001` through `0029`), or `supabase db push` if you have the CLI
+   run it (`0001` through `0030`), or `supabase db push` if you have the CLI
    linked. All of them are idempotent — safe to re-run.
 3. **Create the storage buckets**: Storage → New bucket → `invoices`
    (Public **off**) and `avatars` (Public **on**) — or let migration 0016
