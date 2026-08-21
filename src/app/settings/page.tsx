@@ -315,7 +315,7 @@ export default async function SettingsPage({
     .select("id, name, active")
     .eq("organization_id", org.id)
     .order("name", { ascending: true })
-    .limit(500);
+    .limit(5000);
 
   // Projects imported from QBO (customers with IsProject=true).
   const { data: qboProjects } = await supabase
