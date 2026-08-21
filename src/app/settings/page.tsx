@@ -293,11 +293,13 @@ export default async function SettingsPage({
     .limit(200);
 
   // Tax codes with resolved rates pulled from QBO (read-only mirror) — the
-  // codes are what the bill's Tax field offers, exactly like Dext.
+  // codes are what the bill's Tax field offers, exactly like Dext. Only
+  // codes with a usable rate are listed (H 13%, M&E 13%, Out of Scope 0%).
   const { data: qboTaxCodes } = await supabase
     .from("qbo_tax_codes")
     .select("id, name, rate_value")
     .eq("organization_id", org.id)
+    .not("rate_value", "is", null)
     .order("name", { ascending: true })
     .limit(50);
 
