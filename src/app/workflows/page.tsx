@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentOrg } from "@/lib/current-org";
+import { fetchAllQboSuppliers } from "@/lib/qbo-all";
 import { SignOutButton } from "@/components/SignOutButton";
 import { WorkflowRuleRow } from "@/components/WorkflowRuleRow";
 import { StepApproversManager } from "@/components/StepApproversManager";
@@ -543,7 +544,7 @@ export default async function WorkflowsPage() {
   // lists (hundreds of projects/categories/suppliers/classes) instead of
   // free-typing. The stored value is the display string — exactly what an
   // invoice's class/category/supplier holds, so conditions match at runtime.
-  const [{ data: qboClassRows }, { data: qboCategoryRows }, { data: qboSupplierRows }] =
+  const [{ data: qboClassRows }, { data: qboCategoryRows }, qboSupplierRows] =
     await Promise.all([
       supabase
         .from("qbo_classes")
@@ -557,13 +558,7 @@ export default async function WorkflowsPage() {
         .eq("organization_id", org.id)
         .eq("active", true)
         .order("name", { ascending: true }),
-      supabase
-        .from("qbo_suppliers")
-        .select("name")
-        .eq("organization_id", org.id)
-        .eq("active", true)
-        .order("name", { ascending: true })
-        .limit(5000),
+      fetchAllQboSuppliers(supabase, org.id),
     ]);
   const classOptions = (qboClassRows ?? []).map((c) => ({
     id: c.name,
@@ -577,7 +572,6 @@ export default async function WorkflowsPage() {
     id: s.name,
     label: s.name,
   }));
-
   // Org members for the approver selects (auditors can't be approvers).
   const { data: members } = await supabase
     .from("organization_members")

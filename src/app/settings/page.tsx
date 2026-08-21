@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentOrg } from "@/lib/current-org";
+import { fetchAllQboSuppliers } from "@/lib/qbo-all";
 import { SignOutButton } from "@/components/SignOutButton";
 import { disconnectQbo, refreshQboData, syncQboTaxes, syncQboClasses, syncQboCategories, syncQboSuppliers, syncQboProjects } from "@/lib/dashboard-actions";
 import { qboEnv } from "@/lib/qbo";
@@ -312,12 +313,8 @@ export default async function SettingsPage({
     .limit(200);
 
   // Suppliers pulled from QBO (read-only mirror — Flow never creates these).
-  const { data: qboSuppliers } = await supabase
-    .from("qbo_suppliers")
-    .select("id, name, active")
-    .eq("organization_id", org.id)
-    .order("name", { ascending: true })
-    .limit(5000);
+  // Paginated: PostgREST caps responses at 1000 rows.
+  const qboSuppliers = await fetchAllQboSuppliers(supabase, org.id);
 
   // Projects imported from QBO (customers with IsProject=true).
   const { data: qboProjects } = await supabase

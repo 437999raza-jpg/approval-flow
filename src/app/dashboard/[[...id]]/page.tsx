@@ -7,6 +7,7 @@ import { clsx } from "clsx";
 import { notFound, redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentOrg } from "@/lib/current-org";
+import { fetchAllQboSuppliers } from "@/lib/qbo-all";
 import { InvoiceStatusBadge } from "@/components/InvoiceStatusBadge";
 import { SearchInput } from "@/components/SearchInput";
 import { SignOutButton } from "@/components/SignOutButton";
@@ -161,7 +162,7 @@ export default async function DashboardPage({
     { data: workflows },
     { data: projects },
     { data: qboCategoryRows },
-    { data: qboSupplierRows },
+    qboSupplierRows,
     { data: qboClassRows },
     { data: qboTaxRateRows },
     { data: qboTaxCodeRows },
@@ -190,13 +191,7 @@ export default async function DashboardPage({
       .eq("active", true)
       .order("name", { ascending: true })
       .limit(1000),
-    supabase
-      .from("qbo_suppliers")
-      .select("name")
-      .eq("organization_id", org.id)
-      .eq("active", true)
-      .order("name", { ascending: true })
-      .limit(5000),
+    fetchAllQboSuppliers(supabase, org.id),
     supabase
       .from("qbo_classes")
       .select("name")
@@ -347,8 +342,7 @@ export default async function DashboardPage({
   ].sort((a, b) => a.localeCompare(b));
   const qboSupplierNames: string[] = [
     ...new Set((qboSupplierRows ?? []).map((s) => s.name)),
-  ].sort((a, b) => a.localeCompare(b));
-  const qboClassNames: string[] = [
+  ].sort((a, b) => a.localeCompare(b));  const qboClassNames: string[] = [
     ...new Set((qboClassRows ?? []).map((c) => c.name)),
   ].sort((a, b) => a.localeCompare(b));
   const qboTaxRateOptions: { value: string; label: string }[] = (
