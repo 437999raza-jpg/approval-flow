@@ -536,6 +536,7 @@ export function BillPanel({
                 formId="bill-form"
                 options={qboSuppliers ?? []}
                 defaultValue={invoice.vendor_name ?? ""}
+                placeholder={invoice.vendor_name ? undefined : "Type to search supplier…"}
                 className={`${ghostField} font-medium`}
                 disabled={readOnly}
                 onCommit={() => billFormRef.current?.requestSubmit()}
@@ -883,7 +884,7 @@ function LineItemRow({
         name="category"
         options={qboCategories ?? []}
         defaultValue={defaults.category}
-        placeholder={isNew ? "Category" : undefined}
+        placeholder={isNew ? "Search category…" : undefined}
         className={cellCls}
         disabled={readOnly}
         onCommit={() => {
@@ -903,7 +904,7 @@ function LineItemRow({
         name="project_id"
         options={projects.map((p) => ({ value: p.id, label: p.name }))}
         defaultValue={defaults.project_id ?? ""}
-        placeholder={isNew ? "Project / customer" : undefined}
+        placeholder={isNew ? "Search project…" : undefined}
         className={cellCls}
         disabled={readOnly}
         onCommit={() => {
@@ -915,7 +916,7 @@ function LineItemRow({
         name="class"
         options={qboClasses ?? []}
         defaultValue={defaults.class}
-        placeholder={isNew ? "Class" : undefined}
+        placeholder={isNew ? "Search class…" : undefined}
         className={cellCls}
         disabled={readOnly}
         onCommit={() => {
