@@ -95,16 +95,16 @@ export function Combobox({
   const q = query.trim().toLowerCase();
   // Search-as-you-type: with big lists (2,045 suppliers, 454 projects) a
   // wall of options on click is useless. Only surface matches once the user
-  // has typed enough (minQueryLength), then show up to 30.
+  // has typed enough (minQueryLength), then show up to 50.
   const searching = q.length >= minQueryLength;
-  const filtered = searching
-    ? options
-        .filter((o) => {
-          const label = labelOf(o).toLowerCase();
-          return matchStart ? label.startsWith(q) : label.includes(q);
-        })
-        .slice(0, 30)
+  const matched = searching
+    ? options.filter((o) => {
+        const label = labelOf(o).toLowerCase();
+        return matchStart ? label.startsWith(q) : label.includes(q);
+      })
     : [];
+  const truncated = matched.length > 50;
+  const filtered = matched.slice(0, 50);
 
   // Keep the hidden value input in sync with the selected value.
   useEffect(() => {
@@ -227,6 +227,11 @@ export function Combobox({
               {labelOf(o)}
             </button>
           ))}
+          {truncated && (
+            <div className="border-t border-slate-100 px-2 py-1 text-[11px] text-slate-400">
+              {matched.length} matches — keep typing to narrow…
+            </div>
+          )}
         </div>
       )}
       {open && !searching && (
