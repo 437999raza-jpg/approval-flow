@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/types";
+import { normalizeForMatching } from "@/lib/matching";
 
 // QuickBooks Online integration: OAuth2 (three-legged), token refresh,
 // bill creation, and document attachment (audit PDF + invoice files).
@@ -170,11 +171,18 @@ async function qboFetch(
 }
 
 // Find (or create) the vendor by display name; returns the QBO vendor id.
+// Creation failures are reported with QBO's actual error, and if the create
+// is rejected (usually because a vendor already exists under a slightly
+// different spelling), a loose case/punctuation-insensitive lookup picks
+// up the existing vendor.
 export async function ensureVendor(
   conn: QboConnection,
   name: string
 ): Promise<string> {
-  const q = `select Id from Vendor where DisplayName = '${name.replace(/'/g, "''")}' and Active = true`;
+  const escaped = name.replace(/'/g, "''");
+
+  // 1) Exact display-name match first.
+  const q = `select Id from Vendor where DisplayName = '${escaped}' and Active = true`;
   const res = await qboFetch(conn, `/query?query=${encodeURIComponent(q)}`);
   const json = (await res.json()) as {
     QueryResponse?: { Vendor?: { Id: string }[] };
@@ -182,14 +190,40 @@ export async function ensureVendor(
   const existing = json.QueryResponse?.Vendor?.[0];
   if (existing) return existing.Id;
 
+  // 2) Try to create it.
   const create = await qboFetch(conn, "/vendor", {
     method: "POST",
     body: JSON.stringify({ DisplayName: name, CompanyName: name }),
   });
-  const created = (await create.json()) as { Vendor?: { Id: string } };
-  const id = created.Vendor?.Id;
-  if (!id) throw new Error(`QBO: could not create vendor "${name}"`);
-  return id;
+  const createText = await create.text();
+  let created: { Vendor?: { Id: string } } | null = null;
+  try {
+    created = JSON.parse(createText) as { Vendor?: { Id: string } };
+  } catch {
+    // not JSON — will fall through to the loose lookup
+  }
+  const id = created?.Vendor?.Id;
+  if (id) return id;
+
+  // 3) Create failed — most likely the vendor already exists with a
+  //    different spelling/punctuation (e.g. "TRI-AN ELECTRIC 2024 LTD"
+  //    vs "TRI-AN ELECTRIC 2024 LTD."). Find it via a loose LIKE + the
+  //    same normalization used for duplicate/supplier matching.
+  const short = name.slice(0, 40).replace(/'/g, "''");
+  const loose = `select Id, DisplayName from Vendor where DisplayName like '%${short}%' and Active = true maxresults 25`;
+  const looseRes = await qboFetch(conn, `/query?query=${encodeURIComponent(loose)}`);
+  const looseJson = (await looseRes.json()) as {
+    QueryResponse?: { Vendor?: { Id: string; DisplayName?: string }[] };
+  };
+  const needle = normalizeForMatching(name);
+  const match = (looseJson.QueryResponse?.Vendor ?? []).find(
+    (v) => normalizeForMatching(v.DisplayName ?? "") === needle
+  );
+  if (match) return match.Id;
+
+  throw new Error(
+    `QBO: could not create vendor "${name}" (HTTP ${create.status}): ${createText.slice(0, 300)}`
+  );
 }
 
 // Find the account id by name; fall back to the first active Expense
