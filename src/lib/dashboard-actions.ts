@@ -182,7 +182,10 @@ export async function decide(
     await supabase
       .from("invoices")
       .update({
-        status: isFinalStep ? "approved" : "on_approval",
+        // Completing the LAST step lands the bill in 'qbo_ready', the
+        // admin-only final gate — it sits there until an admin presses
+        // "Sync to QuickBooks". Earlier steps stay 'on_approval'.
+        status: isFinalStep ? "qbo_ready" : "on_approval",
         current_step_order: isFinalStep
           ? invoice.current_step_order
           : invoice.current_step_order + 1,
@@ -1654,10 +1657,12 @@ export async function syncToQbo(invoiceId: string) {
     });
   };
 
-  // RULE 1 — approval gate: only a fully-approved invoice may sync.
-  if (inv.status !== "approved") {
+  // RULE 1 — approval gate: only a bill that has completed every workflow
+  // step (status 'qbo_ready') may sync — and only an admin can press the
+  // final button (enforced by the caller UI + canReview).
+  if (inv.status !== "qbo_ready") {
     await fail(
-      "This bill cannot sync to QuickBooks yet — it must complete every step of the approval workflow first."
+      "This bill cannot sync to QuickBooks yet — it must complete every step of the approval workflow and be released by an admin."
     );
     revalidatePath("/dashboard", "layout");
     revalidatePath("/settings");
@@ -1764,6 +1769,7 @@ export async function syncToQbo(invoiceId: string) {
     await supabase
       .from("invoices")
       .update({
+        status: "approved", // qbo_ready -> approved once synced to QBO
         qbo_bill_id: bill.billId,
         qbo_sync_status: "synced",
         qbo_synced_at: new Date().toISOString(),

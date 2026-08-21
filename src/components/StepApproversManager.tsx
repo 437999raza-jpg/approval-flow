@@ -20,6 +20,9 @@ export function StepApproversManager({
   approvers,
   approverOptions,
   projectOptions,
+  classOptions,
+  categoryOptions,
+  supplierOptions,
   saveApprover,
   deleteApprover,
   readOnly,
@@ -28,6 +31,11 @@ export function StepApproversManager({
   approvers: StepApproverData[];
   approverOptions: { id: string; label: string }[];
   projectOptions: TagOption[];
+  // QBO mirrors (read-only) for the matrix cells — searchable pick-lists
+  // so approvers choose from the real lists rather than free-typing.
+  classOptions?: TagOption[];
+  categoryOptions?: TagOption[];
+  supplierOptions?: TagOption[];
   saveApprover?: (approverRowId: string, formData: FormData) => Promise<void>;
   deleteApprover?: (approverRowId: string) => Promise<void>;
   readOnly?: boolean;
@@ -108,6 +116,9 @@ export function StepApproversManager({
                     approverRowId={a.id}
                     approverOptions={approverOptions}
                     projectOptions={projectOptions}
+                    classOptions={classOptions}
+                    categoryOptions={categoryOptions}
+                    supplierOptions={supplierOptions}
                     initialApproverUserId={a.approver_user_id}
                     initialIsDefault={a.is_default}
                     initialConditions={a.conditions}
@@ -128,6 +139,9 @@ export function StepApproversManager({
                       approverRowId="new"
                       approverOptions={approverOptions}
                       projectOptions={projectOptions}
+                      classOptions={classOptions}
+                      categoryOptions={categoryOptions}
+                      supplierOptions={supplierOptions}
                       initialApproverUserId=""
                       initialIsDefault={false}
                       initialConditions={[]}

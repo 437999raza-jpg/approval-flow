@@ -2,12 +2,14 @@
 // Once the project is linked, regenerate with:
 //   supabase gen types typescript --linked > src/lib/supabase/types.ts
 
-// ApprovalMax's status set: On review -> On approval -> Approved/Rejected,
-// with On hold and Cancelled as side branches. Collapses what used to be
-// pending_review/pending/in_review/held/paid (migration 0017).
+// ApprovalMax's status set: On review -> On approval -> QBO Ready (final
+// admin gate) -> Approved/Synced, with On hold and Cancelled as side
+// branches. Collapses what used to be pending_review/pending/in_review/
+// held/paid (migrations 0017, 0039).
 export type InvoiceStatus =
   | "on_review"
   | "on_approval"
+  | "qbo_ready"
   | "approved"
   | "cancelled"
   | "rejected"

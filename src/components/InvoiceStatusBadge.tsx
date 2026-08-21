@@ -4,6 +4,7 @@ import type { InvoiceStatus } from "@/lib/supabase/types";
 const STYLES: Record<InvoiceStatus, string> = {
   on_review: "bg-violet-100 text-violet-800",
   on_approval: "bg-amber-100 text-amber-800",
+  qbo_ready: "bg-sky-100 text-sky-800",
   approved: "bg-emerald-100 text-emerald-800",
   cancelled: "bg-slate-100 text-slate-500",
   rejected: "bg-red-100 text-red-800",
@@ -13,6 +14,7 @@ const STYLES: Record<InvoiceStatus, string> = {
 const LABELS: Record<InvoiceStatus, string> = {
   on_review: "On review",
   on_approval: "On approval",
+  qbo_ready: "QBO Ready",
   approved: "Approved",
   cancelled: "Cancelled",
   rejected: "Rejected",

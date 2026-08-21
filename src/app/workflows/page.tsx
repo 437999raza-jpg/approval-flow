@@ -539,6 +539,44 @@ export default async function WorkflowsPage() {
     .order("name", { ascending: true });
   const projectOptions = (projects ?? []).map((p) => ({ id: p.id, label: p.name }));
 
+  // QBO mirrors feed the matrix cells so approvers pick from the real
+  // lists (hundreds of projects/categories/suppliers/classes) instead of
+  // free-typing. The stored value is the display string — exactly what an
+  // invoice's class/category/supplier holds, so conditions match at runtime.
+  const [{ data: qboClassRows }, { data: qboCategoryRows }, { data: qboSupplierRows }] =
+    await Promise.all([
+      supabase
+        .from("qbo_classes")
+        .select("name")
+        .eq("organization_id", org.id)
+        .eq("active", true)
+        .order("name", { ascending: true }),
+      supabase
+        .from("qbo_categories")
+        .select("name, acct_num")
+        .eq("organization_id", org.id)
+        .eq("active", true)
+        .order("name", { ascending: true }),
+      supabase
+        .from("qbo_suppliers")
+        .select("name")
+        .eq("organization_id", org.id)
+        .eq("active", true)
+        .order("name", { ascending: true }),
+    ]);
+  const classOptions = (qboClassRows ?? []).map((c) => ({
+    id: c.name,
+    label: c.name,
+  }));
+  const categoryOptions = (qboCategoryRows ?? []).map((c) => {
+    const label = c.acct_num ? `${c.acct_num} - ${c.name}` : c.name;
+    return { id: label, label };
+  });
+  const supplierOptions = (qboSupplierRows ?? []).map((s) => ({
+    id: s.name,
+    label: s.name,
+  }));
+
   // Org members for the approver selects (auditors can't be approvers).
   const { data: members } = await supabase
     .from("organization_members")
@@ -858,6 +896,9 @@ export default async function WorkflowsPage() {
                                 }))}
                                 approverOptions={approverOptions}
                                 projectOptions={projectOptions}
+                                classOptions={classOptions}
+                                categoryOptions={categoryOptions}
+                                supplierOptions={supplierOptions}
                                 saveApprover={isAdmin ? saveStepApprover.bind(null, s.id) : undefined}
                                 deleteApprover={isAdmin ? deleteStepApprover : undefined}
                                 readOnly={!isAdmin}

@@ -40,6 +40,8 @@ export interface BillAdminData {
   statusOptions: { value: string; label: string }[];
   overrideStatus: (formData: FormData) => Promise<void>;
   deleteInvoice: () => Promise<void>;
+  // The final release: pushes a fully-approved (qbo_ready) bill to QBO.
+  syncToQbo?: () => Promise<void>;
 }
 
 export interface BillInstructionsEntry {
@@ -693,8 +695,29 @@ export function BillPanel({
                 Sync failed
                 {invoice.qbo_error ? `: ${invoice.qbo_error}` : ""}
               </p>
+            ) : invoice.status === "qbo_ready" && admin.visible ? (
+              <div className="space-y-2">
+                <p className="text-sky-700">
+                  Workflow complete — this bill is ready for the final
+                  QuickBooks release.
+                </p>
+                <form action={admin.syncToQbo}>
+                  <button
+                    disabled={!qboConnected}
+                    className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+                  >
+                    {qboConnected
+                      ? "Sync to QuickBooks (final)"
+                      : "Connect QuickBooks in Settings first"}
+                  </button>
+                </form>
+              </div>
             ) : (
-              <p className="text-slate-400">Not synced to QuickBooks yet.</p>
+              <p className="text-slate-400">
+                {invoice.status === "qbo_ready"
+                  ? "Waiting for an admin to release this bill to QuickBooks."
+                  : "Not synced to QuickBooks yet — completes after the full approval workflow."}
+              </p>
             )}
             {!readOnly && (
               <p className="text-slate-400">

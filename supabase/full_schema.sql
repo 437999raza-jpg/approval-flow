@@ -1,4 +1,4 @@
--- Approval Flow: COMPLETE schema bundle (0001-0038), for a FRESH production
+-- Approval Flow: COMPLETE schema bundle (0001-0039), for a FRESH production
 -- Supabase project only. Do NOT run on an existing database.
 -- Generated 2026-08-21. Paste into the SQL editor and run once.
 
@@ -2313,3 +2313,25 @@ create policy "qbo_suppliers: admins manage" on qbo_suppliers
 -- Run via `supabase db push` or paste into the Supabase SQL editor.
 
 alter table qbo_categories add column if not exists acct_num text;
+
+--------------------------------------------------------------------
+-- >>> supabase/migrations/0039_qbo_ready_status.sql
+--------------------------------------------------------------------
+-- 0039: add the 'qbo_ready' status — the admin-only final gate.
+--
+-- When a bill completes EVERY step of its approval workflow it lands in
+-- 'qbo_ready' (not 'approved'). It sits there until an admin presses the
+-- final "Sync to QuickBooks" button, which is the only thing that sends
+-- the bill to QBO. This enforces the hard rule: no bill reaches QBO until
+-- the full workflow is done AND an admin explicitly releases it.
+-- Run via `supabase db push` or paste into the Supabase SQL editor.
+
+alter table invoices drop constraint if exists invoices_status_check;
+
+-- Fully-approved invoices that were never synced to QBO become 'qbo_ready'
+-- (they need the admin's final release). Ones already synced stay 'approved'.
+update invoices set status = 'qbo_ready'
+where status = 'approved' and coalesce(qbo_sync_status, '') <> 'synced';
+
+alter table invoices add constraint invoices_status_check
+  check (status in ('on_review', 'on_approval', 'qbo_ready', 'approved', 'cancelled', 'rejected', 'on_hold'));

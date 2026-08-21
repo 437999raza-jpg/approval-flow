@@ -18,6 +18,9 @@ export function StepApproverMatrixRow({
   approverRowId,
   approverOptions,
   projectOptions,
+  classOptions,
+  categoryOptions,
+  supplierOptions,
   initialApproverUserId,
   initialIsDefault,
   initialConditions,
@@ -29,6 +32,10 @@ export function StepApproverMatrixRow({
   approverRowId: string; // "new" for an unsaved add-row
   approverOptions: { id: string; label: string }[];
   projectOptions: TagOption[];
+  // QBO mirrors for the matrix cells (searchable pick-lists).
+  classOptions?: TagOption[];
+  categoryOptions?: TagOption[];
+  supplierOptions?: TagOption[];
   initialApproverUserId: string;
   initialIsDefault: boolean;
   initialConditions: RowCondition[];
@@ -126,7 +133,8 @@ export function StepApproverMatrixRow({
             name="class"
             initialOperator={findCond("class")?.operator ?? "any"}
             initialValues={findCond("class")?.match_values ?? []}
-            placeholder="GE, HB…"
+            placeholder="Search classes…"
+            options={classOptions}
           />
         )}
       </div>
@@ -138,7 +146,8 @@ export function StepApproverMatrixRow({
             name="category"
             initialOperator={findCond("category")?.operator ?? "any"}
             initialValues={findCond("category")?.match_values ?? []}
-            placeholder="Materials, Labor…"
+            placeholder="Search categories…"
+            options={categoryOptions}
           />
         )}
       </div>
@@ -150,7 +159,8 @@ export function StepApproverMatrixRow({
             name="supplier"
             initialOperator={findCond("supplier")?.operator ?? "any"}
             initialValues={findCond("supplier")?.match_values ?? []}
-            placeholder="Vendor name…"
+            placeholder="Search suppliers…"
+            options={supplierOptions}
           />
         )}
       </div>

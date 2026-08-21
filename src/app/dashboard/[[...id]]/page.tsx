@@ -45,16 +45,18 @@ import {
   saveLineItem,
   deleteLineItem,
   reExtract,
+  syncToQbo,
 } from "@/lib/dashboard-actions";
 
 type Invoice = Database["public"]["Tables"]["invoices"]["Row"];
 
-const VIEWS = ["all", "review", "mine", "created", "approved", "rejected"] as const;
+const VIEWS = ["all", "review", "mine", "ready", "created", "approved", "rejected"] as const;
 type View = (typeof VIEWS)[number];
 
 const STATUS_OPTIONS: MultiSelectOption[] = [
   { id: "on_review", label: "On review" },
   { id: "on_approval", label: "On approval" },
+  { id: "qbo_ready", label: "QBO Ready" },
   { id: "approved", label: "Approved" },
   { id: "cancelled", label: "Cancelled" },
   { id: "rejected", label: "Rejected" },
@@ -444,6 +446,7 @@ export default async function DashboardPage({
     all: invoices?.length ?? 0,
     review: invoices?.filter((i) => i.status === "on_review").length ?? 0,
     mine: invoices?.filter(requiresMyApproval).length ?? 0,
+    ready: invoices?.filter((i) => i.status === "qbo_ready").length ?? 0,
     created: invoices?.filter((i) => i.submitted_by === user.id).length ?? 0,
     approved: invoices?.filter((i) => i.status === "approved").length ?? 0,
     rejected: invoices?.filter((i) => i.status === "rejected").length ?? 0,
@@ -452,6 +455,7 @@ export default async function DashboardPage({
   let filtered = invoices ?? [];
   if (view === "review") filtered = filtered.filter((i) => i.status === "on_review");
   else if (view === "mine") filtered = filtered.filter(requiresMyApproval);
+  else if (view === "ready") filtered = filtered.filter((i) => i.status === "qbo_ready");
   else if (view === "created") filtered = filtered.filter((i) => i.submitted_by === user.id);
   else if (view === "approved") filtered = filtered.filter((i) => i.status === "approved");
   else if (view === "rejected") filtered = filtered.filter((i) => i.status === "rejected");
@@ -874,6 +878,7 @@ export default async function DashboardPage({
       ? [{ key: "review" as View, label: "Pending Review" }]
       : []),
     { key: "mine", label: "Requires my approval" },
+    ...(canReviewNow ? [{ key: "ready" as View, label: "QBO Ready" }] : []),
     { key: "created", label: "Created by me" },
     { key: "approved", label: "Approved" },
     { key: "rejected", label: "Rejected" },
@@ -1210,6 +1215,7 @@ export default async function DashboardPage({
                     })),
                     overrideStatus: overrideStatus.bind(null, selected.id),
                     deleteInvoice: deleteInvoiceAction.bind(null, selected.id),
+                    syncToQbo: syncToQbo.bind(null, selected.id),
                   },
                   instructions: {
                     entries: instructionEntriesForSelected,
