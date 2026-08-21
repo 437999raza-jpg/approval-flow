@@ -50,6 +50,22 @@ function addDays(dateStr: string, days: number): string {
   return d.toISOString().slice(0, 10);
 }
 
+// Business rule: when a line item's description mentions a holdback (HB)
+// and the amount is negative, the category is almost always HB Payable
+// (2-1031 in QBO). Returns the display name, or null when the rule doesn't
+// apply so the normal category chain (supplier rule → extraction) is used.
+function hbPayableCategoryFor(li: {
+  description: string | null;
+  amount: number | null;
+}): string | null {
+  const desc = (li.description ?? "").toLowerCase();
+  const amount = li.amount ?? 0;
+  const mentionsHb =
+    /\bhb\b|holdback|hold back|less\s*10\s*%/.test(desc);
+  if (mentionsHb && amount < 0) return "2-1031 - HB Payable";
+  return null;
+}
+
 interface CreateInvoiceArgs {
   supabase: SupabaseClient<Database>;
   organizationId: string;
@@ -151,7 +167,7 @@ export async function createInvoiceFromFile({
         description: li.description,
         amount: li.amount,
         tax_rate: supplierDefaults?.tax_rate ?? li.tax_rate,
-        category: supplierDefaults?.category ?? li.category,
+        category: hbPayableCategoryFor(li) ?? supplierDefaults?.category ?? li.category,
         class: supplierDefaults?.class ?? li.class,
         project_id: projectId,
       }))

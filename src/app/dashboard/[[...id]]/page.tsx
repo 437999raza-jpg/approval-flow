@@ -160,6 +160,8 @@ export default async function DashboardPage({
     { data: projects },
     { data: qboCategoryRows },
     { data: qboSupplierRows },
+    { data: qboClassRows },
+    { data: qboTaxRateRows },
     pendingSplitsRes,
     unreadNotificationsRes,
   ] = await Promise.all([
@@ -190,6 +192,17 @@ export default async function DashboardPage({
       .eq("organization_id", org.id)
       .eq("active", true)
       .order("name", { ascending: true }),
+    supabase
+      .from("qbo_classes")
+      .select("name")
+      .eq("organization_id", org.id)
+      .eq("active", true)
+      .order("name", { ascending: true }),
+    supabase
+      .from("qbo_tax_rates")
+      .select("name, rate_value")
+      .eq("organization_id", org.id)
+      .order("rate_value", { ascending: true }),
     supabase
       .from("pending_invoice_splits")
       .select("id", { count: "exact", head: true })
@@ -324,6 +337,15 @@ export default async function DashboardPage({
   const qboSupplierNames: string[] = [
     ...new Set((qboSupplierRows ?? []).map((s) => s.name)),
   ].sort((a, b) => a.localeCompare(b));
+  const qboClassNames: string[] = [
+    ...new Set((qboClassRows ?? []).map((c) => c.name)),
+  ].sort((a, b) => a.localeCompare(b));
+  const qboTaxRateOptions: { value: string; label: string }[] = (
+    qboTaxRateRows ?? []
+  ).map((r) => ({
+    value: String(r.rate_value),
+    label: `${r.rate_value}% — ${r.name}`,
+  }));
 
   const classOptions: MultiSelectOption[] = [
     ...new Set((lineItemRows ?? []).map((r) => r.class).filter((c): c is string => !!c)),
@@ -1137,6 +1159,8 @@ export default async function DashboardPage({
                   })),
                   qboCategories: qboCategoryNames,
                   qboSuppliers: qboSupplierNames,
+                  qboClasses: qboClassNames,
+                  qboTaxRates: qboTaxRateOptions,
                   saveBill: saveBill.bind(null, selected.id),
                   saveLineItem: saveLineItem.bind(null, selected.id),
                   deleteLineItem: deleteLineItem.bind(null, selected.id),

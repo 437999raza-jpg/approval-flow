@@ -33,6 +33,8 @@ export interface BillData {
   // QBO mirrors (read-only) for dropdowns on the Bill panel.
   qboCategories?: string[];
   qboSuppliers?: string[];
+  qboClasses?: string[];
+  qboTaxRates?: { value: string; label: string }[];
   saveBill: (formData: FormData) => Promise<void>;
   saveLineItem: (
     lineItemId: string,
@@ -303,6 +305,8 @@ export function DetailSplit({
             projects={bill.projects}
             qboCategories={bill.qboCategories}
             qboSuppliers={bill.qboSuppliers}
+            qboClasses={bill.qboClasses}
+            qboTaxRates={bill.qboTaxRates}
             saveBill={bill.saveBill}
             saveLineItem={bill.saveLineItem}
             deleteLineItem={bill.deleteLineItem}

@@ -1,5 +1,6 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import { SupplierRulesModal, type SupplierDefaultsValues } from "./SupplierRulesModal";
+import { Combobox } from "./Combobox";
 import { CollapsibleSection } from "./CollapsibleSection";
 import { MentionComposer } from "./MentionComposer";
 import { ApprovalStepper } from "./ApprovalStepper";
@@ -75,6 +76,8 @@ export function BillPanel({
   projects,
   qboCategories,
   qboSuppliers,
+  qboClasses,
+  qboTaxRates,
   saveBill,
   saveLineItem,
   deleteLineItem,
@@ -103,10 +106,12 @@ export function BillPanel({
   documentCount: number;
   lineItems: LineItem[];
   projects: { id: string; name: string }[];
-  // QBO mirrors (read-only) for dropdowns: bill categories (Divisions 5&6)
-  // and suppliers. Flow never writes these to QuickBooks.
+  // QBO mirrors (read-only) for dropdowns: bill categories (numbered),
+  // suppliers, classes, and tax rates. Flow never writes these to QBO.
   qboCategories?: string[];
   qboSuppliers?: string[];
+  qboClasses?: string[];
+  qboTaxRates?: { value: string; label: string }[];
   saveBill: (formData: FormData) => Promise<void>;
   saveLineItem: (
     lineItemId: string,
@@ -524,19 +529,15 @@ export function BillPanel({
           <div className="mt-4 grid grid-cols-2 gap-x-6 gap-y-3">
             <label>
               <span className={ghostLabel}>Vendor name</span>
-              <input
-                form="bill-form"
+              <Combobox
                 name="vendor_name"
-                list="qbo-suppliers"
+                formId="bill-form"
+                options={qboSuppliers ?? []}
                 defaultValue={invoice.vendor_name ?? ""}
                 className={`${ghostField} font-medium`}
-                {...billBlur}
+                disabled={readOnly}
+                onCommit={() => billFormRef.current?.requestSubmit()}
               />
-              <datalist id="qbo-suppliers">
-                {(qboSuppliers ?? []).map((name) => (
-                  <option key={name} value={name} />
-                ))}
-              </datalist>
             </label>
             <label>
               <span className={ghostLabel}>Email</span>
@@ -586,6 +587,8 @@ export function BillPanel({
                 }}
                 projects={projects}
                 qboCategories={qboCategories}
+                qboClasses={qboClasses}
+                qboTaxRates={qboTaxRates}
                 saveLineItem={saveLineItem}
                 deleteLineItem={deleteLineItem}
                 readOnly={readOnly}
@@ -605,6 +608,8 @@ export function BillPanel({
                 }}
                 projects={projects}
                 qboCategories={qboCategories}
+                qboClasses={qboClasses}
+                qboTaxRates={qboTaxRates}
                 saveLineItem={saveLineItem}
                 deleteLineItem={undefined}
                 readOnly={false}
@@ -794,6 +799,8 @@ function LineItemRow({
   defaults,
   projects,
   qboCategories,
+  qboClasses,
+  qboTaxRates,
   saveLineItem,
   deleteLineItem,
   readOnly,
@@ -810,6 +817,8 @@ function LineItemRow({
   };
   projects: { id: string; name: string }[];
   qboCategories?: string[];
+  qboClasses?: string[];
+  qboTaxRates?: { value: string; label: string }[];
   saveLineItem: (
     lineItemId: string,
     formData: FormData
@@ -846,20 +855,18 @@ function LineItemRow({
         action={saveLineItem.bind(null, itemId)}
         className="hidden"
       />
-      <input
-        form={formId}
+      <Combobox
+        formId={formId}
         name="category"
-        list="qbo-categories"
+        options={qboCategories ?? []}
         defaultValue={defaults.category}
         placeholder={isNew ? "Category" : undefined}
         className={cellCls}
-        {...blurSave}
+        disabled={readOnly}
+        onCommit={() => {
+          if (!isNew && !readOnly) formRef.current?.requestSubmit();
+        }}
       />
-      <datalist id="qbo-categories">
-        {(qboCategories ?? []).map((name) => (
-          <option key={name} value={name} />
-        ))}
-      </datalist>
       <input
         form={formId}
         name="description"
@@ -868,36 +875,41 @@ function LineItemRow({
         className={cellCls}
         {...blurSave}
       />
-      <select
-        form={formId}
+      <Combobox
+        formId={formId}
         name="project_id"
-        defaultValue={defaults.project_id}
+        options={projects.map((p) => ({ value: p.id, label: p.name }))}
+        defaultValue={defaults.project_id ?? ""}
+        placeholder={isNew ? "Project / customer" : undefined}
         className={cellCls}
-        {...checkboxSave}
-      >
-        <option value="">— none —</option>
-        {projects.map((p) => (
-          <option key={p.id} value={p.id}>
-            {p.name}
-          </option>
-        ))}
-      </select>
-      <input
-        form={formId}
-        name="tax_rate"
-        type="number"
-        step="0.01"
-        defaultValue={defaults.tax_rate}
-        className={`${cellCls} text-right tabular-nums`}
-        {...blurSave}
+        disabled={readOnly}
+        onCommit={() => {
+          if (!isNew && !readOnly) formRef.current?.requestSubmit();
+        }}
       />
-      <input
-        form={formId}
+      <Combobox
+        formId={formId}
+        name="tax_rate"
+        options={qboTaxRates ?? []}
+        defaultValue={defaults.tax_rate === "" ? "" : String(defaults.tax_rate)}
+        placeholder={isNew ? "Tax %" : undefined}
+        className={`${cellCls} text-right tabular-nums`}
+        disabled={readOnly}
+        onCommit={() => {
+          if (!isNew && !readOnly) formRef.current?.requestSubmit();
+        }}
+      />
+      <Combobox
+        formId={formId}
         name="class"
+        options={qboClasses ?? []}
         defaultValue={defaults.class}
         placeholder={isNew ? "Class" : undefined}
         className={cellCls}
-        {...blurSave}
+        disabled={readOnly}
+        onCommit={() => {
+          if (!isNew && !readOnly) formRef.current?.requestSubmit();
+        }}
       />
       <input
         form={formId}
