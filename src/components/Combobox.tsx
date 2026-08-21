@@ -103,8 +103,21 @@ export function Combobox({
         return matchStart ? label.startsWith(q) : label.includes(q);
       })
     : [];
-  const truncated = matched.length > 50;
-  const filtered = matched.slice(0, 50);
+  // Rank: names that START with the query first (typing "tri" should surface
+  // "Tri-An Electric" before "Aetna Electric" — where "tri" hides inside
+  // "elecTRIc"). Then the rest alphabetically.
+  const ranked = searching
+    ? [...matched].sort((a, b) => {
+        const al = labelOf(a).toLowerCase();
+        const bl = labelOf(b).toLowerCase();
+        const aPrefix = al.startsWith(q) ? 0 : 1;
+        const bPrefix = bl.startsWith(q) ? 0 : 1;
+        if (aPrefix !== bPrefix) return aPrefix - bPrefix;
+        return al.localeCompare(bl);
+      })
+    : [];
+  const truncated = ranked.length > 50;
+  const filtered = ranked.slice(0, 50);
 
   // Keep the hidden value input in sync with the selected value.
   useEffect(() => {
@@ -229,7 +242,7 @@ export function Combobox({
           ))}
           {truncated && (
             <div className="border-t border-slate-100 px-2 py-1 text-[11px] text-slate-400">
-              {matched.length} matches — keep typing to narrow…
+              {ranked.length} matches — keep typing to narrow…
             </div>
           )}
         </div>
