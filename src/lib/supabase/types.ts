@@ -224,6 +224,7 @@ export interface Database {
           invoice_id: string;
           author_id: string | null;
           body: string;
+          mentioned_user_ids: string[];
           created_at: string;
         };
         Insert: Partial<
@@ -231,6 +232,26 @@ export interface Database {
         > & { invoice_id: string; body: string };
         Update: Partial<
           Database["public"]["Tables"]["invoice_comments"]["Row"]
+        >;
+        Relationships: [];
+      };
+      notifications: {
+        Row: {
+          id: string;
+          organization_id: string;
+          user_id: string;
+          actor_id: string | null;
+          invoice_id: string | null;
+          comment_id: string | null;
+          type: "mention";
+          read: boolean;
+          created_at: string;
+        };
+        Insert: Partial<
+          Database["public"]["Tables"]["notifications"]["Row"]
+        > & { organization_id: string; user_id: string };
+        Update: Partial<
+          Database["public"]["Tables"]["notifications"]["Row"]
         >;
         Relationships: [];
       };

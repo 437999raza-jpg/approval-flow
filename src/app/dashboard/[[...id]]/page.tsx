@@ -6,7 +6,10 @@ import { clsx } from "clsx";
 import { notFound, redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentOrg } from "@/lib/current-org";
+import { sendMentionEmail } from "@/lib/notify";
+import { MentionComposer } from "@/components/MentionComposer";
 import { InvoiceStatusBadge } from "@/components/InvoiceStatusBadge";
 import { ApprovalStepper } from "@/components/ApprovalStepper";
 import { SearchInput } from "@/components/SearchInput";
@@ -209,6 +212,10 @@ async function decide(
 
 // Post a message to an invoice's discussion thread. Any org member who can
 // see the invoice can participate (RLS on invoice_comments gates it).
+// @mentions (picked from the composer's dropdown, not parsed from free
+// text — see MentionComposer) get an in-app notification row and a
+// best-effort email with a direct link to this invoice, so they don't
+// have to have the app open to find out.
 async function addComment(invoiceId: string, formData: FormData) {
   "use server";
 
@@ -221,11 +228,78 @@ async function addComment(invoiceId: string, formData: FormData) {
   const body = String(formData.get("body") ?? "").trim();
   if (!body) return;
 
-  await supabase.from("invoice_comments").insert({
-    invoice_id: invoiceId,
-    author_id: user.id,
-    body,
-  });
+  const requestedMentionIds = String(formData.get("mentioned_ids") ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  const { data: invoice } = await supabase
+    .from("invoices")
+    .select("id, organization_id, vendor_name, invoice_number, file_name")
+    .eq("id", invoiceId)
+    .single();
+  if (!invoice) return;
+
+  // Only notify people who are actually members of this org — the
+  // mentioned_ids field is client-supplied, don't trust it blindly. Never
+  // notify yourself for your own comment.
+  let mentionedIds: string[] = [];
+  if (requestedMentionIds.length > 0) {
+    const { data: members } = await supabase
+      .from("organization_members")
+      .select("user_id")
+      .eq("organization_id", invoice.organization_id)
+      .in("user_id", requestedMentionIds);
+    mentionedIds = (members ?? [])
+      .map((m) => m.user_id)
+      .filter((id) => id !== user.id);
+  }
+
+  const { data: comment } = await supabase
+    .from("invoice_comments")
+    .insert({
+      invoice_id: invoiceId,
+      author_id: user.id,
+      body,
+      mentioned_user_ids: mentionedIds,
+    })
+    .select("id")
+    .single();
+
+  if (comment && mentionedIds.length > 0) {
+    await supabase.from("notifications").insert(
+      mentionedIds.map((uid) => ({
+        organization_id: invoice.organization_id,
+        user_id: uid,
+        actor_id: user.id,
+        invoice_id: invoiceId,
+        comment_id: comment.id,
+        type: "mention" as const,
+      }))
+    );
+
+    const [{ data: actorProfile }, { data: authUsers }] = await Promise.all([
+      supabase.from("profiles").select("full_name").eq("id", user.id).single(),
+      createAdminClient().auth.admin.listUsers({ page: 1, perPage: 1000 }),
+    ]);
+    const actorName = actorProfile?.full_name ?? "A teammate";
+    const invoiceLabel = `${invoice.vendor_name ?? invoice.file_name}${
+      invoice.invoice_number ? ` #${invoice.invoice_number}` : ""
+    }`;
+    const invoiceUrl = `${process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3210"}/dashboard/${invoiceId}`;
+    const emailById = new Map(
+      (authUsers?.users ?? []).map((u) => [u.id, u.email ?? null])
+    );
+
+    await Promise.all(
+      mentionedIds.map((uid) => {
+        const email = emailById.get(uid);
+        return email
+          ? sendMentionEmail({ to: email, actorName, invoiceLabel, commentBody: body, invoiceUrl })
+          : Promise.resolve();
+      })
+    );
+  }
 
   revalidatePath("/dashboard", "layout");
 }
@@ -1178,30 +1252,41 @@ export default async function DashboardPage({
     : "all";
   const q = searchParams.q?.trim().toLowerCase() ?? "";
 
-  const [{ data: invoices }, { data: workflows }, { data: projects }, pendingSplitsRes] =
-    await Promise.all([
-      supabase
-        .from("invoices")
-        .select("*")
-        .eq("organization_id", org.id)
-        .order("created_at", { ascending: false }),
-      supabase
-        .from("approval_workflows")
-        .select("id")
-        .eq("organization_id", org.id),
-      supabase
-        .from("projects")
-        .select("id, name")
-        .eq("organization_id", org.id)
-        .eq("active", true)
-        .order("name", { ascending: true }),
-      supabase
-        .from("pending_invoice_splits")
-        .select("id", { count: "exact", head: true })
-        .eq("organization_id", org.id)
-        .eq("status", "pending"),
-    ]);
+  const [
+    { data: invoices },
+    { data: workflows },
+    { data: projects },
+    pendingSplitsRes,
+    unreadNotificationsRes,
+  ] = await Promise.all([
+    supabase
+      .from("invoices")
+      .select("*")
+      .eq("organization_id", org.id)
+      .order("created_at", { ascending: false }),
+    supabase
+      .from("approval_workflows")
+      .select("id")
+      .eq("organization_id", org.id),
+    supabase
+      .from("projects")
+      .select("id, name")
+      .eq("organization_id", org.id)
+      .eq("active", true)
+      .order("name", { ascending: true }),
+    supabase
+      .from("pending_invoice_splits")
+      .select("id", { count: "exact", head: true })
+      .eq("organization_id", org.id)
+      .eq("status", "pending"),
+    supabase
+      .from("notifications")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", user.id)
+      .eq("read", false),
+  ]);
   const pendingSplitsCount = pendingSplitsRes.count ?? 0;
+  const unreadNotificationsCount = unreadNotificationsRes.count ?? 0;
 
   const workflowIds = (workflows ?? []).map((w) => w.id);
   const invoiceIds = (invoices ?? []).map((i) => i.id);
@@ -1267,6 +1352,41 @@ export default async function DashboardPage({
   const memberOptions: MultiSelectOption[] = memberUserIds
     .map((id) => ({ id, label: memberNameById.get(id) ?? "Team member" }))
     .sort((a, b) => a.label.localeCompare(b.label));
+
+  // Bold "@Name" in a posted comment when it matches a real member name
+  // (longest names first so "Ali Raza" wins over a hypothetical "Ali").
+  const mentionNamePattern =
+    memberOptions.length > 0
+      ? new RegExp(
+          `@(${[...memberOptions]
+            .sort((a, b) => b.label.length - a.label.length)
+            .map((m) => m.label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+            .join("|")})`,
+          "g"
+        )
+      : null;
+  function renderCommentBody(body: string) {
+    if (!mentionNamePattern) return body;
+    const parts: (string | { key: number; name: string })[] = [];
+    let lastIndex = 0;
+    let key = 0;
+    for (const match of body.matchAll(mentionNamePattern)) {
+      const index = match.index ?? 0;
+      if (index > lastIndex) parts.push(body.slice(lastIndex, index));
+      parts.push({ key: key++, name: match[1] });
+      lastIndex = index + match[0].length;
+    }
+    parts.push(body.slice(lastIndex));
+    return parts.map((p) =>
+      typeof p === "string" ? (
+        p
+      ) : (
+        <span key={p.key} className="font-semibold text-blue-700">
+          @{p.name}
+        </span>
+      )
+    );
+  }
 
   const vendorOptions: MultiSelectOption[] = [
     ...new Set((invoices ?? []).map((i) => i.vendor_name).filter((v): v is string => !!v)),
@@ -1716,6 +1836,32 @@ export default async function DashboardPage({
           ))}
         </nav>
         <div className="border-t border-slate-200 p-2">
+          {unreadNotificationsCount > 0 && (
+            <Link
+              href="/notifications"
+              className="flex items-center justify-between gap-2 rounded-md px-3 py-2 text-sm text-blue-700 hover:bg-blue-50"
+            >
+              <span className="flex items-center gap-2">
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
+                  <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+                </svg>
+                Mentions
+              </span>
+              <span className="rounded-full bg-blue-100 px-1.5 py-0.5 text-xs text-blue-700">
+                {unreadNotificationsCount}
+              </span>
+            </Link>
+          )}
           {pendingSplitsCount > 0 && (
             <Link
               href="/invoices/pending-splits"
@@ -2199,7 +2345,7 @@ export default async function DashboardPage({
                               </span>
                             </div>
                             <p className="mt-1 whitespace-pre-wrap text-sm text-slate-700">
-                              {comment.body}
+                              {renderCommentBody(comment.body)}
                             </p>
                           </div>
                         ))
@@ -2210,11 +2356,9 @@ export default async function DashboardPage({
                         action={addComment.bind(null, selected.id)}
                         className="mt-3 flex gap-2"
                       >
-                        <input
-                          name="body"
-                          required
-                          placeholder="Ask a question or leave a note…"
-                          className="min-w-0 flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+                        <MentionComposer
+                          members={memberOptions}
+                          placeholder="Ask a question or leave a note… (@ to mention someone)"
                         />
                         <button className="rounded-md bg-slate-800 px-3 py-2 text-sm font-medium text-white hover:bg-slate-700">
                           Post
