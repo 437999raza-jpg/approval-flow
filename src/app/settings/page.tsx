@@ -729,11 +729,12 @@ export default async function SettingsPage({
                   )}
                 </div>
 
-                {/* Categories (Chart of Accounts) — numbers 2, 5, 6 */}
+                {/* Categories (Chart of Accounts) — one list, account
+                    numbers starting with 2, 5, or 6 */}
                 <div className="mt-3 border-t border-slate-100 pt-3">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="text-sm font-semibold text-slate-800">
-                      Categories (2- 5- 6-)
+                      Categories
                     </span>
                     {isAdmin && (
                       <form action={syncQboCategories}>
@@ -743,6 +744,10 @@ export default async function SettingsPage({
                       </form>
                     )}
                   </div>
+                  <p className="mt-1 text-xs text-slate-500">
+                    One list from QuickBooks — every account whose number
+                    starts with 2, 5, or 6.
+                  </p>
                   {qboCategories && qboCategories.length > 0 ? (
                     <ul className="mt-1 max-h-48 divide-y divide-slate-100 overflow-y-auto">
                       {qboCategories.map((c) => (
