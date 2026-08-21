@@ -242,7 +242,7 @@ export function BillPanel({
                   tax_rate: item.tax_rate ?? "",
                   class: item.class ?? "",
                   project_id: item.project_id ?? "",
-                  amount: item.amount ?? "",
+                  amount: item.amount != null ? item.amount.toFixed(2) : "",
                   linked: item.linked,
                 }}
                 projects={projects}
@@ -357,7 +357,7 @@ function LineItemRow({
     tax_rate: number | "";
     class: string;
     project_id: string;
-    amount: number | "";
+    amount: string;
     linked: boolean;
   };
   projects: { id: string; name: string }[];
@@ -447,8 +447,8 @@ function LineItemRow({
       <input
         form={formId}
         name="amount"
-        type="number"
-        step="0.01"
+        type="text"
+        inputMode="decimal"
         defaultValue={defaults.amount}
         className={`${cellCls} text-right tabular-nums`}
         {...blurSave}
