@@ -9,6 +9,7 @@ import type { AuditTimelineEntry } from "@/lib/audit-timeline";
 
 type Invoice = Database["public"]["Tables"]["invoices"]["Row"];
 type LineItem = Database["public"]["Tables"]["invoice_line_items"]["Row"];
+type Comment = Database["public"]["Tables"]["invoice_comments"]["Row"];
 
 export interface DocumentRef {
   name: string;
@@ -36,6 +37,10 @@ export interface BillData {
   supplierDefaults: SupplierDefaultsValues;
   saveSupplierDefaults: (formData: FormData) => Promise<void>;
   auditTimeline: AuditTimelineEntry[];
+  comments: Comment[];
+  authorNameById: Map<string, string>;
+  addComment: (formData: FormData) => Promise<void>;
+  members: { id: string; label: string }[];
 }
 
 interface DetailSplitProps {
@@ -306,6 +311,10 @@ export function DetailSplit({
             supplierDefaults={bill.supplierDefaults}
             saveSupplierDefaults={bill.saveSupplierDefaults}
             auditTimeline={bill.auditTimeline}
+            comments={bill.comments}
+            authorNameById={bill.authorNameById}
+            addComment={bill.addComment}
+            members={bill.members}
             onOpenDocument={openDocument}
             onCollapse={() => setBillOpen(false)}
           />

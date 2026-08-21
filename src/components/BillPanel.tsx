@@ -1,12 +1,14 @@
 import { useRef } from "react";
 import { SupplierRulesModal, type SupplierDefaultsValues } from "./SupplierRulesModal";
 import { CollapsibleSection } from "./CollapsibleSection";
+import { MentionComposer } from "./MentionComposer";
 import type { Database } from "@/lib/supabase/types";
 import { computeLineItemTotals } from "@/lib/invoice-totals";
 import type { AuditTimelineEntry } from "@/lib/audit-timeline";
 
 type Invoice = Database["public"]["Tables"]["invoices"]["Row"];
 type LineItem = Database["public"]["Tables"]["invoice_line_items"]["Row"];
+type Comment = Database["public"]["Tables"]["invoice_comments"]["Row"];
 
 // Ghost fields: invisible border at rest, a line appears on hover/focus.
 // The point is to read like a finished invoice document, not a form full
@@ -36,6 +38,10 @@ export function BillPanel({
   supplierDefaults,
   saveSupplierDefaults,
   auditTimeline,
+  comments,
+  authorNameById,
+  addComment,
+  members,
   onOpenDocument,
   onCollapse,
 }: {
@@ -56,6 +62,10 @@ export function BillPanel({
   supplierDefaults: SupplierDefaultsValues;
   saveSupplierDefaults: (formData: FormData) => Promise<void>;
   auditTimeline: AuditTimelineEntry[];
+  comments: Comment[];
+  authorNameById: Map<string, string>;
+  addComment: (formData: FormData) => Promise<void>;
+  members: { id: string; label: string }[];
   onOpenDocument: () => void;
   onCollapse: () => void;
 }) {
@@ -84,6 +94,41 @@ export function BillPanel({
           maximumFractionDigits: 2,
         })
       : "";
+
+  // Bold "@Name" in a posted comment when it matches a real member name
+  // (longest names first so "Ali Raza" wins over a hypothetical "Ali").
+  const mentionNamePattern =
+    members.length > 0
+      ? new RegExp(
+          `@(${[...members]
+            .sort((a, b) => b.label.length - a.label.length)
+            .map((m) => m.label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+            .join("|")})`,
+          "g"
+        )
+      : null;
+  function renderCommentBody(body: string) {
+    if (!mentionNamePattern) return body;
+    const parts: (string | { key: number; name: string })[] = [];
+    let lastIndex = 0;
+    let key = 0;
+    for (const match of body.matchAll(mentionNamePattern)) {
+      const index = match.index ?? 0;
+      if (index > lastIndex) parts.push(body.slice(lastIndex, index));
+      parts.push({ key: key++, name: match[1] });
+      lastIndex = index + match[0].length;
+    }
+    parts.push(body.slice(lastIndex));
+    return parts.map((p) =>
+      typeof p === "string" ? (
+        p
+      ) : (
+        <span key={p.key} className="font-semibold text-blue-700">
+          @{p.name}
+        </span>
+      )
+    );
+  }
   const vendor = invoice.vendor_name ?? invoice.file_name ?? "Unknown vendor";
   const billNumber = invoice.invoice_number ?? "—";
   const billDateDefault = invoice.bill_date ?? invoice.created_at.slice(0, 10);
@@ -337,6 +382,50 @@ export function BillPanel({
           <span className="text-slate-400" title="Available once QBO sync is enabled">
             Open in QuickBooks Online
           </span>
+        </div>
+
+        <div className="border-t border-slate-100 px-6 py-3">
+          <CollapsibleSection
+            title="Discussion"
+            badge={comments.length > 0 ? comments.length : undefined}
+          >
+            <div className="mt-3 space-y-3">
+              {comments.length === 0 ? (
+                <p className="text-sm text-slate-400">
+                  No comments yet. Chat with your team about this invoice here.
+                </p>
+              ) : (
+                comments.map((comment) => (
+                  <div key={comment.id} className="rounded-md bg-slate-50 px-3 py-2">
+                    <div className="flex items-baseline justify-between gap-2">
+                      <span className="text-xs font-medium text-slate-700">
+                        {comment.author_id
+                          ? authorNameById.get(comment.author_id) ?? "Team member"
+                          : "System"}
+                      </span>
+                      <span className="text-xs text-slate-400">
+                        {new Date(comment.created_at).toLocaleString()}
+                      </span>
+                    </div>
+                    <p className="mt-1 whitespace-pre-wrap text-sm text-slate-700">
+                      {renderCommentBody(comment.body)}
+                    </p>
+                  </div>
+                ))
+              )}
+            </div>
+            {!readOnly && (
+              <form action={addComment} className="mt-3 flex gap-2">
+                <MentionComposer
+                  members={members}
+                  placeholder="Ask a question or leave a note… (@ to mention someone)"
+                />
+                <button className="rounded-md bg-slate-800 px-3 py-2 text-sm font-medium text-white hover:bg-slate-700">
+                  Post
+                </button>
+              </form>
+            )}
+          </CollapsibleSection>
         </div>
 
         <div className="border-t border-slate-100 px-6 py-3">

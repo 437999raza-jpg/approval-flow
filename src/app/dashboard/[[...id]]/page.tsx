@@ -9,7 +9,6 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentOrg } from "@/lib/current-org";
 import { sendMentionEmail } from "@/lib/notify";
-import { MentionComposer } from "@/components/MentionComposer";
 import { InvoiceStatusBadge } from "@/components/InvoiceStatusBadge";
 import { ApprovalStepper } from "@/components/ApprovalStepper";
 import { SearchInput } from "@/components/SearchInput";
@@ -1353,41 +1352,6 @@ export default async function DashboardPage({
     .map((id) => ({ id, label: memberNameById.get(id) ?? "Team member" }))
     .sort((a, b) => a.label.localeCompare(b.label));
 
-  // Bold "@Name" in a posted comment when it matches a real member name
-  // (longest names first so "Ali Raza" wins over a hypothetical "Ali").
-  const mentionNamePattern =
-    memberOptions.length > 0
-      ? new RegExp(
-          `@(${[...memberOptions]
-            .sort((a, b) => b.label.length - a.label.length)
-            .map((m) => m.label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
-            .join("|")})`,
-          "g"
-        )
-      : null;
-  function renderCommentBody(body: string) {
-    if (!mentionNamePattern) return body;
-    const parts: (string | { key: number; name: string })[] = [];
-    let lastIndex = 0;
-    let key = 0;
-    for (const match of body.matchAll(mentionNamePattern)) {
-      const index = match.index ?? 0;
-      if (index > lastIndex) parts.push(body.slice(lastIndex, index));
-      parts.push({ key: key++, name: match[1] });
-      lastIndex = index + match[0].length;
-    }
-    parts.push(body.slice(lastIndex));
-    return parts.map((p) =>
-      typeof p === "string" ? (
-        p
-      ) : (
-        <span key={p.key} className="font-semibold text-blue-700">
-          @{p.name}
-        </span>
-      )
-    );
-  }
-
   const vendorOptions: MultiSelectOption[] = [
     ...new Set((invoices ?? []).map((i) => i.vendor_name).filter((v): v is string => !!v)),
   ]
@@ -2088,6 +2052,10 @@ export default async function DashboardPage({
                     selected.vendor_name ?? selected.file_name
                   ),
                   auditTimeline: auditTimelineForSelected,
+                  comments: commentsForSelected,
+                  authorNameById,
+                  addComment: addComment.bind(null, selected.id),
+                  members: memberOptions,
                 }}
               >
                 {/* Side panel content: header + collapsible sections */}
@@ -2311,60 +2279,6 @@ export default async function DashboardPage({
                           : undefined
                       }
                     />
-                  </CollapsibleSection>
-
-                  <CollapsibleSection
-                    title="Discussion"
-                    badge={
-                      commentsForSelected.length > 0
-                        ? commentsForSelected.length
-                        : undefined
-                    }
-                  >
-                    <div className="mt-3 space-y-3">
-                      {commentsForSelected.length === 0 ? (
-                        <p className="text-sm text-slate-400">
-                          No comments yet. Chat with your team about this
-                          invoice here.
-                        </p>
-                      ) : (
-                        commentsForSelected.map((comment) => (
-                          <div
-                            key={comment.id}
-                            className="rounded-md bg-slate-50 px-3 py-2"
-                          >
-                            <div className="flex items-baseline justify-between gap-2">
-                              <span className="text-xs font-medium text-slate-700">
-                                {comment.author_id
-                                  ? (authorNameById.get(comment.author_id) ??
-                                    "Team member")
-                                  : "System"}
-                              </span>
-                              <span className="text-xs text-slate-400">
-                                {new Date(comment.created_at).toLocaleString()}
-                              </span>
-                            </div>
-                            <p className="mt-1 whitespace-pre-wrap text-sm text-slate-700">
-                              {renderCommentBody(comment.body)}
-                            </p>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                    {canEdit && (
-                      <form
-                        action={addComment.bind(null, selected.id)}
-                        className="mt-3 flex gap-2"
-                      >
-                        <MentionComposer
-                          members={memberOptions}
-                          placeholder="Ask a question or leave a note… (@ to mention someone)"
-                        />
-                        <button className="rounded-md bg-slate-800 px-3 py-2 text-sm font-medium text-white hover:bg-slate-700">
-                          Post
-                        </button>
-                      </form>
-                    )}
                   </CollapsibleSection>
 
               </DetailSplit>
