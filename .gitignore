@@ -7,3 +7,6 @@ out
 *.tsbuildinfo
 .DS_Store
 supabase/.temp
+
+# Local test uploads / scratch files
+User_Files/
