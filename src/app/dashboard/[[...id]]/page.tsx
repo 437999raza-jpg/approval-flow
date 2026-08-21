@@ -1,3 +1,7 @@
+// Vercel Hobby caps configurable duration at 60s — the
+// OpenRouter extraction call can take 20-60s.
+export const maxDuration = 60;
+
 import Link from "next/link";
 import { clsx } from "clsx";
 import { notFound, redirect } from "next/navigation";

@@ -1,3 +1,7 @@
+// Vercel Hobby caps configurable duration at 60s — the
+// OpenRouter extraction call can take 20-60s.
+export const maxDuration = 60;
+
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentOrg } from "@/lib/current-org";

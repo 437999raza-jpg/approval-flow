@@ -284,6 +284,23 @@ export default async function SettingsPage({
     .eq("organization_id", org.id)
     .maybeSingle();
 
+  // Billing & usage: this month's invoice counts (org-wide, admin view).
+  const monthStart = new Date();
+  monthStart.setUTCDate(1);
+  monthStart.setUTCHours(0, 0, 0, 0);
+  const { data: monthInvoices } = await supabase
+    .from("invoices")
+    .select("status")
+    .eq("organization_id", org.id)
+    .gte("created_at", monthStart.toISOString());
+  const usageByStatus = new Map<string, number>();
+  for (const inv of monthInvoices ?? []) {
+    usageByStatus.set(inv.status, (usageByStatus.get(inv.status) ?? 0) + 1);
+  }
+  const usageTotal = (monthInvoices ?? []).length;
+  const rate = Number(process.env.BILLING_RATE_PER_INVOICE || 5);
+  const suggestedCharge = usageTotal * rate;
+
   const [{ data: members }, { data: projects }] = await Promise.all([
     supabase
       .from("organization_members")
@@ -469,6 +486,53 @@ export default async function SettingsPage({
                   QuickBooks sync is managed by the org admin.
                 </p>
               )}
+              </div>
+            </div>
+          </section>
+
+          {/* Billing & usage */}
+          <section className="mt-8">
+            <h2 className="text-lg font-semibold">Billing &amp; usage</h2>
+            <p className="mt-1 text-sm text-slate-500">
+              Usage for {org.name} — the suggested monthly charge is
+              invoices processed × your per-invoice rate (set{" "}
+              <code className="rounded bg-slate-100 px-1">BILLING_RATE_PER_INVOICE</code>).
+              Bill your customer manually for now; automated invoicing
+              (Stripe) can be added later when you sell to more customers.
+            </p>
+            <div className="mt-3 rounded-lg border border-slate-200 bg-white p-4 text-sm">
+              <div className="flex flex-wrap items-center gap-3">
+                <span className="text-slate-700">
+                  <strong>{org.name}</strong> —{" "}
+                  {new Date().toLocaleString(undefined, {
+                    month: "long",
+                    year: "numeric",
+                  })}
+                </span>
+                <span className="flex-1" />
+                <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-600">
+                  {usageTotal} invoices this month
+                </span>
+              </div>
+              <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3">
+                {[...usageByStatus.entries()].map(([status, count]) => (
+                  <div key={status}>
+                    <dt className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                      {status.replace(/_/g, " ")}
+                    </dt>
+                    <dd className="text-lg font-semibold text-slate-800">
+                      {count}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+              <div className="mt-4 flex items-center justify-between border-t border-slate-100 pt-3">
+                <span className="text-slate-500">
+                  {usageTotal} × ${rate.toFixed(2)} per invoice
+                </span>
+                <span className="text-base font-bold text-slate-900">
+                  ${suggestedCharge.toFixed(2)} / month
+                </span>
               </div>
             </div>
           </section>

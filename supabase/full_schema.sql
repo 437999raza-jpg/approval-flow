@@ -1,0 +1,2103 @@
+-- Approval Flow: COMPLETE schema bundle (0001-0032), for a FRESH production
+-- Supabase project only. Do NOT run on an existing database.
+-- Generated 2026-08-21. Paste into the SQL editor and run once.
+
+--------------------------------------------------------------------
+-- >>> supabase/migrations/0001_init.sql
+--------------------------------------------------------------------
+-- Approval Flow: core schema
+-- Run via `supabase db push` or paste into the Supabase SQL editor.
+
+create extension if not exists "pgcrypto";
+
+-- One row per user, mirrors auth.users so we can join/display names.
+create table profiles (
+  id uuid primary key references auth.users(id) on delete cascade,
+  full_name text,
+  avatar_url text,
+  created_at timestamptz not null default now()
+);
+
+create table organizations (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  slug text unique not null,
+  -- local-part of the inbound invoice address: {inbound_email_token}@{INBOUND_EMAIL_DOMAIN}
+  inbound_email_token text unique not null default encode(gen_random_bytes(8), 'hex'),
+  created_at timestamptz not null default now()
+);
+
+create table organization_members (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references organizations(id) on delete cascade,
+  user_id uuid not null references profiles(id) on delete cascade,
+  role text not null check (role in ('admin', 'approver', 'submitter')),
+  created_at timestamptz not null default now(),
+  unique (organization_id, user_id)
+);
+
+-- An ordered chain of approvers. Start with one default workflow per org;
+-- multiple workflows (e.g. by amount threshold) can be added later.
+create table approval_workflows (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references organizations(id) on delete cascade,
+  name text not null,
+  is_default boolean not null default false,
+  created_at timestamptz not null default now()
+);
+
+create table approval_workflow_steps (
+  id uuid primary key default gen_random_uuid(),
+  workflow_id uuid not null references approval_workflows(id) on delete cascade,
+  step_order int not null,
+  approver_user_id uuid references profiles(id),
+  created_at timestamptz not null default now(),
+  unique (workflow_id, step_order)
+);
+
+create table invoices (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references organizations(id) on delete cascade,
+  workflow_id uuid references approval_workflows(id),
+  vendor_name text,
+  invoice_number text,
+  amount numeric(14, 2),
+  currency text not null default 'USD',
+  due_date date,
+  status text not null default 'pending'
+    check (status in ('pending', 'in_review', 'approved', 'rejected', 'paid')),
+  source text not null check (source in ('manual', 'email')),
+  source_email text,
+  file_path text not null,
+  file_name text not null,
+  submitted_by uuid references profiles(id),
+  current_step_order int not null default 1,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table invoice_approvals (
+  id uuid primary key default gen_random_uuid(),
+  invoice_id uuid not null references invoices(id) on delete cascade,
+  step_order int not null,
+  approver_id uuid references profiles(id),
+  decision text not null check (decision in ('approved', 'rejected')),
+  comment text,
+  decided_at timestamptz not null default now()
+);
+
+create table invoice_comments (
+  id uuid primary key default gen_random_uuid(),
+  invoice_id uuid not null references invoices(id) on delete cascade,
+  author_id uuid references profiles(id),
+  body text not null,
+  created_at timestamptz not null default now()
+);
+
+create table audit_log (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references organizations(id) on delete cascade,
+  invoice_id uuid references invoices(id) on delete cascade,
+  actor_id uuid references profiles(id),
+  action text not null,
+  metadata jsonb,
+  created_at timestamptz not null default now()
+);
+
+-- Raw record of every inbound email the webhook receives, processed or not.
+-- Keeps a debugging trail independent of whether an invoice was created.
+create table inbound_email_log (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid references organizations(id),
+  from_address text,
+  to_address text,
+  subject text,
+  attachment_count int not null default 0,
+  invoice_ids uuid[] not null default '{}',
+  processed boolean not null default false,
+  error text,
+  created_at timestamptz not null default now()
+);
+
+create index on organization_members (user_id);
+create index on invoices (organization_id, status);
+create index on invoice_approvals (invoice_id);
+create index on audit_log (organization_id, invoice_id);
+
+-- ---------------------------------------------------------------------
+-- Row Level Security
+-- ---------------------------------------------------------------------
+
+alter table profiles enable row level security;
+alter table organizations enable row level security;
+alter table organization_members enable row level security;
+alter table approval_workflows enable row level security;
+alter table approval_workflow_steps enable row level security;
+alter table invoices enable row level security;
+alter table invoice_approvals enable row level security;
+alter table invoice_comments enable row level security;
+alter table audit_log enable row level security;
+alter table inbound_email_log enable row level security;
+
+create or replace function is_org_member(org_id uuid)
+returns boolean
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select exists (
+    select 1 from organization_members
+    where organization_id = org_id and user_id = auth.uid()
+  );
+$$;
+
+create policy "profiles: read own" on profiles
+  for select using (id = auth.uid());
+create policy "profiles: update own" on profiles
+  for update using (id = auth.uid());
+
+create policy "organizations: members can read" on organizations
+  for select using (is_org_member(id));
+
+create policy "organization_members: members can read roster" on organization_members
+  for select using (is_org_member(organization_id));
+
+create policy "approval_workflows: members can read" on approval_workflows
+  for select using (is_org_member(organization_id));
+
+create policy "approval_workflow_steps: members can read" on approval_workflow_steps
+  for select using (
+    exists (
+      select 1 from approval_workflows w
+      where w.id = workflow_id and is_org_member(w.organization_id)
+    )
+  );
+
+create policy "invoices: members can read" on invoices
+  for select using (is_org_member(organization_id));
+create policy "invoices: members can insert" on invoices
+  for insert with check (is_org_member(organization_id));
+create policy "invoices: members can update" on invoices
+  for update using (is_org_member(organization_id));
+
+create policy "invoice_approvals: members can read" on invoice_approvals
+  for select using (
+    exists (
+      select 1 from invoices i
+      where i.id = invoice_id and is_org_member(i.organization_id)
+    )
+  );
+create policy "invoice_approvals: members can insert" on invoice_approvals
+  for insert with check (
+    exists (
+      select 1 from invoices i
+      where i.id = invoice_id and is_org_member(i.organization_id)
+    )
+  );
+
+create policy "invoice_comments: members can read" on invoice_comments
+  for select using (
+    exists (
+      select 1 from invoices i
+      where i.id = invoice_id and is_org_member(i.organization_id)
+    )
+  );
+create policy "invoice_comments: members can insert" on invoice_comments
+  for insert with check (
+    exists (
+      select 1 from invoices i
+      where i.id = invoice_id and is_org_member(i.organization_id)
+    )
+  );
+
+create policy "audit_log: members can read" on audit_log
+  for select using (is_org_member(organization_id));
+
+create policy "inbound_email_log: members can read" on inbound_email_log
+  for select using (organization_id is not null and is_org_member(organization_id));
+
+-- Note: inserts to invoices/audit_log/inbound_email_log from the inbound-email
+-- webhook use the Supabase service role key (src/lib/supabase/admin.ts), which
+-- bypasses RLS — the webhook has no logged-in user to check against.
+
+-- ---------------------------------------------------------------------
+-- Storage
+-- ---------------------------------------------------------------------
+-- Create a private "invoices" bucket (Storage > New bucket, Public: off),
+-- or via SQL:
+-- insert into storage.buckets (id, name, public) values ('invoices', 'invoices', false);
+
+create policy "invoice files: members can read"
+  on storage.objects for select
+  using (
+    bucket_id = 'invoices'
+    and is_org_member((storage.foldername(name))[1]::uuid)
+  );
+
+create policy "invoice files: members can upload"
+  on storage.objects for insert
+  with check (
+    bucket_id = 'invoices'
+    and is_org_member((storage.foldername(name))[1]::uuid)
+  );
+
+--------------------------------------------------------------------
+-- >>> supabase/migrations/0002_approval_hardening.sql
+--------------------------------------------------------------------
+-- Approval Flow: approval hardening + comments/audit support.
+-- Authored by Araza.
+-- Run after 0001_init.sql. This migration is idempotent: safe to re-run
+-- any number of times (each statement checks whether it already ran).
+
+-- 1) One decision per invoice step. Makes duplicate approve/reject rows
+--    impossible even when two approvers race, and gives app code a
+--    constraint it can rely on for idempotency.
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'invoice_approvals_invoice_step_unique'
+      and conrelid = 'invoice_approvals'::regclass
+  ) then
+    alter table invoice_approvals
+      add constraint invoice_approvals_invoice_step_unique unique (invoice_id, step_order);
+  end if;
+end $$;
+
+-- 2) Chat history is read in chronological order per invoice.
+create index if not exists invoice_comments_invoice_created_idx
+  on invoice_comments (invoice_id, created_at);
+
+-- 3) Let org members see each other's profile names, so comment authors and
+--    approver names can be displayed (and included in the audit document).
+--    Scoped: the viewer and the target profile must share at least one
+--    organization. Complements the existing "profiles: read own" policy.
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_policies
+    where schemaname = 'public'
+      and tablename = 'profiles'
+      and policyname = 'profiles: org members can read'
+  ) then
+    create policy "profiles: org members can read" on profiles
+      for select using (
+        exists (
+          select 1
+          from organization_members viewer
+          join organization_members target
+            on target.organization_id = viewer.organization_id
+          where viewer.user_id = auth.uid()
+            and target.user_id = profiles.id
+        )
+      );
+  end if;
+end $$;
+
+--------------------------------------------------------------------
+-- >>> supabase/migrations/0003_multi_documents.sql
+--------------------------------------------------------------------
+-- Approval Flow: multiple documents per invoice (invoice + extra pages).
+-- The primary document stays on invoices.file_path; every additional page
+-- (scans, attachments, revisions) lives here. ALL documents are attached
+-- to the QBO bill on sync, alongside the audit-trail PDF.
+-- Authored by Araza. Idempotent — safe to re-run.
+
+create table if not exists invoice_documents (
+  id uuid primary key default gen_random_uuid(),
+  invoice_id uuid not null references invoices(id) on delete cascade,
+  file_path text not null,
+  file_name text not null,
+  uploaded_by uuid references profiles(id),
+  created_at timestamptz not null default now()
+);
+
+create index if not exists invoice_documents_invoice_idx
+  on invoice_documents (invoice_id);
+
+alter table invoice_documents enable row level security;
+
+create policy "invoice_documents: members can read" on invoice_documents
+  for select using (
+    exists (
+      select 1 from invoices i
+      where i.id = invoice_id and is_org_member(i.organization_id)
+    )
+  );
+
+create policy "invoice_documents: members can insert" on invoice_documents
+  for insert with check (
+    exists (
+      select 1 from invoices i
+      where i.id = invoice_id and is_org_member(i.organization_id)
+    )
+  );
+
+--------------------------------------------------------------------
+-- >>> supabase/migrations/0004_instructions.sql
+--------------------------------------------------------------------
+-- Approval Flow: accounting instructions (maps to the QBO bill memo /
+-- PrivateNote field — internal, not printed on the invoice).
+-- Authored by Araza. Idempotent — safe to re-run.
+alter table invoices add column if not exists accounting_instructions text;
+
+--------------------------------------------------------------------
+-- >>> supabase/migrations/0005_bill_editing.sql
+--------------------------------------------------------------------
+-- Approval Flow: editable bill fields + line items.
+-- invoices gains bill_date (defaults to created_at when null) and
+-- tax_amount; line-item rows live in invoice_line_items (Category,
+-- Description, Tax, Class, Amount, Linked) and push to QBO line items.
+-- Authored by Araza. Idempotent — safe to re-run.
+
+alter table invoices add column if not exists bill_date date;
+alter table invoices add column if not exists tax_amount numeric(14, 2);
+
+create table if not exists invoice_line_items (
+  id uuid primary key default gen_random_uuid(),
+  invoice_id uuid not null references invoices(id) on delete cascade,
+  category text,
+  description text,
+  tax_rate numeric(5, 2),
+  class text,
+  amount numeric(14, 2),
+  linked boolean not null default false,
+  line_order int not null default 0,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists invoice_line_items_invoice_idx
+  on invoice_line_items (invoice_id);
+
+alter table invoice_line_items enable row level security;
+
+create policy "invoice_line_items: members can read" on invoice_line_items
+  for select using (
+    exists (
+      select 1 from invoices i
+      where i.id = invoice_id and is_org_member(i.organization_id)
+    )
+  );
+
+create policy "invoice_line_items: members can insert" on invoice_line_items
+  for insert with check (
+    exists (
+      select 1 from invoices i
+      where i.id = invoice_id and is_org_member(i.organization_id)
+    )
+  );
+
+create policy "invoice_line_items: members can update" on invoice_line_items
+  for update using (
+    exists (
+      select 1 from invoices i
+      where i.id = invoice_id and is_org_member(i.organization_id)
+    )
+  );
+
+create policy "invoice_line_items: members can delete" on invoice_line_items
+  for delete using (
+    exists (
+      select 1 from invoices i
+      where i.id = invoice_id and is_org_member(i.organization_id)
+    )
+  );
+
+--------------------------------------------------------------------
+-- >>> supabase/migrations/0006_org_management.sql
+--------------------------------------------------------------------
+-- Approval Flow: projects/customers + invoice assignment.
+-- Projects are org-scoped entities (customer/job/class). They can be
+-- entered manually now; the qbo_id column is reserved for when QBO sync
+-- lands (QBO customers/projects). Invoices link to a project.
+-- Authored by Araza. Idempotent — safe to re-run.
+
+create table if not exists projects (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references organizations(id) on delete cascade,
+  name text not null,
+  qbo_id text,
+  source text not null default 'manual' check (source in ('manual', 'qbo')),
+  active boolean not null default true,
+  created_at timestamptz not null default now(),
+  unique (organization_id, name)
+);
+
+create index if not exists projects_org_idx on projects (organization_id);
+
+alter table projects enable row level security;
+
+create policy "projects: members can read" on projects
+  for select using (is_org_member(organization_id));
+
+create policy "projects: members can insert" on projects
+  for insert with check (is_org_member(organization_id));
+
+create policy "projects: members can update" on projects
+  for update using (is_org_member(organization_id));
+
+create policy "projects: members can delete" on projects
+  for delete using (is_org_member(organization_id));
+
+-- Invoices can be assigned to a project/customer (Bill panel).
+alter table invoices add column if not exists project_id uuid
+  references projects(id) on delete set null;
+
+-- Member management is admin-only: only admins can invite, change roles,
+-- or remove members. The read-roster policy from 0001 still applies.
+-- NOTE: the admin check must go through the security-definer helper
+-- is_org_admin (see 0007) — querying organization_members directly inside
+-- this policy causes infinite recursion.
+create or replace function is_org_admin(org_id uuid)
+returns boolean
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select exists (
+    select 1 from organization_members
+    where organization_id = org_id
+      and user_id = auth.uid()
+      and role = 'admin'
+  );
+$$;
+
+create policy "organization_members: admins manage" on organization_members
+  for all
+  using (is_org_admin(organization_id))
+  with check (is_org_admin(organization_id));
+
+--------------------------------------------------------------------
+-- >>> supabase/migrations/0007_fix_org_admin_policy.sql
+--------------------------------------------------------------------
+-- Fix: the 0006 "organization_members: admins manage" policy recursed
+-- infinitely. It queried organization_members directly inside its own
+-- policy, so ANY read of the table (e.g. the dashboard's current-org
+-- lookup) failed with "infinite recursion detected in policy".
+--
+-- Fix: an admin check that runs with SECURITY DEFINER (bypasses RLS), so
+-- evaluating the policy no longer re-enters the table's policies.
+-- Authored by Araza. Idempotent — safe to re-run.
+
+create or replace function is_org_admin(org_id uuid)
+returns boolean
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select exists (
+    select 1 from organization_members
+    where organization_id = org_id
+      and user_id = auth.uid()
+      and role = 'admin'
+  );
+$$;
+
+drop policy if exists "organization_members: admins manage" on organization_members;
+
+create policy "organization_members: admins manage" on organization_members
+  for all
+  using (is_org_admin(organization_id))
+  with check (is_org_admin(organization_id));
+
+--------------------------------------------------------------------
+-- >>> supabase/migrations/0008_workflow_access.sql
+--------------------------------------------------------------------
+-- Approval Flow: workflow-managed access model.
+--
+-- Admins see every invoice. Non-admin members only see invoices whose
+-- project is covered by an approval workflow in which they are an approver
+-- (plus invoices they submitted, and project-less invoices). Projects are
+-- linked to workflows via approval_workflow_projects; the workflow manages
+-- who sees what — nothing is assigned directly to users.
+--
+-- Authored by Araza. Idempotent — safe to re-run.
+
+-- Workflow <-> project links (a workflow covers one or more projects).
+create table if not exists approval_workflow_projects (
+  id uuid primary key default gen_random_uuid(),
+  workflow_id uuid not null references approval_workflows(id) on delete cascade,
+  project_id uuid not null references projects(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  unique (workflow_id, project_id)
+);
+
+create index if not exists approval_workflow_projects_project_idx
+  on approval_workflow_projects (project_id);
+
+alter table approval_workflow_projects enable row level security;
+
+create policy "workflow_projects: members can read" on approval_workflow_projects
+  for select using (
+    exists (
+      select 1 from approval_workflows w
+      where w.id = workflow_id and is_org_member(w.organization_id)
+    )
+  );
+
+create policy "workflow_projects: admins manage" on approval_workflow_projects
+  for all
+  using (
+    exists (
+      select 1 from approval_workflows w
+      where w.id = workflow_id and is_org_admin(w.organization_id)
+    )
+  )
+  with check (
+    exists (
+      select 1 from approval_workflows w
+      where w.id = workflow_id and is_org_admin(w.organization_id)
+    )
+  );
+
+-- Visibility helper (SECURITY DEFINER so it bypasses RLS — no recursion).
+create or replace function can_see_invoice(inv_id uuid)
+returns boolean
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select exists (
+    select 1 from invoices i
+    where i.id = inv_id
+      and (
+        is_org_admin(i.organization_id)
+        or (
+          is_org_member(i.organization_id)
+          and (
+            i.project_id is null
+            or i.submitted_by = auth.uid()
+            or exists (
+              select 1
+              from approval_workflow_projects wp
+              join approval_workflow_steps ws on ws.workflow_id = wp.workflow_id
+              where wp.project_id = i.project_id
+                and ws.approver_user_id = auth.uid()
+            )
+          )
+        )
+      )
+  );
+$$;
+
+-- ---------------------------------------------------------------------
+-- Invoices: scope reads/updates to what the user can see.
+-- ---------------------------------------------------------------------
+drop policy if exists "invoices: members can read" on invoices;
+create policy "invoices: members can read" on invoices
+  for select using (can_see_invoice(id));
+
+drop policy if exists "invoices: members can update" on invoices;
+create policy "invoices: members can update" on invoices
+  for update using (can_see_invoice(id));
+
+-- ---------------------------------------------------------------------
+-- Dependent tables: scope to visible invoices.
+-- ---------------------------------------------------------------------
+drop policy if exists "invoice_approvals: members can read" on invoice_approvals;
+create policy "invoice_approvals: members can read" on invoice_approvals
+  for select using (can_see_invoice(invoice_id));
+
+drop policy if exists "invoice_approvals: members can insert" on invoice_approvals;
+create policy "invoice_approvals: members can insert" on invoice_approvals
+  for insert with check (can_see_invoice(invoice_id));
+
+drop policy if exists "invoice_comments: members can read" on invoice_comments;
+create policy "invoice_comments: members can read" on invoice_comments
+  for select using (can_see_invoice(invoice_id));
+
+drop policy if exists "invoice_comments: members can insert" on invoice_comments;
+create policy "invoice_comments: members can insert" on invoice_comments
+  for insert with check (can_see_invoice(invoice_id));
+
+drop policy if exists "invoice_documents: members can read" on invoice_documents;
+create policy "invoice_documents: members can read" on invoice_documents
+  for select using (can_see_invoice(invoice_id));
+
+drop policy if exists "invoice_documents: members can insert" on invoice_documents;
+create policy "invoice_documents: members can insert" on invoice_documents
+  for insert with check (can_see_invoice(invoice_id));
+
+drop policy if exists "invoice_line_items: members can read" on invoice_line_items;
+create policy "invoice_line_items: members can read" on invoice_line_items
+  for select using (can_see_invoice(invoice_id));
+
+drop policy if exists "invoice_line_items: members can insert" on invoice_line_items;
+create policy "invoice_line_items: members can insert" on invoice_line_items
+  for insert with check (can_see_invoice(invoice_id));
+
+drop policy if exists "invoice_line_items: members can update" on invoice_line_items;
+create policy "invoice_line_items: members can update" on invoice_line_items
+  for update using (can_see_invoice(invoice_id));
+
+drop policy if exists "invoice_line_items: members can delete" on invoice_line_items;
+create policy "invoice_line_items: members can delete" on invoice_line_items
+  for delete using (can_see_invoice(invoice_id));
+
+drop policy if exists "audit_log: members can read" on audit_log;
+create policy "audit_log: members can read" on audit_log
+  for select using (
+    is_org_member(organization_id)
+    and (invoice_id is null or can_see_invoice(invoice_id))
+  );
+
+--------------------------------------------------------------------
+-- >>> supabase/migrations/0009_workflow_rules.sql
+--------------------------------------------------------------------
+-- Approval Flow: workflow rules (ApprovalMax-style workflow items) and
+-- admin-only management of workflows/steps.
+--
+-- A workflow routes invoices whose rules all match. Rule types:
+-- total_amount (any/between/under/over/equal), requester, supplier,
+-- product_service, category, class, customer (any/matches/not_matches).
+--
+-- Authored by Araza. Idempotent — safe to re-run.
+
+create table if not exists approval_workflow_rules (
+  id uuid primary key default gen_random_uuid(),
+  workflow_id uuid not null references approval_workflows(id) on delete cascade,
+  rule_type text not null
+    check (rule_type in ('total_amount','requester','supplier','product_service','category','class','customer')),
+  operator text not null
+    check (operator in ('any','between','under','over','equal','matches','not_matches')),
+  value text,
+  value2 text,
+  rule_order int not null default 0,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists approval_workflow_rules_workflow_idx
+  on approval_workflow_rules (workflow_id);
+
+alter table approval_workflow_rules enable row level security;
+
+create policy "workflow_rules: members can read" on approval_workflow_rules
+  for select using (
+    exists (
+      select 1 from approval_workflows w
+      where w.id = workflow_id and is_org_member(w.organization_id)
+    )
+  );
+
+create policy "workflow_rules: admins manage" on approval_workflow_rules
+  for all
+  using (
+    exists (
+      select 1 from approval_workflows w
+      where w.id = workflow_id and is_org_admin(w.organization_id)
+    )
+  )
+  with check (
+    exists (
+      select 1 from approval_workflows w
+      where w.id = workflow_id and is_org_admin(w.organization_id)
+    )
+  );
+
+-- Admins manage workflows and their steps (members keep read access via
+-- the existing read policies).
+create policy "approval_workflows: admins manage" on approval_workflows
+  for all
+  using (is_org_admin(organization_id))
+  with check (is_org_admin(organization_id));
+
+create policy "approval_workflow_steps: admins manage" on approval_workflow_steps
+  for all
+  using (
+    exists (
+      select 1 from approval_workflows w
+      where w.id = workflow_id and is_org_admin(w.organization_id)
+    )
+  )
+  with check (
+    exists (
+      select 1 from approval_workflows w
+      where w.id = workflow_id and is_org_admin(w.organization_id)
+    )
+  );
+
+--------------------------------------------------------------------
+-- >>> supabase/migrations/0010_saved_reports.sql
+--------------------------------------------------------------------
+-- Approval Flow: saved custom reports.
+-- Each report stores a JSON config (metric, group-by, filters); the report
+-- runner (src/lib/reports.ts) executes it against what the user can see.
+-- Authored by Araza. Idempotent — safe to re-run.
+
+create table if not exists saved_reports (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references organizations(id) on delete cascade,
+  name text not null,
+  config jsonb not null default '{}'::jsonb,
+  created_by uuid references profiles(id),
+  created_at timestamptz not null default now()
+);
+
+create index if not exists saved_reports_org_idx on saved_reports (organization_id);
+
+alter table saved_reports enable row level security;
+
+create policy "saved_reports: members can read" on saved_reports
+  for select using (is_org_member(organization_id));
+
+create policy "saved_reports: members can insert" on saved_reports
+  for insert with check (is_org_member(organization_id));
+
+create policy "saved_reports: members can update" on saved_reports
+  for update using (is_org_member(organization_id));
+
+create policy "saved_reports: members can delete" on saved_reports
+  for delete using (is_org_member(organization_id));
+
+--------------------------------------------------------------------
+-- >>> supabase/migrations/0011_extraction.sql
+--------------------------------------------------------------------
+-- Approval Flow: raw extraction payload on invoices.
+-- Holds the full structured extraction from the OpenRouter extraction
+-- engine (line items, subtotal, PO number, vendor contact details,
+-- customer, …) alongside the mapped columns. Authored by Araza.
+-- Idempotent — safe to re-run.
+alter table invoices add column if not exists extraction jsonb;
+
+--------------------------------------------------------------------
+-- >>> supabase/migrations/0012_review_queue.sql
+--------------------------------------------------------------------
+-- Approval Flow: review queue status.
+-- New invoices land in "pending_review" (the Pending Review queue). Review
+-- Done moves them to "pending" (approval workflow); Back to Review returns
+-- non-approved invoices to "pending_review" and resets decisions.
+-- Authored by Araza. Idempotent — safe to re-run.
+
+alter table invoices drop constraint if exists invoices_status_check;
+
+alter table invoices add constraint invoices_status_check
+  check (status in ('pending_review', 'pending', 'in_review', 'approved', 'rejected', 'paid'));
+
+--------------------------------------------------------------------
+-- >>> supabase/migrations/0013_held_status.sql
+--------------------------------------------------------------------
+-- Approval Flow: "held" status for invoices.
+-- Approvers can Hold an in-flight invoice (instead of approving/rejecting);
+-- it can be returned to the review queue with Back to Review.
+-- Authored by Araza. Idempotent — safe to re-run.
+
+alter table invoices drop constraint if exists invoices_status_check;
+
+alter table invoices add constraint invoices_status_check
+  check (status in ('pending_review', 'pending', 'in_review', 'held', 'approved', 'rejected', 'paid'));
+
+--------------------------------------------------------------------
+-- >>> supabase/migrations/0014_roles.sql
+--------------------------------------------------------------------
+-- Approval Flow: three roles — user / auditor / admin.
+--   admin   : manages the org, sees everything
+--   auditor : sees everything, READ-ONLY (no edits, no decisions)
+--   user    : works the org (submit/review/approve) within the projects
+--             covered by workflows they're on (the can_see_invoice scope)
+-- Existing approver/submitter members become 'user'.
+-- Authored by Araza. Idempotent — safe to re-run.
+
+alter table organization_members drop constraint if exists organization_members_role_check;
+
+update organization_members set role = 'user' where role in ('approver', 'submitter');
+
+alter table organization_members add constraint organization_members_role_check
+  check (role in ('user', 'auditor', 'admin'));
+
+-- Auditor visibility helper (SECURITY DEFINER, bypasses RLS).
+create or replace function is_org_auditor(org_id uuid)
+returns boolean
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select exists (
+    select 1 from organization_members
+    where organization_id = org_id
+      and user_id = auth.uid()
+      and role = 'auditor'
+  );
+$$;
+
+-- Auditors see every invoice (read), like admins.
+create or replace function can_see_invoice(inv_id uuid)
+returns boolean
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select exists (
+    select 1 from invoices i
+    where i.id = inv_id
+      and (
+        is_org_admin(i.organization_id)
+        or is_org_auditor(i.organization_id)
+        or (
+          is_org_member(i.organization_id)
+          and (
+            i.project_id is null
+            or i.submitted_by = auth.uid()
+            or exists (
+              select 1
+              from approval_workflow_projects wp
+              join approval_workflow_steps ws on ws.workflow_id = wp.workflow_id
+              where wp.project_id = i.project_id
+                and ws.approver_user_id = auth.uid()
+            )
+          )
+        )
+      )
+  );
+$$;
+
+-- ---------------------------------------------------------------------
+-- Write policies: auditors are read-only.
+-- ---------------------------------------------------------------------
+drop policy if exists "invoices: members can update" on invoices;
+create policy "invoices: members can update" on invoices
+  for update using (can_see_invoice(id) and not is_org_auditor(organization_id));
+
+drop policy if exists "invoice_approvals: members can insert" on invoice_approvals;
+create policy "invoice_approvals: members can insert" on invoice_approvals
+  for insert with check (
+    can_see_invoice(invoice_id)
+    and not is_org_auditor((select organization_id from invoices where id = invoice_id))
+  );
+
+drop policy if exists "invoice_comments: members can insert" on invoice_comments;
+create policy "invoice_comments: members can insert" on invoice_comments
+  for insert with check (
+    can_see_invoice(invoice_id)
+    and not is_org_auditor((select organization_id from invoices where id = invoice_id))
+  );
+
+drop policy if exists "invoice_documents: members can insert" on invoice_documents;
+create policy "invoice_documents: members can insert" on invoice_documents
+  for insert with check (
+    can_see_invoice(invoice_id)
+    and not is_org_auditor((select organization_id from invoices where id = invoice_id))
+  );
+
+drop policy if exists "invoice_line_items: members can insert" on invoice_line_items;
+create policy "invoice_line_items: members can insert" on invoice_line_items
+  for insert with check (
+    can_see_invoice(invoice_id)
+    and not is_org_auditor((select organization_id from invoices where id = invoice_id))
+  );
+
+drop policy if exists "invoice_line_items: members can update" on invoice_line_items;
+create policy "invoice_line_items: members can update" on invoice_line_items
+  for update using (
+    can_see_invoice(invoice_id)
+    and not is_org_auditor((select organization_id from invoices where id = invoice_id))
+  );
+
+drop policy if exists "invoice_line_items: members can delete" on invoice_line_items;
+create policy "invoice_line_items: members can delete" on invoice_line_items
+  for delete using (
+    can_see_invoice(invoice_id)
+    and not is_org_auditor((select organization_id from invoices where id = invoice_id))
+  );
+
+drop policy if exists "projects: members can insert" on projects;
+create policy "projects: members can insert" on projects
+  for insert with check (is_org_member(organization_id) and not is_org_auditor(organization_id));
+
+drop policy if exists "projects: members can update" on projects;
+create policy "projects: members can update" on projects
+  for update using (is_org_member(organization_id) and not is_org_auditor(organization_id));
+
+drop policy if exists "projects: members can delete" on projects;
+create policy "projects: members can delete" on projects
+  for delete using (is_org_member(organization_id) and not is_org_auditor(organization_id));
+
+--------------------------------------------------------------------
+-- >>> supabase/migrations/0015_admin_review.sql
+--------------------------------------------------------------------
+-- Approval Flow: review is Admin-only; pending_review invoices are not
+-- visible to Users.
+--
+-- can_see_invoice now: admins see everything, auditors see everything
+-- (read-only), and users see only non-pending_review invoices in their
+-- workflow scope / own submissions / project-less.
+-- Authored by Araza. Idempotent — safe to re-run.
+
+create or replace function can_see_invoice(inv_id uuid)
+returns boolean
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select exists (
+    select 1 from invoices i
+    where i.id = inv_id
+      and (
+        is_org_admin(i.organization_id)
+        or is_org_auditor(i.organization_id)
+        or (
+          is_org_member(i.organization_id)
+          and i.status <> 'pending_review'
+          and (
+            i.project_id is null
+            or i.submitted_by = auth.uid()
+            or exists (
+              select 1
+              from approval_workflow_projects wp
+              join approval_workflow_steps ws on ws.workflow_id = wp.workflow_id
+              where wp.project_id = i.project_id
+                and ws.approver_user_id = auth.uid()
+            )
+          )
+        )
+      )
+  );
+$$;
+
+--------------------------------------------------------------------
+-- >>> supabase/migrations/0016_avatars.sql
+--------------------------------------------------------------------
+-- Approval Flow: profile photo storage.
+-- Profiles already have `avatar_url` (migration 0001) but nothing has ever
+-- written to it. This adds a public "avatars" bucket with per-user upload
+-- policies: each user may only write to their own folder, path convention
+-- {user_id}/avatar.{ext}. Reads are public since avatar images aren't
+-- sensitive and this avoids re-signing a URL everywhere one is displayed.
+-- Authored by Araza. Idempotent — safe to re-run.
+
+insert into storage.buckets (id, name, public)
+values ('avatars', 'avatars', true)
+on conflict (id) do nothing;
+
+drop policy if exists "avatars: public read" on storage.objects;
+create policy "avatars: public read"
+  on storage.objects for select
+  using (bucket_id = 'avatars');
+
+drop policy if exists "avatars: users manage their own" on storage.objects;
+create policy "avatars: users manage their own"
+  on storage.objects for all
+  using (bucket_id = 'avatars' and (storage.foldername(name))[1] = auth.uid()::text)
+  with check (bucket_id = 'avatars' and (storage.foldername(name))[1] = auth.uid()::text);
+
+--------------------------------------------------------------------
+-- >>> supabase/migrations/0017_simplify_statuses.sql
+--------------------------------------------------------------------
+-- Approval Flow: collapse the status set to match ApprovalMax's own
+-- (On review / On approval / Approved / Cancelled / Rejected / On hold).
+--
+-- Old -> new mapping:
+--   pending_review        -> on_review
+--   pending, in_review    -> on_approval  (the pending/in_review split only
+--                                          ever meant "step 1" vs "step 2+";
+--                                          nothing in the app treated them
+--                                          differently)
+--   held                  -> on_hold
+--   approved              -> approved     (unchanged)
+--   rejected              -> rejected     (unchanged)
+--   paid                  -> approved     (payment status isn't tracked
+--                                          separately yet; drop rather than
+--                                          keep an always-unused value)
+--   (new) cancelled       -- the submitter or an admin can now withdraw a
+--                            document before it's decided
+-- Authored by Araza. Idempotent — safe to re-run (the UPDATE statements are
+-- no-ops once every row is already on a new-style status).
+
+alter table invoices drop constraint if exists invoices_status_check;
+
+update invoices set status = 'on_review' where status = 'pending_review';
+update invoices set status = 'on_approval' where status in ('pending', 'in_review');
+update invoices set status = 'on_hold' where status = 'held';
+update invoices set status = 'approved' where status = 'paid';
+
+alter table invoices add constraint invoices_status_check
+  check (status in ('on_review', 'on_approval', 'approved', 'cancelled', 'rejected', 'on_hold'));
+
+alter table invoices alter column status set default 'on_review';
+
+-- Re-point the visibility helper (0015) at the renamed review status.
+create or replace function can_see_invoice(inv_id uuid)
+returns boolean
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select exists (
+    select 1 from invoices i
+    where i.id = inv_id
+      and (
+        is_org_admin(i.organization_id)
+        or is_org_auditor(i.organization_id)
+        or (
+          is_org_member(i.organization_id)
+          and i.status <> 'on_review'
+          and (
+            i.project_id is null
+            or i.submitted_by = auth.uid()
+            or exists (
+              select 1
+              from approval_workflow_projects wp
+              join approval_workflow_steps ws on ws.workflow_id = wp.workflow_id
+              where wp.project_id = i.project_id
+                and ws.approver_user_id = auth.uid()
+            )
+          )
+        )
+      )
+  );
+$$;
+
+--------------------------------------------------------------------
+-- >>> supabase/migrations/0018_admin_override.sql
+--------------------------------------------------------------------
+-- Approval Flow: admin override of who's currently holding an invoice.
+-- Per-invoice, not per-workflow — editing approval_workflow_steps directly
+-- would silently reassign every invoice on that workflow. This column lets
+-- an admin push one specific invoice to a different approver without
+-- touching the shared workflow template. Cleared automatically once that
+-- step is decided or the invoice leaves on_approval/on_hold.
+-- Authored by Araza. Idempotent — safe to re-run.
+
+alter table invoices add column if not exists step_override_approver_id uuid
+  references profiles(id) on delete set null;
+
+--------------------------------------------------------------------
+-- >>> supabase/migrations/0019_line_item_projects.sql
+--------------------------------------------------------------------
+-- Approval Flow: per-line-item project/customer, for bills split across
+-- multiple projects. The invoice-level `project_id` (0006) is left in
+-- place for old data/simple single-project bills, but new splits are
+-- expressed as one project per line item instead.
+--
+-- Visibility: a "user" role member can see the invoice if they're an
+-- approver on a workflow covering the invoice-level project (existing
+-- behavior) OR any line item's project (new) — i.e. "any of the involved
+-- projects", not "all of them". In practice a bill only ever splits across
+-- projects the same PM already covers, so this is deliberately the
+-- permissive option, not the strict one.
+-- Authored by Araza. Idempotent — safe to re-run.
+
+alter table invoice_line_items add column if not exists project_id uuid
+  references projects(id) on delete set null;
+
+create or replace function can_see_invoice(inv_id uuid)
+returns boolean
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select exists (
+    select 1 from invoices i
+    where i.id = inv_id
+      and (
+        is_org_admin(i.organization_id)
+        or is_org_auditor(i.organization_id)
+        or (
+          is_org_member(i.organization_id)
+          and i.status <> 'on_review'
+          and (
+            i.project_id is null
+            or i.submitted_by = auth.uid()
+            or exists (
+              select 1
+              from approval_workflow_projects wp
+              join approval_workflow_steps ws on ws.workflow_id = wp.workflow_id
+              where wp.project_id = i.project_id
+                and ws.approver_user_id = auth.uid()
+            )
+            or exists (
+              select 1
+              from invoice_line_items li
+              join approval_workflow_projects wp on wp.project_id = li.project_id
+              join approval_workflow_steps ws on ws.workflow_id = wp.workflow_id
+              where li.invoice_id = i.id
+                and ws.approver_user_id = auth.uid()
+            )
+          )
+        )
+      )
+  );
+$$;
+
+--------------------------------------------------------------------
+-- >>> supabase/migrations/0020_supplier_defaults.sql
+--------------------------------------------------------------------
+-- Approval Flow: per-supplier default rules (Dext/ApprovalMax-style).
+-- Applied automatically at ingestion when a new invoice's extracted vendor
+-- name matches: fills Category/Class/Project/Tax rate on every line item,
+-- and computes due_date from payment_terms_days (overriding the LLM's
+-- guess, since these are business rules a human configured on purpose).
+--
+-- Matched by normalized vendor name (trim+lower) — there's no first-class
+-- Supplier entity yet, same matching already used for duplicate detection
+-- and the Document Search "Supplier" filter. Only the fields that map to
+-- something real in this app are here — no Integration/Auto-publish/
+-- Payment method/Mark as paid/Rebill/etc., since we have no QBO sync to
+-- back those with.
+-- Authored by Araza. Idempotent — safe to re-run.
+
+create table if not exists supplier_defaults (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references organizations(id) on delete cascade,
+  vendor_name text not null,
+  vendor_name_normalized text generated always as (lower(trim(vendor_name))) stored,
+  category text,
+  class text,
+  project_id uuid references projects(id) on delete set null,
+  tax_rate numeric,
+  payment_terms_days integer,
+  currency text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (organization_id, vendor_name_normalized)
+);
+
+create index if not exists supplier_defaults_org_idx on supplier_defaults (organization_id);
+
+alter table supplier_defaults enable row level security;
+
+drop policy if exists "supplier_defaults: members can read" on supplier_defaults;
+create policy "supplier_defaults: members can read" on supplier_defaults
+  for select using (is_org_member(organization_id));
+
+drop policy if exists "supplier_defaults: members can insert" on supplier_defaults;
+create policy "supplier_defaults: members can insert" on supplier_defaults
+  for insert with check (is_org_member(organization_id) and not is_org_auditor(organization_id));
+
+drop policy if exists "supplier_defaults: members can update" on supplier_defaults;
+create policy "supplier_defaults: members can update" on supplier_defaults
+  for update using (is_org_member(organization_id) and not is_org_auditor(organization_id));
+
+drop policy if exists "supplier_defaults: members can delete" on supplier_defaults;
+create policy "supplier_defaults: members can delete" on supplier_defaults
+  for delete using (is_org_member(organization_id) and not is_org_auditor(organization_id));
+
+--------------------------------------------------------------------
+-- >>> supabase/migrations/0021_fix_invoice_insert_rls.sql
+--------------------------------------------------------------------
+-- Approval Flow: fix "new row violates row-level security policy for
+-- table invoices" on every new invoice (manual upload AND email
+-- ingestion — both go through createInvoiceFromFile's single
+-- `.insert(...).select().single()` call).
+--
+-- Root cause: migration 0008 made "invoices: members can read" use
+-- can_see_invoice(id), which re-queries the invoices table by id
+-- (`select 1 from invoices i where i.id = inv_id ...`). That's correct
+-- for policies on OTHER tables (invoice_approvals/comments/documents/
+-- line_items, which need to look the parent invoice up by invoice_id) and
+-- for reading already-committed rows. It breaks specifically for
+-- `INSERT ... RETURNING`: within the same command, the self-referential
+-- subquery can't see the row that command is in the middle of inserting,
+-- so can_see_invoice() spuriously returns false and Postgres reports the
+-- RETURNING step itself as an RLS violation — even though the INSERT's
+-- own WITH CHECK passed and the row is sitting in the table afterward.
+--
+-- Fix: give `invoices` its own read policy that evaluates the same
+-- visibility rule directly against the row's own columns (organization_id/
+-- status/project_id/submitted_by/id are all available without a subquery,
+-- since this policy is defined ON invoices itself) instead of going
+-- through can_see_invoice(id). `can_see_invoice()` itself is untouched —
+-- still correct and still used by every other table's policies.
+--
+-- Authored by Araza. Idempotent — safe to re-run.
+
+drop policy if exists "invoices: members can read" on invoices;
+create policy "invoices: members can read" on invoices
+  for select using (
+    is_org_admin(organization_id)
+    or is_org_auditor(organization_id)
+    or (
+      is_org_member(organization_id)
+      and status <> 'on_review'
+      and (
+        project_id is null
+        or submitted_by = auth.uid()
+        or exists (
+          select 1
+          from approval_workflow_projects wp
+          join approval_workflow_steps ws on ws.workflow_id = wp.workflow_id
+          where wp.project_id = invoices.project_id
+            and ws.approver_user_id = auth.uid()
+        )
+        or exists (
+          select 1
+          from invoice_line_items li
+          join approval_workflow_projects wp on wp.project_id = li.project_id
+          join approval_workflow_steps ws on ws.workflow_id = wp.workflow_id
+          where li.invoice_id = invoices.id
+            and ws.approver_user_id = auth.uid()
+        )
+      )
+    )
+  );
+
+-- Same fix, proactively, for update: no current code path chains .select()
+-- after an invoices update, but if one ever does, this avoids the same
+-- self-referential-subquery trap on the RETURNING step.
+drop policy if exists "invoices: members can update" on invoices;
+create policy "invoices: members can update" on invoices
+  for update using (
+    (
+      is_org_admin(organization_id)
+      or is_org_auditor(organization_id)
+      or (
+        is_org_member(organization_id)
+        and status <> 'on_review'
+        and (
+          project_id is null
+          or submitted_by = auth.uid()
+          or exists (
+            select 1
+            from approval_workflow_projects wp
+            join approval_workflow_steps ws on ws.workflow_id = wp.workflow_id
+            where wp.project_id = invoices.project_id
+              and ws.approver_user_id = auth.uid()
+          )
+          or exists (
+            select 1
+            from invoice_line_items li
+            join approval_workflow_projects wp on wp.project_id = li.project_id
+            join approval_workflow_steps ws on ws.workflow_id = wp.workflow_id
+            where li.invoice_id = invoices.id
+              and ws.approver_user_id = auth.uid()
+          )
+        )
+      )
+    )
+    and not is_org_auditor(organization_id)
+  );
+
+--------------------------------------------------------------------
+-- >>> supabase/migrations/0022_invoice_delete.sql
+--------------------------------------------------------------------
+-- Approval Flow: admin-only permanent invoice deletion.
+--
+-- 1. audit_log.invoice_id currently cascades on invoice delete, which
+--    would wipe out the very "invoice.deleted" entry recording the
+--    deletion the moment it happens — the one event that most needs to
+--    survive. Switch to "on delete set null": historical audit rows stay
+--    (with invoice_id now null, invoice_number/vendor already live in
+--    metadata for anything logged going forward), only the FK link goes.
+-- 2. invoices had no DELETE policy at all (RLS defaults to deny), so this
+--    also adds one, admin-only. Every child table (line items, documents,
+--    comments, approvals) already cascades on invoice delete (0001/0003/
+--    0005), so a single row delete is enough.
+--
+-- Authored by Araza. Idempotent — safe to re-run.
+
+alter table audit_log drop constraint if exists audit_log_invoice_id_fkey;
+alter table audit_log
+  add constraint audit_log_invoice_id_fkey
+  foreign key (invoice_id) references invoices(id) on delete set null;
+
+drop policy if exists "invoices: admins can delete" on invoices;
+create policy "invoices: admins can delete" on invoices
+  for delete using (is_org_admin(organization_id));
+
+--------------------------------------------------------------------
+-- >>> supabase/migrations/0023_audit_log_insert_policy.sql
+--------------------------------------------------------------------
+-- Approval Flow: audit_log had RLS enabled (migration 0001) but no INSERT
+-- policy was ever added for it — only a SELECT policy. With RLS enabled
+-- and no matching policy, Postgres denies by default, so every audit_log
+-- insert made through the regular (non-service-role) client has been
+-- silently failing since day one: decide/cancelInvoice/reassignApprover/
+-- overrideStatus/reExtract and everything added this session (bill edits,
+-- line item changes, document uploads, accounting instructions, invoice
+-- deletion) never actually wrote a row. Only the inbound-email webhook
+-- (which uses the service-role key, bypassing RLS) ever succeeded — which
+-- is exactly the one row that showed up when checking the table.
+--
+-- Authored by Araza. Idempotent — safe to re-run.
+
+drop policy if exists "audit_log: members can insert" on audit_log;
+create policy "audit_log: members can insert" on audit_log
+  for insert with check (is_org_member(organization_id));
+
+--------------------------------------------------------------------
+-- >>> supabase/migrations/0024_pending_invoice_splits.sql
+--------------------------------------------------------------------
+-- Approval Flow: multi-invoice upload splitting.
+--
+-- A multi-page upload might be one invoice plus supporting pages (handled
+-- fine today, the whole file becomes one invoice) or several separate
+-- invoices stapled into one file (today silently becomes just one
+-- invoice, dropping the rest). When classification detects more than one
+-- invoice in a single upload, the file lands here instead of becoming
+-- invoices outright — a human reviews and confirms the split (or
+-- dismisses it and re-uploads pages separately) before any invoice
+-- records are created. Applies to both manual upload and inbound email.
+--
+-- Authored by Araza. Idempotent — safe to re-run.
+
+create table if not exists pending_invoice_splits (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references organizations(id) on delete cascade,
+  source text not null check (source in ('manual', 'email')),
+  source_email text,
+  submitted_by uuid references profiles(id) on delete set null,
+  file_path text not null,
+  file_name text not null,
+  page_count integer not null,
+  -- [{ "pages": [1,2], "vendorHint": string|null, "invoiceNumberHint": string|null }, ...]
+  groups jsonb not null,
+  status text not null default 'pending' check (status in ('pending', 'confirmed', 'dismissed')),
+  created_at timestamptz not null default now(),
+  resolved_at timestamptz,
+  resolved_by uuid references profiles(id) on delete set null
+);
+
+create index if not exists pending_invoice_splits_org_status_idx
+  on pending_invoice_splits (organization_id, status);
+
+alter table pending_invoice_splits enable row level security;
+
+drop policy if exists "pending_invoice_splits: members can read" on pending_invoice_splits;
+create policy "pending_invoice_splits: members can read" on pending_invoice_splits
+  for select using (is_org_member(organization_id));
+
+drop policy if exists "pending_invoice_splits: members can insert" on pending_invoice_splits;
+create policy "pending_invoice_splits: members can insert" on pending_invoice_splits
+  for insert with check (is_org_member(organization_id));
+
+drop policy if exists "pending_invoice_splits: members can update" on pending_invoice_splits;
+create policy "pending_invoice_splits: members can update" on pending_invoice_splits
+  for update using (is_org_member(organization_id) and not is_org_auditor(organization_id));
+
+--------------------------------------------------------------------
+-- >>> supabase/migrations/0025_storage_delete_policy.sql
+--------------------------------------------------------------------
+-- Approval Flow: the "invoices" storage bucket had SELECT and INSERT
+-- policies (migration 0001) but no DELETE policy — same silent-failure
+-- class as migration 0023's audit_log gap. Supabase Storage's .remove()
+-- doesn't throw when RLS blocks it; it just returns an empty result, so
+-- every file-cleanup call has been a no-op: admin invoice deletion
+-- (deleteInvoiceAction) never actually removed the file from Storage,
+-- and confirming/dismissing a multi-invoice split never removed the
+-- original combined upload either. Confirmed by testing directly: an
+-- authenticated member's .remove() call against a real file returned []
+-- with no error, and the file was still downloadable afterward.
+--
+-- Authored by Araza. Idempotent — safe to re-run.
+
+drop policy if exists "invoice files: members can delete" on storage.objects;
+create policy "invoice files: members can delete"
+  on storage.objects for delete
+  using (
+    bucket_id = 'invoices'
+    and is_org_member((storage.foldername(name))[1]::uuid)
+  );
+
+--------------------------------------------------------------------
+-- >>> supabase/migrations/0026_mentions_notifications.sql
+--------------------------------------------------------------------
+-- Approval Flow: @mention teammates in Discussion, with an in-app
+-- notification and (separately, app-side via Resend) an email so they
+-- don't have to have the app open to find out.
+--
+-- mentioned_user_ids lives on invoice_comments itself (resolved
+-- server-side from the composer's @mention picks, not parsed from free
+-- text) so the comment always knows exactly who it was addressed to.
+-- notifications is the in-app "you were mentioned" inbox — one row per
+-- (comment, mentioned user), marked read when they open that invoice's
+-- Discussion or the notification directly.
+--
+-- Authored by Araza. Idempotent — safe to re-run.
+
+alter table invoice_comments
+  add column if not exists mentioned_user_ids uuid[] not null default '{}';
+
+create table if not exists notifications (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references organizations(id) on delete cascade,
+  user_id uuid not null references profiles(id) on delete cascade,
+  actor_id uuid references profiles(id) on delete set null,
+  invoice_id uuid references invoices(id) on delete cascade,
+  comment_id uuid references invoice_comments(id) on delete cascade,
+  type text not null default 'mention' check (type in ('mention')),
+  read boolean not null default false,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists notifications_user_unread_idx
+  on notifications (user_id, read, created_at desc);
+
+alter table notifications enable row level security;
+
+drop policy if exists "notifications: users can read their own" on notifications;
+create policy "notifications: users can read their own" on notifications
+  for select using (user_id = auth.uid());
+
+drop policy if exists "notifications: members can insert" on notifications;
+create policy "notifications: members can insert" on notifications
+  for insert with check (is_org_member(organization_id));
+
+drop policy if exists "notifications: users can update their own" on notifications;
+create policy "notifications: users can update their own" on notifications
+  for update using (user_id = auth.uid());
+
+--------------------------------------------------------------------
+-- >>> supabase/migrations/0027_conditional_step_approvers.sql
+--------------------------------------------------------------------
+-- Approval Flow: replace "one approver per step" with ApprovalMax-style
+-- conditional routing — a step can have several approvers, each matched
+-- by their own Class/Customer/Supplier condition, plus an optional
+-- Default Approver used when nobody's condition matches. This is what
+-- lets ONE workflow cover every project instead of needing a separate
+-- workflow per project/customer (the actual problem being solved here —
+-- see the "175 projects" conversation this migration comes out of).
+--
+-- Visibility changes to match: instead of "any approver on a workflow
+-- linked to this invoice's project can see it" (approval_workflow_projects),
+-- it's now "you can see this invoice if one of your own conditions
+-- actually matches it (or you're a default approver on the workflow)" —
+-- see is_eligible_approver() below. approval_workflow_projects is no
+-- longer needed and is dropped.
+--
+-- Authored by Araza. Idempotent — safe to re-run.
+
+-- ---------------------------------------------------------------------
+-- Schema
+-- ---------------------------------------------------------------------
+
+alter table approval_workflow_steps add column if not exists name text not null default '';
+alter table approval_workflow_steps add column if not exists approval_mode text not null default 'all'
+  check (approval_mode in ('any', 'all'));
+comment on column approval_workflow_steps.approval_mode is
+  'When more than one approver''s condition matches the same invoice at this step: ''all'' requires every matching approver to approve; ''any'' completes the step on the first approval.';
+
+create table if not exists approval_workflow_step_approvers (
+  id uuid primary key default gen_random_uuid(),
+  step_id uuid not null references approval_workflow_steps(id) on delete cascade,
+  approver_user_id uuid not null references profiles(id) on delete cascade,
+  -- Fallback approver for this step, used only when no conditional
+  -- approver's rules match the invoice. Not itself conditional.
+  is_default boolean not null default false,
+  row_order int not null default 0,
+  created_at timestamptz not null default now(),
+  unique (step_id, approver_user_id)
+);
+
+create index if not exists approval_workflow_step_approvers_step_idx
+  on approval_workflow_step_approvers (step_id);
+
+create table if not exists approval_workflow_step_conditions (
+  id uuid primary key default gen_random_uuid(),
+  step_approver_id uuid not null references approval_workflow_step_approvers(id) on delete cascade,
+  field text not null check (field in ('class', 'customer', 'supplier')),
+  -- 'matches' = this approver is eligible only when the invoice's value(s)
+  -- overlap match_values; 'not_matches' = eligible only when they don't.
+  operator text not null check (operator in ('matches', 'not_matches')),
+  -- Free text for class/supplier; project ids (as text) for customer.
+  -- Multiple values = OR within this one condition row. Named
+  -- match_values (not "values") since VALUES is a reserved SQL keyword.
+  match_values text[] not null default '{}',
+  created_at timestamptz not null default now()
+);
+
+create index if not exists approval_workflow_step_conditions_approver_idx
+  on approval_workflow_step_conditions (step_approver_id);
+
+-- Preserve any existing single-approver assignment as that step's default
+-- approver before dropping the old column — costs nothing and avoids
+-- silently orphaning a real assignment, even though a clean rebuild of
+-- the one real workflow is the plan going forward. Guarded on the column
+-- still existing so this stays safe to re-run even after a prior run
+-- already dropped it (a plain `insert ... select approver_user_id from
+-- approval_workflow_steps` would otherwise fail with "column does not
+-- exist" on a second run).
+do $migrate_old_approvers$
+begin
+  if exists (
+    select 1 from information_schema.columns
+    where table_name = 'approval_workflow_steps' and column_name = 'approver_user_id'
+  ) then
+    insert into approval_workflow_step_approvers (step_id, approver_user_id, is_default)
+    select id, approver_user_id, true
+    from approval_workflow_steps
+    where approver_user_id is not null
+    on conflict (step_id, approver_user_id) do nothing;
+  end if;
+end
+$migrate_old_approvers$;
+
+-- Column is dropped further down, after the invoices policies that
+-- currently reference it (directly, via ws.approver_user_id) are replaced
+-- with versions that don't — Postgres tracks column dependencies through
+-- RLS policy expressions, so dropping it first errors with "cannot drop
+-- column ... other objects depend on it".
+
+-- ---------------------------------------------------------------------
+-- RLS: new tables (members read, admins manage — same pattern as
+-- approval_workflow_rules in 0009_workflow_rules.sql)
+-- ---------------------------------------------------------------------
+
+alter table approval_workflow_step_approvers enable row level security;
+
+drop policy if exists "step_approvers: members can read" on approval_workflow_step_approvers;
+create policy "step_approvers: members can read" on approval_workflow_step_approvers
+  for select using (
+    exists (
+      select 1 from approval_workflow_steps s
+      join approval_workflows w on w.id = s.workflow_id
+      where s.id = step_id and is_org_member(w.organization_id)
+    )
+  );
+
+drop policy if exists "step_approvers: admins manage" on approval_workflow_step_approvers;
+create policy "step_approvers: admins manage" on approval_workflow_step_approvers
+  for all
+  using (
+    exists (
+      select 1 from approval_workflow_steps s
+      join approval_workflows w on w.id = s.workflow_id
+      where s.id = step_id and is_org_admin(w.organization_id)
+    )
+  )
+  with check (
+    exists (
+      select 1 from approval_workflow_steps s
+      join approval_workflows w on w.id = s.workflow_id
+      where s.id = step_id and is_org_admin(w.organization_id)
+    )
+  );
+
+alter table approval_workflow_step_conditions enable row level security;
+
+drop policy if exists "step_conditions: members can read" on approval_workflow_step_conditions;
+create policy "step_conditions: members can read" on approval_workflow_step_conditions
+  for select using (
+    exists (
+      select 1 from approval_workflow_step_approvers sa
+      join approval_workflow_steps s on s.id = sa.step_id
+      join approval_workflows w on w.id = s.workflow_id
+      where sa.id = step_approver_id and is_org_member(w.organization_id)
+    )
+  );
+
+drop policy if exists "step_conditions: admins manage" on approval_workflow_step_conditions;
+create policy "step_conditions: admins manage" on approval_workflow_step_conditions
+  for all
+  using (
+    exists (
+      select 1 from approval_workflow_step_approvers sa
+      join approval_workflow_steps s on s.id = sa.step_id
+      join approval_workflows w on w.id = s.workflow_id
+      where sa.id = step_approver_id and is_org_admin(w.organization_id)
+    )
+  )
+  with check (
+    exists (
+      select 1 from approval_workflow_step_approvers sa
+      join approval_workflow_steps s on s.id = sa.step_id
+      join approval_workflows w on w.id = s.workflow_id
+      where sa.id = step_approver_id and is_org_admin(w.organization_id)
+    )
+  );
+
+-- ---------------------------------------------------------------------
+-- Visibility: is a given user an eligible approver anywhere on this
+-- invoice's workflow — i.e. would they end up as the effective approver
+-- of some step, given the invoice's actual class/customer(project)/
+-- supplier data? Forward-looking (checks every step, not just the
+-- current one) so an approver on a later step can already see the
+-- invoice, matching the old project-linked behavior. Default approvers
+-- can always see the workflow's invoices (they're the catch-all for
+-- whichever step they're on).
+-- ---------------------------------------------------------------------
+
+create or replace function is_eligible_approver(p_invoice_id uuid, p_user_id uuid)
+returns boolean
+language plpgsql
+security definer
+set search_path = public
+stable
+as $$
+declare
+  v_workflow_id uuid;
+  v_vendor text;
+  v_classes text[];
+  v_project_ids text[];
+  r_approver record;
+  r_cond record;
+  v_cond_values text[];
+  approver_ok boolean;
+begin
+  select workflow_id, lower(trim(coalesce(vendor_name, '')))
+    into v_workflow_id, v_vendor
+    from invoices where id = p_invoice_id;
+
+  if v_workflow_id is null then
+    return false;
+  end if;
+
+  select coalesce(array_agg(distinct lower(trim(class))) filter (where class is not null and trim(class) <> ''), '{}')
+    into v_classes
+    from invoice_line_items where invoice_id = p_invoice_id;
+
+  select coalesce(array_agg(distinct project_id::text) filter (where project_id is not null), '{}')
+    into v_project_ids
+    from invoice_line_items where invoice_id = p_invoice_id;
+  if coalesce(array_length(v_project_ids, 1), 0) = 0 then
+    select case when project_id is not null then array[project_id::text] else '{}'::text[] end
+      into v_project_ids
+      from invoices where id = p_invoice_id;
+  end if;
+
+  for r_approver in
+    select sa.id, sa.is_default
+    from approval_workflow_step_approvers sa
+    join approval_workflow_steps s on s.id = sa.step_id
+    where s.workflow_id = v_workflow_id
+      and sa.approver_user_id = p_user_id
+  loop
+    if r_approver.is_default then
+      return true;
+    end if;
+
+    approver_ok := true;
+    for r_cond in
+      select field, operator, match_values
+      from approval_workflow_step_conditions
+      where step_approver_id = r_approver.id
+    loop
+      select array_agg(lower(trim(x))) into v_cond_values from unnest(r_cond.match_values) x;
+      v_cond_values := coalesce(v_cond_values, '{}');
+
+      if r_cond.field = 'supplier' then
+        if r_cond.operator = 'matches' and not (v_vendor = any(v_cond_values)) then
+          approver_ok := false;
+        elsif r_cond.operator = 'not_matches' and (v_vendor = any(v_cond_values)) then
+          approver_ok := false;
+        end if;
+      elsif r_cond.field = 'class' then
+        if r_cond.operator = 'matches' and not (v_classes && v_cond_values) then
+          approver_ok := false;
+        elsif r_cond.operator = 'not_matches' and (v_classes && v_cond_values) then
+          approver_ok := false;
+        end if;
+      elsif r_cond.field = 'customer' then
+        -- customer values are project ids (uuids as text) — no case
+        -- folding, compare against r_cond.match_values directly.
+        if r_cond.operator = 'matches' and not (v_project_ids && r_cond.match_values) then
+          approver_ok := false;
+        elsif r_cond.operator = 'not_matches' and (v_project_ids && r_cond.match_values) then
+          approver_ok := false;
+        end if;
+      end if;
+
+      exit when approver_ok = false;
+    end loop;
+
+    if approver_ok then
+      return true;
+    end if;
+  end loop;
+
+  return false;
+end;
+$$;
+
+-- ---------------------------------------------------------------------
+-- can_see_invoice(): swap the approval_workflow_projects join for
+-- is_eligible_approver(). Used directly by invoice_approvals/
+-- invoice_comments/invoice_documents/invoice_line_items/audit_log's own
+-- policies (0008_workflow_access.sql), so redefining it here is enough
+-- to update visibility everywhere those tables are concerned.
+-- ---------------------------------------------------------------------
+
+create or replace function can_see_invoice(inv_id uuid)
+returns boolean
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select exists (
+    select 1 from invoices i
+    where i.id = inv_id
+      and (
+        is_org_admin(i.organization_id)
+        or (
+          is_org_member(i.organization_id)
+          and (
+            i.project_id is null
+            or i.submitted_by = auth.uid()
+            or is_eligible_approver(i.id, auth.uid())
+          )
+        )
+      )
+  );
+$$;
+
+-- invoices' own SELECT/UPDATE policies inline this same logic instead of
+-- calling can_see_invoice() — a self-referential subquery inside
+-- can_see_invoice() breaks INSERT ... RETURNING (see 0021's comment for
+-- the full explanation). Redefine them the same way, just swapping in
+-- is_eligible_approver().
+drop policy if exists "invoices: members can read" on invoices;
+create policy "invoices: members can read" on invoices
+  for select using (
+    is_org_admin(organization_id)
+    or is_org_auditor(organization_id)
+    or (
+      is_org_member(organization_id)
+      and status <> 'on_review'
+      and (
+        project_id is null
+        or submitted_by = auth.uid()
+        or is_eligible_approver(id, auth.uid())
+      )
+    )
+  );
+
+drop policy if exists "invoices: members can update" on invoices;
+create policy "invoices: members can update" on invoices
+  for update using (
+    (
+      is_org_admin(organization_id)
+      or is_org_auditor(organization_id)
+      or (
+        is_org_member(organization_id)
+        and status <> 'on_review'
+        and (
+          project_id is null
+          or submitted_by = auth.uid()
+          or is_eligible_approver(id, auth.uid())
+        )
+      )
+    )
+    and not is_org_auditor(organization_id)
+  );
+
+-- Now safe to drop — the policies above were the last things referencing it.
+alter table approval_workflow_steps drop column if exists approver_user_id;
+
+-- ---------------------------------------------------------------------
+-- approval_workflow_projects is no longer used for anything — visibility
+-- is condition-based now, not project-link-based. Dropping the table also
+-- drops its own policies automatically, so there's nothing to do first —
+-- an explicit `drop policy ... on approval_workflow_projects` would fail
+-- on a second run once the table itself is already gone (unlike `drop
+-- policy if exists`, `if exists` only guards the policy name, not the
+-- table it's on).
+-- ---------------------------------------------------------------------
+
+drop table if exists approval_workflow_projects;
+
+--------------------------------------------------------------------
+-- >>> supabase/migrations/0028_category_condition.sql
+--------------------------------------------------------------------
+-- Adds "Category" as a fourth condition field for step approvers, alongside
+-- Class/Supplier/Customer (0027) — matches invoice_line_items.category the
+-- same way Class matches invoice_line_items.class. Authored by Araza.
+-- Idempotent — safe to re-run.
+
+alter table approval_workflow_step_conditions
+  drop constraint if exists approval_workflow_step_conditions_field_check;
+alter table approval_workflow_step_conditions
+  add constraint approval_workflow_step_conditions_field_check
+  check (field in ('class', 'customer', 'supplier', 'category'));
+
+create or replace function is_eligible_approver(p_invoice_id uuid, p_user_id uuid)
+returns boolean
+language plpgsql
+security definer
+set search_path = public
+stable
+as $$
+declare
+  v_workflow_id uuid;
+  v_vendor text;
+  v_classes text[];
+  v_categories text[];
+  v_project_ids text[];
+  r_approver record;
+  r_cond record;
+  v_cond_values text[];
+  approver_ok boolean;
+begin
+  select workflow_id, lower(trim(coalesce(vendor_name, '')))
+    into v_workflow_id, v_vendor
+    from invoices where id = p_invoice_id;
+
+  if v_workflow_id is null then
+    return false;
+  end if;
+
+  select coalesce(array_agg(distinct lower(trim(class))) filter (where class is not null and trim(class) <> ''), '{}')
+    into v_classes
+    from invoice_line_items where invoice_id = p_invoice_id;
+
+  select coalesce(array_agg(distinct lower(trim(category))) filter (where category is not null and trim(category) <> ''), '{}')
+    into v_categories
+    from invoice_line_items where invoice_id = p_invoice_id;
+
+  select coalesce(array_agg(distinct project_id::text) filter (where project_id is not null), '{}')
+    into v_project_ids
+    from invoice_line_items where invoice_id = p_invoice_id;
+  if coalesce(array_length(v_project_ids, 1), 0) = 0 then
+    select case when project_id is not null then array[project_id::text] else '{}'::text[] end
+      into v_project_ids
+      from invoices where id = p_invoice_id;
+  end if;
+
+  for r_approver in
+    select sa.id, sa.is_default
+    from approval_workflow_step_approvers sa
+    join approval_workflow_steps s on s.id = sa.step_id
+    where s.workflow_id = v_workflow_id
+      and sa.approver_user_id = p_user_id
+  loop
+    if r_approver.is_default then
+      return true;
+    end if;
+
+    approver_ok := true;
+    for r_cond in
+      select field, operator, match_values
+      from approval_workflow_step_conditions
+      where step_approver_id = r_approver.id
+    loop
+      select array_agg(lower(trim(x))) into v_cond_values from unnest(r_cond.match_values) x;
+      v_cond_values := coalesce(v_cond_values, '{}');
+
+      if r_cond.field = 'supplier' then
+        if r_cond.operator = 'matches' and not (v_vendor = any(v_cond_values)) then
+          approver_ok := false;
+        elsif r_cond.operator = 'not_matches' and (v_vendor = any(v_cond_values)) then
+          approver_ok := false;
+        end if;
+      elsif r_cond.field = 'class' then
+        if r_cond.operator = 'matches' and not (v_classes && v_cond_values) then
+          approver_ok := false;
+        elsif r_cond.operator = 'not_matches' and (v_classes && v_cond_values) then
+          approver_ok := false;
+        end if;
+      elsif r_cond.field = 'category' then
+        if r_cond.operator = 'matches' and not (v_categories && v_cond_values) then
+          approver_ok := false;
+        elsif r_cond.operator = 'not_matches' and (v_categories && v_cond_values) then
+          approver_ok := false;
+        end if;
+      elsif r_cond.field = 'customer' then
+        -- customer values are project ids (uuids as text) — no case
+        -- folding, compare against r_cond.match_values directly.
+        if r_cond.operator = 'matches' and not (v_project_ids && r_cond.match_values) then
+          approver_ok := false;
+        elsif r_cond.operator = 'not_matches' and (v_project_ids && r_cond.match_values) then
+          approver_ok := false;
+        end if;
+      end if;
+
+      exit when approver_ok = false;
+    end loop;
+
+    if approver_ok then
+      return true;
+    end if;
+  end loop;
+
+  return false;
+end;
+$$;
+
+--------------------------------------------------------------------
+-- >>> supabase/migrations/0029_workflow_change_impact.sql
+--------------------------------------------------------------------
+-- Approval Flow: workflow change impact reports.
+--
+-- Unlike ApprovalMax, this app doesn't snapshot a workflow onto a bill
+-- when it enters approval — effectiveApproversForStep()/is_eligible_approver()
+-- are recomputed live from the current workflow definition every time. That
+-- means editing a step's approvers/conditions takes effect on every
+-- in-flight invoice (on_approval/on_hold) at that step IMMEDIATELY, with no
+-- "restart the workflow" step to skip or forget — but also with no warning
+-- if the edit strands a bill (its previously-eligible approver no longer
+-- matches, and there's no default approver to fall back to).
+--
+-- Rather than gate saves behind a restart-style prompt, we report the
+-- blast radius right after a save: src/app/workflows/page.tsx computes
+-- which in-flight invoices at the edited step had their required-approver
+-- set change (before vs. after the edit) and, if any did, writes one row
+-- here. The Workflows page shows the most recent undismissed row as a
+-- banner listing exactly which invoices were affected.
+--
+-- Authored by Araza. Idempotent — safe to re-run.
+
+create table if not exists workflow_change_impacts (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references organizations(id) on delete cascade,
+  workflow_id uuid not null references approval_workflows(id) on delete cascade,
+  step_id uuid references approval_workflow_steps(id) on delete set null,
+  actor_id uuid references profiles(id) on delete set null,
+  summary text not null,
+  -- Array of { invoice_id, invoice_label, before: string[] (approver
+  -- names), after: string[] } — resolved to display names at write time
+  -- since the affected invoices/approvers can themselves change later.
+  affected jsonb not null default '[]',
+  created_at timestamptz not null default now(),
+  dismissed_at timestamptz
+);
+
+create index if not exists workflow_change_impacts_org_idx
+  on workflow_change_impacts (organization_id, dismissed_at, created_at desc);
+
+alter table workflow_change_impacts enable row level security;
+
+drop policy if exists "workflow_change_impacts: admins manage" on workflow_change_impacts;
+create policy "workflow_change_impacts: admins manage" on workflow_change_impacts
+  for all
+  using (is_org_admin(organization_id))
+  with check (is_org_admin(organization_id));
+
+--------------------------------------------------------------------
+-- >>> supabase/migrations/0030_auditor_cannot_create_invoices.sql
+--------------------------------------------------------------------
+-- Approval Flow: close a real read-only gap for the auditor role.
+--
+-- Every other write path (invoices UPDATE, line items, comments, documents,
+-- decisions, projects, workflows) was already gated with
+-- `and not is_org_auditor(organization_id)` back in migration 0014 — except
+-- this one. "invoices: members can insert" (0001) only ever checked
+-- is_org_member(), which is true for admin/auditor/user alike, so an
+-- auditor could create a brand new invoice via manual upload
+-- (POST /api/invoices/upload, which runs on the signed-in user's own RLS-
+-- bound session, not a service-role client) despite the role being
+-- documented everywhere else as fully read-only. Confirmed live: logged in
+-- as an auditor, "+ Add invoice" was reachable and worked.
+--
+-- Authored by Araza. Idempotent — safe to re-run.
+
+drop policy if exists "invoices: members can insert" on invoices;
+create policy "invoices: members can insert" on invoices
+  for insert with check (
+    is_org_member(organization_id) and not is_org_auditor(organization_id)
+  );
+
+-- Same gap, lower stakes: these two are only ever hit today as a side
+-- effect of an already-gated primary action (audit_log after a decision,
+-- notifications after a comment), so an auditor can't actually reach them
+-- through the app's own UI — but closing them anyway keeps "read-only"
+-- true at the RLS layer itself, not just "true for the paths we thought
+-- to check."
+drop policy if exists "audit_log: members can insert" on audit_log;
+create policy "audit_log: members can insert" on audit_log
+  for insert with check (
+    is_org_member(organization_id) and not is_org_auditor(organization_id)
+  );
+
+drop policy if exists "notifications: members can insert" on notifications;
+create policy "notifications: members can insert" on notifications
+  for insert with check (
+    is_org_member(organization_id) and not is_org_auditor(organization_id)
+  );
+
+--------------------------------------------------------------------
+-- >>> supabase/migrations/0031_normalize_vendor_matching.sql
+--------------------------------------------------------------------
+-- Approval Flow: stronger vendor normalization for supplier matching and
+-- duplicate detection.
+--
+-- Previously vendor_name_normalized was lower(trim(vendor_name)), which
+-- treats "ONYX•FIRE PROTECTION SERVICES INC." and "ONYX FIRE PROTECTION
+-- SERVICES INC." as DIFFERENT vendors — so a duplicate invoice (same
+-- number, same amount, vendor differing only by a bullet/space) was not
+-- flagged, and a supplier rule saved for one spelling didn't match the
+-- other. The app-side duplicate key + supplier lookups now use the same
+-- normalization (src/lib/matching.ts: lowercase, collapse any run of
+-- non-alphanumerics to a single space, trim).
+--
+-- This migration rewrites the generated column to the matching expression
+-- and, before that, dedupes any supplier_defaults rows that collide under
+-- the new key (keeps the oldest).
+--
+-- NOTE: Postgres has no "ALTER COLUMN ... ADD GENERATED AS (...)" — a
+-- generated column's expression can only be set at CREATE/ADD COLUMN, so
+-- the column is dropped and re-created (its unique constraint goes with it
+-- and is re-added). The guard checks the live expression first, so
+-- re-running is a no-op once the strong expression is in place.
+--
+-- Authored by Araza. Idempotent — safe to re-run.
+
+-- Dedupe rows that collide under the new normalization (keep the oldest).
+delete from supplier_defaults a
+using supplier_defaults b
+where a.organization_id = b.organization_id
+  and a.id > b.id
+  and regexp_replace(lower(trim(a.vendor_name)), '[^a-z0-9]+', ' ', 'g')
+    = regexp_replace(lower(trim(b.vendor_name)), '[^a-z0-9]+', ' ', 'g');
+
+-- Rebuild the generated column with the stronger expression, unless it is
+-- already the strong one.
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_attrdef d
+    join pg_attribute a on a.attrelid = d.adrelid and a.attnum = d.adnum
+    where a.attrelid = 'supplier_defaults'::regclass
+      and a.attname = 'vendor_name_normalized'
+      and pg_get_expr(d.adbin, d.adrelid) like '%regexp_replace%'
+  ) then
+    alter table supplier_defaults drop column vendor_name_normalized;
+    alter table supplier_defaults add column vendor_name_normalized text
+      generated always as (
+        regexp_replace(lower(trim(vendor_name)), '[^a-z0-9]+', ' ', 'g')
+      ) stored;
+    alter table supplier_defaults
+      add constraint supplier_defaults_org_vendor_name_unique
+      unique (organization_id, vendor_name_normalized);
+  end if;
+end $$;
+
+--------------------------------------------------------------------
+-- >>> supabase/migrations/0032_qbo.sql
+--------------------------------------------------------------------
+-- Approval Flow: QuickBooks Online integration.
+--
+-- qbo_connections stores the org's OAuth tokens (access + refresh) plus
+-- the QBO realm (company) id. RLS: admins only — these are full API
+-- credentials, never visible to users/auditors.
+--
+-- Invoices track their QBO sync state: qbo_bill_id (the created bill),
+-- qbo_sync_status (pending/synced/error), qbo_synced_at, qbo_error.
+--
+-- Authored by Araza. Idempotent — safe to re-run.
+
+create table if not exists qbo_connections (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null unique references organizations(id) on delete cascade,
+  realm_id text not null,
+  access_token text not null,
+  refresh_token text not null,
+  expires_at timestamptz not null,
+  company_name text,
+  connected_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table qbo_connections enable row level security;
+
+drop policy if exists "qbo_connections: admins only" on qbo_connections;
+create policy "qbo_connections: admins only" on qbo_connections
+  for all
+  using (is_org_admin(organization_id))
+  with check (is_org_admin(organization_id));
+
+alter table invoices add column if not exists qbo_bill_id text;
+alter table invoices add column if not exists qbo_sync_status text
+  check (qbo_sync_status in ('pending', 'synced', 'error'));
+alter table invoices add column if not exists qbo_synced_at timestamptz;
+alter table invoices add column if not exists qbo_error text;
+
