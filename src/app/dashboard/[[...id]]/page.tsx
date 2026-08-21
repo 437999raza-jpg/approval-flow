@@ -18,6 +18,7 @@ import { DetailSplit, type DocumentRef } from "@/components/DetailSplit";
 import { Sidebar } from "@/components/Sidebar";
 import { DocumentSearchModal, type DocumentSearchFilters } from "@/components/DocumentSearchModal";
 import { InlineSelectSave } from "@/components/InlineSelectSave";
+import { ConfirmSubmitButton } from "@/components/ConfirmSubmitButton";
 import type { SupplierDefaultsValues } from "@/components/SupplierRulesModal";
 import type { MultiSelectOption } from "@/components/MultiSelect";
 import type { Database, InvoiceStatus } from "@/lib/supabase/types";
@@ -27,6 +28,7 @@ import {
 } from "@/lib/extract-invoice";
 import { selectWorkflowForInvoice } from "@/lib/workflow-routing";
 import { computeLineItemTotals } from "@/lib/invoice-totals";
+import { buildAuditTimeline } from "@/lib/audit-timeline";
 
 type Invoice = Database["public"]["Tables"]["invoices"]["Row"];
 
@@ -80,7 +82,15 @@ async function decide(
   if (!user) redirect("/login");
 
   const instructions = String(formData.get("instructions") ?? "").trim();
+  let instructionsChanged = false;
   if (instructions) {
+    const { data: beforeDecide } = await supabase
+      .from("invoices")
+      .select("accounting_instructions")
+      .eq("id", invoiceId)
+      .single();
+    instructionsChanged =
+      (beforeDecide?.accounting_instructions ?? "") !== instructions;
     await supabase
       .from("invoices")
       .update({
@@ -177,6 +187,16 @@ async function decide(
     })
     .eq("id", invoiceId);
 
+  if (instructionsChanged) {
+    await supabase.from("audit_log").insert({
+      organization_id: invoice.organization_id,
+      invoice_id: invoiceId,
+      actor_id: user.id,
+      action: "invoice.accounting_instructions_edited",
+      metadata: { instructions },
+    });
+  }
+
   await supabase.from("audit_log").insert({
     organization_id: invoice.organization_id,
     invoice_id: invoiceId,
@@ -249,6 +269,14 @@ async function addDocument(invoiceId: string, formData: FormData) {
     uploaded_by: user.id,
   });
 
+  await supabase.from("audit_log").insert({
+    organization_id: invoice.organization_id,
+    invoice_id: invoiceId,
+    actor_id: user.id,
+    action: "invoice.document_added",
+    metadata: { file_name: file.name },
+  });
+
   revalidatePath("/dashboard", "layout");
 }
 
@@ -269,6 +297,13 @@ async function saveAccountingInstructions(
 
   const instructions = String(formData.get("instructions") ?? "").trim();
 
+  const { data: before } = await supabase
+    .from("invoices")
+    .select("organization_id, accounting_instructions")
+    .eq("id", invoiceId)
+    .single();
+  if (!before) return;
+
   await supabase
     .from("invoices")
     .update({
@@ -276,6 +311,16 @@ async function saveAccountingInstructions(
       updated_at: new Date().toISOString(),
     })
     .eq("id", invoiceId);
+
+  if ((before.accounting_instructions ?? "") !== instructions) {
+    await supabase.from("audit_log").insert({
+      organization_id: before.organization_id,
+      invoice_id: invoiceId,
+      actor_id: user.id,
+      action: "invoice.accounting_instructions_edited",
+      metadata: { instructions },
+    });
+  }
 
   revalidatePath("/dashboard", "layout");
 }
@@ -320,7 +365,18 @@ async function recomputeInvoiceTotals(
     .eq("id", invoiceId);
 }
 
+const BILL_FIELD_LABELS: Record<string, string> = {
+  vendor_name: "Vendor name",
+  source_email: "Email",
+  invoice_number: "Bill number",
+  bill_date: "Bill date",
+  due_date: "Due date",
+  currency: "Currency",
+};
+
 // Persist the editable bill fields (also fired by Enter in the form).
+// Diffs against the current row first so the audit log only records
+// fields that actually changed, not every autosave-on-blur no-op.
 async function saveBill(invoiceId: string, formData: FormData) {
   "use server";
 
@@ -330,13 +386,38 @@ async function saveBill(invoiceId: string, formData: FormData) {
   } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
+  const { data: before } = await supabase
+    .from("invoices")
+    .select("organization_id, vendor_name, source_email, invoice_number, bill_date, due_date, currency")
+    .eq("id", invoiceId)
+    .single();
+  if (!before) return;
+
+  const next = parseBillForm(formData) as Record<string, string | null>;
+  const changes: Record<string, { from: unknown; to: unknown }> = {};
+  for (const key of Object.keys(BILL_FIELD_LABELS)) {
+    const from = (before as Record<string, unknown>)[key] ?? null;
+    const to = next[key] ?? null;
+    if (from !== to) changes[key] = { from, to };
+  }
+
   await supabase
     .from("invoices")
     .update({
-      ...parseBillForm(formData),
+      ...next,
       updated_at: new Date().toISOString(),
     })
     .eq("id", invoiceId);
+
+  if (Object.keys(changes).length > 0) {
+    await supabase.from("audit_log").insert({
+      organization_id: before.organization_id,
+      invoice_id: invoiceId,
+      actor_id: user.id,
+      action: "invoice.bill_fields_edited",
+      metadata: { changes },
+    });
+  }
 
   revalidatePath("/dashboard", "layout");
 }
@@ -675,6 +756,60 @@ async function cancelInvoice(invoiceId: string) {
   revalidatePath("/dashboard", "layout");
 }
 
+// Admin-only: permanently delete an invoice — the record, its line items,
+// documents, comments, and approvals (all cascade, see migration 0001/
+// 0003/0005), and its files in Storage. Unlike Cancel (a reversible status
+// change anyone who submitted it can also do), this is destructive and
+// irreversible, so it's gated to admins and requires a client-side confirm
+// (ConfirmSubmitButton). The audit_log row logging the deletion is written
+// BEFORE the delete and survives it (invoice_id becomes null via ON DELETE
+// SET NULL, migration 0022) so the deletion itself stays traceable.
+async function deleteInvoiceAction(invoiceId: string) {
+  "use server";
+
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+  if (!(await canReview(supabase))) return;
+
+  const { data: invoice } = await supabase
+    .from("invoices")
+    .select("id, organization_id, file_path, vendor_name, invoice_number")
+    .eq("id", invoiceId)
+    .single();
+  if (!invoice) return;
+
+  const { data: docs } = await supabase
+    .from("invoice_documents")
+    .select("file_path")
+    .eq("invoice_id", invoiceId);
+  const filePaths = [invoice.file_path, ...(docs ?? []).map((d) => d.file_path)];
+
+  await supabase.from("audit_log").insert({
+    organization_id: invoice.organization_id,
+    invoice_id: invoiceId,
+    actor_id: user.id,
+    action: "invoice.deleted",
+    metadata: {
+      vendor_name: invoice.vendor_name,
+      invoice_number: invoice.invoice_number,
+    },
+  });
+
+  const { error: deleteError } = await supabase
+    .from("invoices")
+    .delete()
+    .eq("id", invoiceId);
+  if (deleteError) throw deleteError;
+
+  await supabase.storage.from("invoices").remove(filePaths);
+
+  revalidatePath("/dashboard", "layout");
+  redirect("/dashboard");
+}
+
 // Admin-only: push this one invoice to a different approver for its current
 // step, without touching the shared approval_workflow_steps template (which
 // would silently reassign every other invoice on that workflow too). Only
@@ -788,6 +923,13 @@ async function saveLineItem(
   } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
+  const { data: invoice } = await supabase
+    .from("invoices")
+    .select("organization_id")
+    .eq("id", invoiceId)
+    .single();
+  if (!invoice) return;
+
   const text = (key: string) =>
     String(formData.get(key) ?? "").trim() || null;
   const num = (key: string) => {
@@ -807,7 +949,8 @@ async function saveLineItem(
     linked: formData.get("linked") === "on",
   };
 
-  if (lineItemId === "new") {
+  const isNew = lineItemId === "new";
+  if (isNew) {
     const { data: last } = await supabase
       .from("invoice_line_items")
       .select("line_order")
@@ -827,6 +970,19 @@ async function saveLineItem(
   }
 
   await recomputeInvoiceTotals(supabase, invoiceId);
+
+  await supabase.from("audit_log").insert({
+    organization_id: invoice.organization_id,
+    invoice_id: invoiceId,
+    actor_id: user.id,
+    action: isNew ? "invoice.line_item_added" : "invoice.line_item_edited",
+    metadata: {
+      description: values.description,
+      category: values.category,
+      amount: values.amount,
+    },
+  });
+
   revalidatePath("/dashboard", "layout");
 }
 
@@ -839,9 +995,35 @@ async function deleteLineItem(invoiceId: string, lineItemId: string) {
   } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
+  const { data: invoice } = await supabase
+    .from("invoices")
+    .select("organization_id")
+    .eq("id", invoiceId)
+    .single();
+  if (!invoice) return;
+
+  const { data: item } = await supabase
+    .from("invoice_line_items")
+    .select("description, category, amount")
+    .eq("id", lineItemId)
+    .single();
+
   await supabase.from("invoice_line_items").delete().eq("id", lineItemId);
 
   await recomputeInvoiceTotals(supabase, invoiceId);
+
+  await supabase.from("audit_log").insert({
+    organization_id: invoice.organization_id,
+    invoice_id: invoiceId,
+    actor_id: user.id,
+    action: "invoice.line_item_deleted",
+    metadata: {
+      description: item?.description ?? null,
+      category: item?.category ?? null,
+      amount: item?.amount ?? null,
+    },
+  });
+
   revalidatePath("/dashboard", "layout");
 }
 
@@ -1321,6 +1503,7 @@ export default async function DashboardPage({
   let commentsForSelected: Database["public"]["Tables"]["invoice_comments"]["Row"][] = [];
   let documentsForSelected: DocumentRef[] = [];
   let lineItemsForSelected: Database["public"]["Tables"]["invoice_line_items"]["Row"][] = [];
+  let auditEntriesForSelected: Database["public"]["Tables"]["audit_log"]["Row"][] = [];
   let authorNameById = new Map<string, string>();
   let supplierDefaultsForSelected: SupplierDefaultsValues = {
     category: "",
@@ -1332,7 +1515,7 @@ export default async function DashboardPage({
   };
 
   if (selected) {
-    const [signed, approvalsRes, commentsRes, docsRes, lineItemsRes] =
+    const [signed, approvalsRes, commentsRes, docsRes, lineItemsRes, auditRes] =
       await Promise.all([
         supabase.storage.from("invoices").createSignedUrl(selected.file_path, 60 * 10),
         supabase.from("invoice_approvals").select("*").eq("invoice_id", selected.id),
@@ -1351,11 +1534,17 @@ export default async function DashboardPage({
           .select("*")
           .eq("invoice_id", selected.id)
           .order("line_order", { ascending: true }),
+        supabase
+          .from("audit_log")
+          .select("*")
+          .eq("invoice_id", selected.id)
+          .order("created_at", { ascending: true }),
       ]);
     signedFileUrl = signed.data?.signedUrl ?? null;
     approvalsForSelected = approvalsRes.data ?? [];
     commentsForSelected = commentsRes.data ?? [];
     lineItemsForSelected = lineItemsRes.data ?? [];
+    auditEntriesForSelected = auditRes.data ?? [];
     stepsForSelected = (allSteps ?? []).filter((s) => s.workflow_id === selected.workflow_id);
 
     if (selected.vendor_name) {
@@ -1429,13 +1618,14 @@ export default async function DashboardPage({
       })),
     ];
 
-    // Resolve comment author names (profiles RLS lets org members read each
-    // other since migration 0002).
+    // Resolve comment/audit-actor names (profiles RLS lets org members read
+    // each other since migration 0002).
     const authorIds = [
       ...new Set(
-        commentsForSelected
-          .map((c) => c.author_id)
-          .filter((id): id is string => !!id)
+        [
+          ...commentsForSelected.map((c) => c.author_id),
+          ...auditEntriesForSelected.map((a) => a.actor_id),
+        ].filter((id): id is string => !!id)
       ),
     ];
     const { data: authors } =
@@ -1449,6 +1639,12 @@ export default async function DashboardPage({
       (authors ?? []).map((a) => [a.id, a.full_name ?? "Team member"])
     );
   }
+
+  const auditTimelineForSelected = buildAuditTimeline({
+    auditEntries: auditEntriesForSelected,
+    comments: commentsForSelected,
+    nameOf: (id) => (id ? authorNameById.get(id) ?? "Team member" : "System"),
+  });
 
   const currentStepApprover = selected ? holderOf(selected) : null;
   // Only the approver assigned to the current step sees the buttons; the
@@ -1906,36 +2102,19 @@ export default async function DashboardPage({
                             action={overrideStatus.bind(null, selected.id)}
                           />
                         </div>
+                        <div className="border-t border-slate-100 pt-2">
+                          <ConfirmSubmitButton
+                            action={deleteInvoiceAction.bind(null, selected.id)}
+                            confirmMessage={`Permanently delete this invoice${
+                              selected.vendor_name ? ` from ${selected.vendor_name}` : ""
+                            }? This removes it, its line items, documents, and discussion — it cannot be undone.`}
+                            className="w-full rounded-md border border-red-200 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50"
+                          >
+                            Delete invoice
+                          </ConfirmSubmitButton>
+                        </div>
                       </div>
                     )}
-                  </CollapsibleSection>
-
-                  <CollapsibleSection title="Extracted fields">
-                    <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
-                      <dt className="text-slate-500">Vendor</dt>
-                      <dd>{selected.vendor_name ?? "—"}</dd>
-                      <dt className="text-slate-500">Invoice #</dt>
-                      <dd>{selected.invoice_number ?? "—"}</dd>
-                      <dt className="text-slate-500">Amount</dt>
-                      <dd>
-                        {selected.amount != null
-                          ? selected.amount.toLocaleString(undefined, {
-                              style: "currency",
-                              currency: selected.currency,
-                            })
-                          : "—"}
-                      </dd>
-                      <dt className="text-slate-500">Currency</dt>
-                      <dd>{selected.currency}</dd>
-                      {selected.due_date && (
-                        <>
-                          <dt className="text-slate-500">Due date</dt>
-                          <dd>
-                            {new Date(selected.due_date).toLocaleDateString()}
-                          </dd>
-                        </>
-                      )}
-                    </dl>
                   </CollapsibleSection>
 
                   <CollapsibleSection title="Instructions for accounting">
@@ -2037,19 +2216,54 @@ export default async function DashboardPage({
                       </dd>
                       <dt className="text-slate-500">Received</dt>
                       <dd>{new Date(selected.created_at).toLocaleString()}</dd>
-                      <dt className="text-slate-500">Audit trail</dt>
-                      <dd>
-                        <a
-                          href={`/api/invoices/${selected.id}/audit-trail`}
-                          className="text-blue-600 hover:underline"
-                        >
-                          Download
-                        </a>
-                        <span className="ml-1 text-xs text-slate-400">
-                          (approvals + chat)
-                        </span>
-                      </dd>
                     </dl>
+                  </CollapsibleSection>
+
+                  <CollapsibleSection
+                    title="Audit trail"
+                    badge={auditTimelineForSelected.length}
+                    defaultOpen={false}
+                  >
+                    <div className="mt-3 flex items-center justify-between gap-2">
+                      <p className="text-xs text-slate-400">
+                        Everything that happened on this invoice, in order.
+                      </p>
+                      <a
+                        href={`/api/invoices/${selected.id}/audit-trail`}
+                        className="flex-none text-xs font-medium text-blue-600 hover:underline"
+                      >
+                        Download PDF
+                      </a>
+                    </div>
+                    {auditTimelineForSelected.length === 0 ? (
+                      <p className="mt-3 text-sm text-slate-400">
+                        No activity recorded yet.
+                      </p>
+                    ) : (
+                      <ol className="mt-3 space-y-3">
+                        {auditTimelineForSelected.map((entry) => (
+                          <li
+                            key={entry.id}
+                            className="border-l-2 border-slate-200 pl-3"
+                          >
+                            <div className="flex items-baseline justify-between gap-2">
+                              <p className="text-sm text-slate-700">
+                                <span className="font-medium">{entry.actorName}</span>{" "}
+                                {entry.kind === "comment" ? "commented" : entry.summary}
+                              </p>
+                              <span className="flex-none text-[11px] text-slate-400">
+                                {new Date(entry.at).toLocaleString()}
+                              </span>
+                            </div>
+                            {entry.detail && (
+                              <p className="mt-0.5 text-xs text-slate-500">
+                                {entry.detail}
+                              </p>
+                            )}
+                          </li>
+                        ))}
+                      </ol>
+                    )}
                   </CollapsibleSection>
               </DetailSplit>
             )}

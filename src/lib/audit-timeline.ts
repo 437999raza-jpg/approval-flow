@@ -1,0 +1,160 @@
+// Turns the raw audit_log rows + discussion comments for one invoice into
+// a single, human-readable, chronological timeline — "everything that
+// happened on this invoice" in one story instead of separate disjoint
+// sections. Shared by the in-app Audit trail view and the downloadable
+// PDF (src/lib/audit-trail.ts) so the two never drift apart.
+// Authored by Araza.
+
+export interface AuditTimelineEntry {
+  id: string;
+  at: string; // ISO timestamp
+  kind: "event" | "comment";
+  actorName: string;
+  summary: string;
+  detail?: string;
+}
+
+interface RawAuditRow {
+  id: string;
+  created_at: string;
+  action: string;
+  actor_id: string | null;
+  metadata: unknown;
+}
+
+interface RawComment {
+  id: string;
+  created_at: string;
+  author_id: string | null;
+  body: string;
+}
+
+function meta(m: unknown): Record<string, unknown> {
+  return m && typeof m === "object" ? (m as Record<string, unknown>) : {};
+}
+
+const FIELD_LABELS: Record<string, string> = {
+  vendor_name: "Vendor name",
+  source_email: "Email",
+  invoice_number: "Bill number",
+  bill_date: "Bill date",
+  due_date: "Due date",
+  currency: "Currency",
+};
+
+function describeBillFieldChanges(m: Record<string, unknown>): string | undefined {
+  const changes = m.changes;
+  if (!changes || typeof changes !== "object") return undefined;
+  const parts: string[] = [];
+  for (const [key, value] of Object.entries(changes as Record<string, unknown>)) {
+    if (!value || typeof value !== "object") continue;
+    const { from, to } = value as { from: unknown; to: unknown };
+    const label = FIELD_LABELS[key] ?? key;
+    parts.push(`${label}: "${from ?? "—"}" → "${to ?? "—"}"`);
+  }
+  return parts.length > 0 ? parts.join("; ") : undefined;
+}
+
+// action -> (metadata) => { summary, detail? }
+const ACTION_DESCRIBERS: Record<
+  string,
+  (m: Record<string, unknown>) => { summary: string; detail?: string }
+> = {
+  "invoice.uploaded": () => ({ summary: "Invoice uploaded" }),
+  "invoice.received_by_email": (m) => ({
+    summary: "Invoice received by email",
+    detail: typeof m.source_email === "string" ? `From ${m.source_email}` : undefined,
+  }),
+  "invoice.review_done": () => ({ summary: "Review completed — sent into the approval workflow" }),
+  "invoice.held": () => ({ summary: "Put on hold" }),
+  "invoice.back_to_review": () => ({ summary: "Sent back to review" }),
+  "invoice.cancelled": () => ({ summary: "Cancelled" }),
+  "invoice.deleted": (m) => ({
+    summary: "Invoice deleted",
+    detail:
+      m.vendor_name || m.invoice_number
+        ? `${m.vendor_name ?? "—"}${m.invoice_number ? ` #${m.invoice_number}` : ""}`
+        : undefined,
+  }),
+  "invoice.reassigned": () => ({ summary: "Reassigned to a different approver" }),
+  "invoice.admin_override_status": (m) => ({
+    summary: "Status manually overridden",
+    detail: m.from && m.to ? `${m.from} → ${m.to}` : undefined,
+  }),
+  "invoice.re_extracted": () => ({ summary: "Document fields re-extracted" }),
+  "invoice.approved": () => ({ summary: "Approved" }),
+  "invoice.rejected": () => ({ summary: "Rejected" }),
+  "invoice.bill_fields_edited": (m) => ({
+    summary: "Bill fields edited",
+    detail: describeBillFieldChanges(m),
+  }),
+  "invoice.document_added": (m) => ({
+    summary: "Document attached",
+    detail: typeof m.file_name === "string" ? m.file_name : undefined,
+  }),
+  "invoice.accounting_instructions_edited": (m) => ({
+    summary: "Instructions for accounting updated",
+    detail: typeof m.instructions === "string" && m.instructions ? `"${m.instructions}"` : "Cleared",
+  }),
+  "invoice.line_item_added": (m) => ({
+    summary: "Line item added",
+    detail: typeof m.description === "string" && m.description ? m.description : undefined,
+  }),
+  "invoice.line_item_edited": (m) => ({
+    summary: "Line item edited",
+    detail: typeof m.description === "string" && m.description ? m.description : undefined,
+  }),
+  "invoice.line_item_deleted": (m) => ({
+    summary: "Line item removed",
+    detail: typeof m.description === "string" && m.description ? m.description : undefined,
+  }),
+  "supplier_defaults.saved": (m) => ({
+    summary: "Supplier rule saved",
+    detail: typeof m.vendor_name === "string" ? `For ${m.vendor_name}` : undefined,
+  }),
+};
+
+function describeAction(action: string, metadata: unknown): { summary: string; detail?: string } {
+  const m = meta(metadata);
+  const describer = ACTION_DESCRIBERS[action];
+  if (describer) return describer(m);
+  // Fallback for any action not in the map above: turn "invoice.foo_bar"
+  // into "Foo bar" rather than silently dropping it from the trail.
+  const readable = action.replace(/^invoice\./, "").replace(/_/g, " ");
+  return { summary: readable.charAt(0).toUpperCase() + readable.slice(1) };
+}
+
+export function buildAuditTimeline({
+  auditEntries,
+  comments,
+  nameOf,
+}: {
+  auditEntries: RawAuditRow[];
+  comments: RawComment[];
+  nameOf: (id: string | null) => string;
+}): AuditTimelineEntry[] {
+  const events: AuditTimelineEntry[] = auditEntries.map((entry) => {
+    const { summary, detail } = describeAction(entry.action, entry.metadata);
+    return {
+      id: entry.id,
+      at: entry.created_at,
+      kind: "event",
+      actorName: nameOf(entry.actor_id),
+      summary,
+      detail,
+    };
+  });
+
+  const commentEntries: AuditTimelineEntry[] = comments.map((c) => ({
+    id: c.id,
+    at: c.created_at,
+    kind: "comment",
+    actorName: nameOf(c.author_id),
+    summary: "Commented",
+    detail: c.body,
+  }));
+
+  return [...events, ...commentEntries].sort(
+    (a, b) => new Date(a.at).getTime() - new Date(b.at).getTime()
+  );
+}
