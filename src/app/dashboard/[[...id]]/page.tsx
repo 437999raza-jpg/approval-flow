@@ -1018,6 +1018,27 @@ export default async function DashboardPage({
   const workflowIds = (workflows ?? []).map((w) => w.id);
   const invoiceIds = (invoices ?? []).map((i) => i.id);
 
+  // Duplicate detection, org-wide: same (normalized vendor name, invoice
+  // number), excluding cancelled/rejected invoices from the pool. Reused
+  // for both the per-invoice "Possible duplicate" banner below and for
+  // pinning/badging duplicate pairs in the list pane.
+  const duplicateGroupKey = (i: Invoice): string | null =>
+    i.invoice_number && i.vendor_name
+      ? `${i.vendor_name.trim().toLowerCase()}::${i.invoice_number.trim().toLowerCase()}`
+      : null;
+  const duplicateGroups = new Map<string, Invoice[]>();
+  for (const inv of invoices ?? []) {
+    if (inv.status === "cancelled" || inv.status === "rejected") continue;
+    const key = duplicateGroupKey(inv);
+    if (!key) continue;
+    if (!duplicateGroups.has(key)) duplicateGroups.set(key, []);
+    duplicateGroups.get(key)!.push(inv);
+  }
+  const duplicateInvoiceIds = new Set<string>();
+  for (const group of duplicateGroups.values()) {
+    if (group.length > 1) group.forEach((inv) => duplicateInvoiceIds.add(inv.id));
+  }
+
   const [{ data: allSteps }, { data: memberRows }, { data: approvedRows }, { data: lineItemClassRows }] =
     await Promise.all([
       workflowIds.length > 0
@@ -1233,6 +1254,30 @@ export default async function DashboardPage({
 
   const selected = selectedId ? filtered.find((i) => i.id === selectedId) : filtered[0];
   if (selectedId && !selected) notFound();
+
+  // List display only: pin duplicate pairs/groups together at the very
+  // top, newest group first — grouped by their duplicate key (not just
+  // individually bubbled up), so a resubmission surfaces right next to
+  // the invoice it duplicates instead of getting lost further down.
+  // `filtered` (created_at DESC) stays the source of truth for default
+  // selection and every other computation — this only reshapes the list
+  // pane's render order.
+  const pinnedGroupsMap = new Map<string, Invoice[]>();
+  const unpinnedInDisplayOrder: Invoice[] = [];
+  for (const inv of filtered) {
+    if (!duplicateInvoiceIds.has(inv.id)) {
+      unpinnedInDisplayOrder.push(inv);
+      continue;
+    }
+    const key = duplicateGroupKey(inv)!;
+    if (!pinnedGroupsMap.has(key)) pinnedGroupsMap.set(key, []);
+    pinnedGroupsMap.get(key)!.push(inv);
+  }
+  // `filtered` is already created_at DESC, so within each group (and
+  // across groups, by each group's first/newest member) that order is
+  // preserved — no extra sort needed.
+  const pinnedDuplicates = [...pinnedGroupsMap.values()].flat();
+  const filteredForDisplay = [...pinnedDuplicates, ...unpinnedInDisplayOrder];
 
   // Possible duplicate: same supplier + invoice number already exists and
   // isn't cancelled/rejected. Computed live (not stored) so it never goes
@@ -1561,43 +1606,76 @@ export default async function DashboardPage({
         <div className="flex min-h-0 flex-1">
           {/* List pane (collapsible) */}
           <CollapsiblePane title="Invoices">
-            {filtered.length === 0 ? (
+            {filteredForDisplay.length === 0 ? (
               <div className="p-8 text-center text-sm text-slate-500">
                 No invoices in this view.
               </div>
             ) : (
-              filtered.map((invoice) => (
-                <Link
-                  key={invoice.id}
-                  href={`/dashboard/${invoice.id}${qs}`}
-                  className={clsx(
-                    "block border-b border-slate-100 px-4 py-3",
-                    selected?.id === invoice.id ? "bg-blue-50" : "hover:bg-slate-50"
+              filteredForDisplay.map((invoice, i) => (
+                <div key={invoice.id}>
+                  {i === 0 && pinnedDuplicates.length > 0 && (
+                    <div className="flex items-center gap-1.5 border-b border-orange-200 bg-orange-50 px-4 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-orange-800">
+                      <svg
+                        width="11"
+                        height="11"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2.5"
+                      >
+                        <path
+                          d="M12 9v4m0 4h.01M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L14.71 3.86a2 2 0 0 0-3.42 0Z"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                      Possible duplicates
+                    </div>
                   )}
-                >
-                  <div className="truncate text-sm font-medium">
-                    {invoice.vendor_name ?? invoice.file_name}
-                  </div>
-                  <div className="mt-1 flex items-center justify-between">
-                    <span className="text-xs text-slate-500">
-                      {invoice.amount != null
-                        ? invoice.amount.toLocaleString(undefined, {
-                            style: "currency",
-                            currency: invoice.currency,
-                          })
-                        : "No amount extracted"}
-                    </span>
-                    <InvoiceStatusBadge status={invoice.status} />
-                  </div>
-                  {(() => {
-                    const holderId = holderOf(invoice);
-                    return holderId ? (
-                      <div className="mt-1 text-xs text-slate-400">
-                        With {memberNameById.get(holderId) ?? "Team member"}
+                  {i === pinnedDuplicates.length && pinnedDuplicates.length > 0 && (
+                    <div className="border-b border-slate-200 bg-slate-50 px-4 py-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                      All invoices
+                    </div>
+                  )}
+                  <Link
+                    href={`/dashboard/${invoice.id}${qs}`}
+                    className={clsx(
+                      "block border-b border-slate-100 px-4 py-3",
+                      duplicateInvoiceIds.has(invoice.id) && "border-l-2 border-l-orange-300",
+                      selected?.id === invoice.id ? "bg-blue-50" : "hover:bg-slate-50"
+                    )}
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <div className="min-w-0 flex-1 truncate text-sm font-medium">
+                        {invoice.vendor_name ?? invoice.file_name}
                       </div>
-                    ) : null;
-                  })()}
-                </Link>
+                      {duplicateInvoiceIds.has(invoice.id) && (
+                        <span className="inline-flex flex-none items-center rounded-full bg-orange-100 px-2 py-0.5 text-[10px] font-medium text-orange-800">
+                          Duplicate
+                        </span>
+                      )}
+                    </div>
+                    <div className="mt-1 flex items-center justify-between">
+                      <span className="text-xs text-slate-500">
+                        {invoice.amount != null
+                          ? invoice.amount.toLocaleString(undefined, {
+                              style: "currency",
+                              currency: invoice.currency,
+                            })
+                          : "No amount extracted"}
+                      </span>
+                      <InvoiceStatusBadge status={invoice.status} />
+                    </div>
+                    {(() => {
+                      const holderId = holderOf(invoice);
+                      return holderId ? (
+                        <div className="mt-1 text-xs text-slate-400">
+                          With {memberNameById.get(holderId) ?? "Team member"}
+                        </div>
+                      ) : null;
+                    })()}
+                  </Link>
+                </div>
               ))
             )}
           </CollapsiblePane>
