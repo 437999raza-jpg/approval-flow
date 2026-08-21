@@ -1,4 +1,4 @@
--- Approval Flow: COMPLETE schema bundle (0001-0037), for a FRESH production
+-- Approval Flow: COMPLETE schema bundle (0001-0038), for a FRESH production
 -- Supabase project only. Do NOT run on an existing database.
 -- Generated 2026-08-21. Paste into the SQL editor and run once.
 
@@ -2303,3 +2303,13 @@ create policy "qbo_suppliers: org members read" on qbo_suppliers
 drop policy if exists "qbo_suppliers: admins manage" on qbo_suppliers;
 create policy "qbo_suppliers: admins manage" on qbo_suppliers
   for all using (is_org_admin(organization_id)) with check (is_org_admin(organization_id));
+
+--------------------------------------------------------------------
+-- >>> supabase/migrations/0038_qbo_category_acct_num.sql
+--------------------------------------------------------------------
+-- 0038: store the QBO account number on categories so they display and
+-- resolve as "5-15450 - HVAC" (AcctNum + name), and sync back to QBO by
+-- account number. Read-only mirror — nothing is ever written to QBO.
+-- Run via `supabase db push` or paste into the Supabase SQL editor.
+
+alter table qbo_categories add column if not exists acct_num text;

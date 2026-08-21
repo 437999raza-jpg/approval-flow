@@ -287,7 +287,7 @@ export default async function SettingsPage({
   // Categories pulled from QBO (read-only mirror; any org member can view).
   const { data: qboCategories } = await supabase
     .from("qbo_categories")
-    .select("id, name, account_type, account_sub_type, active, synced_at")
+    .select("id, name, acct_num, account_type, account_sub_type, active, synced_at")
     .eq("organization_id", org.id)
     .order("name", { ascending: true })
     .limit(200);
@@ -729,11 +729,11 @@ export default async function SettingsPage({
                   )}
                 </div>
 
-                {/* Categories (Chart of Accounts) — Divisions 5 & 6 */}
+                {/* Categories (Chart of Accounts) — numbers 2, 5, 6 */}
                 <div className="mt-3 border-t border-slate-100 pt-3">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="text-sm font-semibold text-slate-800">
-                      Categories (Divisions 5 &amp; 6)
+                      Categories (2- 5- 6-)
                     </span>
                     {isAdmin && (
                       <form action={syncQboCategories}>
@@ -751,7 +751,7 @@ export default async function SettingsPage({
                           className="flex flex-wrap items-center gap-2 py-1.5 text-sm"
                         >
                           <span className="min-w-0 flex-1 truncate font-medium text-slate-800">
-                            {c.name}
+                            {c.acct_num ? `${c.acct_num} - ${c.name}` : c.name}
                           </span>
                           <span className="text-xs text-slate-400">
                             {c.account_type ?? "—"}

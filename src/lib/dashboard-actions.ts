@@ -1349,9 +1349,10 @@ export async function syncQboCategories() {
 
   let categories: Awaited<ReturnType<typeof listCategories>> = [];
   try {
-    // Bill categories only: Division 5 & 6 (AcctNum starting with 5 or 6).
+    // Bill categories: account numbers starting with 2, 5, or 6 (payables,
+    // materials/COGS, expenses — the numbered chart of accounts).
     categories = await listCategories(conn, 500, {
-      acctNumPrefixes: ["5", "6"],
+      acctNumPrefixes: ["2", "5", "6"],
     });
     if (categories.length > 0) {
       const { error } = await supabase.from("qbo_categories").upsert(
@@ -1359,6 +1360,7 @@ export async function syncQboCategories() {
           organization_id: org.id,
           qbo_account_id: c.qboAccountId,
           name: c.name,
+          acct_num: c.acctNum,
           account_type: c.accountType,
           account_sub_type: c.accountSubType,
           active: c.active,
@@ -1510,7 +1512,7 @@ export async function refreshQboData() {
     const [rates, classes, categories, suppliers, projects] = await Promise.all([
       listTaxRates(conn),
       listClasses(conn),
-      listCategories(conn, 500, { acctNumPrefixes: ["5", "6"] }),
+      listCategories(conn, 500, { acctNumPrefixes: ["2", "5", "6"] }),
       listSuppliers(conn),
       listProjects(conn),
     ]);
@@ -1565,6 +1567,7 @@ export async function refreshQboData() {
           organization_id: org.id,
           qbo_account_id: c.qboAccountId,
           name: c.name,
+          acct_num: c.acctNum,
           account_type: c.accountType,
           account_sub_type: c.accountSubType,
           active: c.active,

@@ -180,7 +180,7 @@ export default async function DashboardPage({
       .order("name", { ascending: true }),
     supabase
       .from("qbo_categories")
-      .select("name")
+      .select("name, acct_num")
       .eq("organization_id", org.id)
       .eq("active", true)
       .order("name", { ascending: true }),
@@ -312,8 +312,14 @@ export default async function DashboardPage({
   }));
 
   // QBO mirrors for the Bill panel dropdowns (read-only — never written to QBO).
+  // Categories show as "5-15450 - HVAC" (account number + name), so typing
+  // "hvac" surfaces the full numbered category, like QBO.
   const qboCategoryNames: string[] = [
-    ...new Set((qboCategoryRows ?? []).map((c) => c.name)),
+    ...new Set(
+      (qboCategoryRows ?? []).map((c) =>
+        c.acct_num ? `${c.acct_num} - ${c.name}` : c.name
+      )
+    ),
   ].sort((a, b) => a.localeCompare(b));
   const qboSupplierNames: string[] = [
     ...new Set((qboSupplierRows ?? []).map((s) => s.name)),

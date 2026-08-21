@@ -394,6 +394,7 @@ export interface Database {
           organization_id: string;
           qbo_account_id: string;
           name: string;
+          acct_num: string | null;
           account_type: string | null;
           account_sub_type: string | null;
           active: boolean;

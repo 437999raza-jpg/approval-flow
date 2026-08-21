@@ -319,6 +319,7 @@ const TAX_NAME_PATTERN =
 export interface QboCategory {
   qboAccountId: string;
   name: string;
+  acctNum: string | null;
   accountType: string | null;
   accountSubType: string | null;
   active: boolean;
@@ -359,14 +360,11 @@ export async function listCategories(
     accounts = accounts.filter((a) => TAX_NAME_PATTERN.test(a.Name ?? ""));
   }
   if (acctNumPrefixes && acctNumPrefixes.length > 0) {
-    // Division 5/6 = Cost of Goods Sold + Expense (the bill categories).
-    // Drop balance-sheet strays like A/P that happen to have a matching
-    // account number prefix.
+    // Categories are the numbered chart of accounts: keep every account
+    // whose AcctNum starts with one of the requested prefixes (2-, 5-, 6-).
     accounts = accounts.filter((a) => {
       const num = (a.AcctNum ?? "").trim();
-      if (!acctNumPrefixes.some((p) => num.startsWith(p))) return false;
-      const type = a.AccountType ?? "";
-      return type === "Cost of Goods Sold" || type === "Expense";
+      return acctNumPrefixes.some((p) => num.startsWith(p));
     });
   }
   return accounts
@@ -374,10 +372,21 @@ export async function listCategories(
     .map((a) => ({
       qboAccountId: a.Id,
       name: a.Name ?? "",
+      acctNum: a.AcctNum ?? null,
       accountType: a.AccountType ?? null,
       accountSubType: a.AccountSubType ?? null,
       active: a.Active ?? true,
     }));
+}
+
+// Display name for a category: "5-15450 - HVAC" (AcctNum + name). Falls
+// back to the bare name when there's no account number.
+export function categoryDisplayName(c: {
+  acctNum?: string | null;
+  name: string;
+}): string {
+  const num = (c.acctNum ?? "").trim();
+  return num ? `${num} - ${c.name}` : c.name;
 }
 
 export interface QboTaxRate {
@@ -471,14 +480,35 @@ export async function listClasses(
   }));
 }
 
-// Find the account id by name; fall back to the first active Expense
-// account (QBO's default "Uncategorized Expense" is usually there).
+// Find the account id from a category string like "5-15450 - HVAC":
+// match by AcctNum first (exact), then by name; fall back to the first
+// active Expense account (QBO's "Uncategorized Expense" is usually there).
 export async function findExpenseAccount(
   conn: QboConnection,
   name?: string | null
 ): Promise<string> {
-  if (name) {
-    const q = `select Id from Account where Name = '${name.replace(/'/g, "''")}' and Active = true`;
+  const raw = name?.trim() ?? "";
+
+  // "5-15450 - HVAC" → account number "5-15450", looked up exactly.
+  const acctMatch = raw.match(/^([0-9]+(?:-[0-9]+)*)\s*[-–—]\s*/);
+  if (acctMatch) {
+    const acctNum = acctMatch[1];
+    const qAcct = `select Id from Account where AcctNum = '${acctNum.replace(/'/g, "''")}' and Active = true`;
+    const resAcct = await qboFetch(
+      conn,
+      `/query?query=${encodeURIComponent(qAcct)}`
+    );
+    if (resAcct.ok) {
+      const json = (await resAcct.json()) as {
+        QueryResponse?: { Account?: { Id: string }[] };
+      };
+      const hit = json.QueryResponse?.Account?.[0];
+      if (hit) return hit.Id;
+    }
+  }
+
+  if (raw) {
+    const q = `select Id from Account where Name = '${raw.replace(/'/g, "''")}' and Active = true`;
     const res = await qboFetch(conn, `/query?query=${encodeURIComponent(q)}`);
     if (!res.ok) {
       const body = await res.text();
