@@ -95,7 +95,8 @@ export function Combobox({
   const q = query.trim().toLowerCase();
   // Search-as-you-type: with big lists (2,045 suppliers, 454 projects) a
   // wall of options on click is useless. Only surface matches once the user
-  // has typed enough (minQueryLength), then show up to 50.
+  // has typed enough (minQueryLength). Show ALL matches (scrollable) so the
+  // user can narrow down themselves — no hidden results.
   const searching = q.length >= minQueryLength;
   const matched = searching
     ? options.filter((o) => {
@@ -116,8 +117,7 @@ export function Combobox({
         return al.localeCompare(bl);
       })
     : [];
-  const truncated = ranked.length > 50;
-  const filtered = ranked.slice(0, 50);
+  const filtered = ranked;
 
   // Keep the hidden value input in sync with the selected value.
   useEffect(() => {
@@ -222,7 +222,7 @@ export function Combobox({
         className={className}
       />
       {open && filtered.length > 0 && (
-        <div className="absolute left-0 top-full z-30 mt-0.5 max-h-52 w-full min-w-[180px] overflow-y-auto rounded-md border border-slate-200 bg-white py-0.5 shadow-lg">
+        <div className="absolute left-0 top-full z-30 mt-0.5 max-h-72 w-full min-w-[180px] overflow-y-auto rounded-md border border-slate-200 bg-white py-0.5 shadow-lg">
           {filtered.map((o, i) => (
             <button
               key={valueOf(o)}
@@ -240,11 +240,6 @@ export function Combobox({
               {labelOf(o)}
             </button>
           ))}
-          {truncated && (
-            <div className="border-t border-slate-100 px-2 py-1 text-[11px] text-slate-400">
-              {ranked.length} matches — keep typing to narrow…
-            </div>
-          )}
         </div>
       )}
       {open && !searching && (
