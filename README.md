@@ -62,8 +62,8 @@ Review Complete before it's actually routed into an approval workflow (see
 
 ## Data model
 
-Full schema: [`supabase/migrations/`](supabase/migrations/) (20 migrations,
-`0001` → `0020`; see [Migration history](#migration-history) for what each
+Full schema: [`supabase/migrations/`](supabase/migrations/) (21 migrations,
+`0001` → `0021`; see [Migration history](#migration-history) for what each
 one added).
 
 | Table | Purpose |
@@ -87,11 +87,21 @@ one added).
 | `inbound_email_log` | Raw record of every inbound-email webhook hit, matched or not — the debugging trail for email ingestion. |
 
 **Row Level Security** is enabled on every table. Visibility is enforced by
-two SECURITY DEFINER functions: `is_org_member`/`is_org_admin`/
-`is_org_auditor` (role checks) and `can_see_invoice(inv_id)` (the actual
-per-invoice visibility rule — see [Projects &
-visibility](#projects--visibility)). The inbound-email webhook has no
-logged-in user, so it uses the Supabase **service role** key
+SECURITY DEFINER functions: `is_org_member`/`is_org_admin`/`is_org_auditor`
+(role checks) and `can_see_invoice(inv_id)` (the per-invoice visibility
+rule — see [Projects & visibility](#projects--visibility)), used by
+`invoice_approvals`/`invoice_comments`/`invoice_documents`/
+`invoice_line_items`'s policies. The `invoices` table's **own** read/update
+policies (migration 0021) inline that same rule against the row's own
+columns instead of calling `can_see_invoice(id)` — a self-referential
+subquery back into `invoices` breaks `INSERT ... RETURNING` (the row being
+inserted isn't visible to a subquery within the same command yet), which
+is exactly what `.insert().select().single()` generates. **If you add a
+new policy on `invoices` itself, don't route it through
+`can_see_invoice()`** — inline the check, or any code path that inserts
+and reads the row back (which is most of them) will intermittently/always
+fail with `"new row violates row-level security policy"`. The inbound-email
+webhook has no logged-in user, so it uses the Supabase **service role** key
 ([`src/lib/supabase/admin.ts`](src/lib/supabase/admin.ts)), which bypasses
 RLS entirely — treat that key as a full admin credential.
 
@@ -130,6 +140,7 @@ written to be idempotent (safe to re-run). Roughly:
 | 0018 | `step_override_approver_id` on invoices — per-invoice admin reassignment. |
 | 0019 | `project_id` on `invoice_line_items` — bills can split across multiple projects; `can_see_invoice()` extended to match on any line item's project. |
 | 0020 | `supplier_defaults` — per-supplier default rules, matched by normalized vendor name. |
+| 0021 | Fixes `"new row violates row-level security policy for table invoices"` on every new invoice insert — see the RLS note above. |
 
 ---
 
@@ -164,9 +175,9 @@ cp .env.example .env.local   # then fill in the values above
 ```
 
 1. **Create a Supabase project** at supabase.com.
-2. **Run all 20 migrations**, in order — paste each file in
+2. **Run all 21 migrations**, in order — paste each file in
    [`supabase/migrations/`](supabase/migrations/) into the SQL editor and
-   run it (`0001` through `0020`), or `supabase db push` if you have the CLI
+   run it (`0001` through `0021`), or `supabase db push` if you have the CLI
    linked. All of them are idempotent — safe to re-run.
 3. **Create the storage buckets**: Storage → New bucket → `invoices`
    (Public **off**) and `avatars` (Public **on**) — or let migration 0016

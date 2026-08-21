@@ -237,20 +237,20 @@ export function DetailSplit({
           </div>
         </div>
       ) : (
-        <div className="flex flex-none flex-col items-center gap-3 border-r border-slate-200 bg-slate-100 py-3">
+        <div className="flex w-10 flex-none flex-col items-center gap-3 border-r border-slate-200 bg-slate-100 py-3">
           <button
             type="button"
             onClick={openDocument}
             title="Show document"
-            className="rounded-md p-1.5 text-slate-500 hover:bg-slate-200"
+            className="rounded-md border border-slate-300 bg-white p-2 text-slate-700 shadow-sm hover:border-blue-400 hover:text-blue-600"
           >
             <svg
-              width="14"
-              height="14"
+              width="16"
+              height="16"
               viewBox="0 0 24 24"
               fill="none"
               stroke="currentColor"
-              strokeWidth="2"
+              strokeWidth="2.5"
             >
               <path
                 d="M9 6l6 6-6 6"
@@ -259,7 +259,7 @@ export function DetailSplit({
               />
             </svg>
           </button>
-          <span className="text-[11px] font-medium text-slate-400 [writing-mode:vertical-rl]">
+          <span className="text-xs font-semibold text-slate-700 [writing-mode:vertical-rl]">
             Documents ({documents.length})
           </span>
         </div>
@@ -308,20 +308,20 @@ export function DetailSplit({
           />
         </div>
       ) : (
-        <div className="flex flex-none flex-col items-center gap-3 border-r border-slate-200 bg-white py-3">
+        <div className="flex w-10 flex-none flex-col items-center gap-3 border-r border-slate-200 bg-slate-100 py-3">
           <button
             type="button"
             onClick={() => setBillOpen(true)}
             title="Show bill"
-            className="rounded-md p-1.5 text-slate-400 hover:bg-slate-100"
+            className="rounded-md border border-slate-300 bg-white p-2 text-slate-700 shadow-sm hover:border-blue-400 hover:text-blue-600"
           >
             <svg
-              width="14"
-              height="14"
+              width="16"
+              height="16"
               viewBox="0 0 24 24"
               fill="none"
               stroke="currentColor"
-              strokeWidth="2"
+              strokeWidth="2.5"
             >
               <path
                 d="M9 6l6 6-6 6"
@@ -330,7 +330,7 @@ export function DetailSplit({
               />
             </svg>
           </button>
-          <span className="text-[11px] font-medium text-slate-400 [writing-mode:vertical-rl]">
+          <span className="text-xs font-semibold text-slate-700 [writing-mode:vertical-rl]">
             Bill
           </span>
         </div>
