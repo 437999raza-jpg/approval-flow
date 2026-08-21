@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { createInvoiceFromFile, InvoiceIngestError } from "@/lib/invoices";
+import { InvoiceIngestError } from "@/lib/invoices";
+import { ingestInvoiceFile } from "@/lib/invoice-ingest";
 
 // Inbound email path: point a SendGrid "Inbound Parse" route at
 // https://yourapp.com/api/webhooks/inbound-email?token=INBOUND_EMAIL_WEBHOOK_SECRET
@@ -47,6 +48,7 @@ export async function POST(request: Request) {
 
   const attachmentCount = Number(formData.get("attachments") ?? 0);
   const invoiceIds: string[] = [];
+  const pendingSplitIds: string[] = [];
   const errors: string[] = [];
 
   for (let i = 1; i <= attachmentCount; i++) {
@@ -54,14 +56,18 @@ export async function POST(request: Request) {
     if (!(file instanceof File)) continue;
 
     try {
-      const invoice = await createInvoiceFromFile({
+      const result = await ingestInvoiceFile({
         supabase,
         organizationId: org.id,
         file,
         source: "email",
         sourceEmail: from,
       });
-      invoiceIds.push(invoice.id);
+      if (result.kind === "pending_split") {
+        pendingSplitIds.push(result.pendingSplitId);
+      } else {
+        invoiceIds.push(result.invoice.id);
+      }
     } catch (err) {
       errors.push(
         err instanceof InvoiceIngestError ? err.message : "Unknown ingest error"
@@ -76,9 +82,9 @@ export async function POST(request: Request) {
     subject,
     attachment_count: attachmentCount,
     invoice_ids: invoiceIds,
-    processed: invoiceIds.length > 0,
+    processed: invoiceIds.length > 0 || pendingSplitIds.length > 0,
     error: errors.length > 0 ? errors.join("; ") : null,
   });
 
-  return NextResponse.json({ ok: true, invoiceIds, errors });
+  return NextResponse.json({ ok: true, invoiceIds, pendingSplitIds, errors });
 }

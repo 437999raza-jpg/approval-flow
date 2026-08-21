@@ -1178,7 +1178,7 @@ export default async function DashboardPage({
     : "all";
   const q = searchParams.q?.trim().toLowerCase() ?? "";
 
-  const [{ data: invoices }, { data: workflows }, { data: projects }] =
+  const [{ data: invoices }, { data: workflows }, { data: projects }, pendingSplitsRes] =
     await Promise.all([
       supabase
         .from("invoices")
@@ -1195,7 +1195,13 @@ export default async function DashboardPage({
         .eq("organization_id", org.id)
         .eq("active", true)
         .order("name", { ascending: true }),
+      supabase
+        .from("pending_invoice_splits")
+        .select("id", { count: "exact", head: true })
+        .eq("organization_id", org.id)
+        .eq("status", "pending"),
     ]);
+  const pendingSplitsCount = pendingSplitsRes.count ?? 0;
 
   const workflowIds = (workflows ?? []).map((w) => w.id);
   const invoiceIds = (invoices ?? []).map((i) => i.id);
@@ -1710,6 +1716,32 @@ export default async function DashboardPage({
           ))}
         </nav>
         <div className="border-t border-slate-200 p-2">
+          {pendingSplitsCount > 0 && (
+            <Link
+              href="/invoices/pending-splits"
+              className="flex items-center justify-between gap-2 rounded-md px-3 py-2 text-sm text-orange-700 hover:bg-orange-50"
+            >
+              <span className="flex items-center gap-2">
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                  <path d="M14 2v6h6M9 15l2 2 4-4" />
+                </svg>
+                Needs split review
+              </span>
+              <span className="rounded-full bg-orange-100 px-1.5 py-0.5 text-xs text-orange-700">
+                {pendingSplitsCount}
+              </span>
+            </Link>
+          )}
           <Link
             href="/workflows"
             className="flex items-center gap-2 rounded-md px-3 py-2 text-sm text-slate-600 hover:bg-slate-100"

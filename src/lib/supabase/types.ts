@@ -351,6 +351,41 @@ export interface Database {
         >;
         Relationships: [];
       };
+      pending_invoice_splits: {
+        Row: {
+          id: string;
+          organization_id: string;
+          source: "manual" | "email";
+          source_email: string | null;
+          submitted_by: string | null;
+          file_path: string;
+          file_name: string;
+          page_count: number;
+          groups: {
+            pages: number[];
+            vendorHint: string | null;
+            invoiceNumberHint: string | null;
+          }[];
+          status: "pending" | "confirmed" | "dismissed";
+          created_at: string;
+          resolved_at: string | null;
+          resolved_by: string | null;
+        };
+        Insert: Partial<
+          Database["public"]["Tables"]["pending_invoice_splits"]["Row"]
+        > & {
+          organization_id: string;
+          source: "manual" | "email";
+          file_path: string;
+          file_name: string;
+          page_count: number;
+          groups: Database["public"]["Tables"]["pending_invoice_splits"]["Row"]["groups"];
+        };
+        Update: Partial<
+          Database["public"]["Tables"]["pending_invoice_splits"]["Row"]
+        >;
+        Relationships: [];
+      };
     };
   };
 }

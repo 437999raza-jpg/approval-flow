@@ -28,8 +28,13 @@ export function InvoiceUploadDropzone() {
         throw new Error(body.error ?? `Upload failed (${res.status})`);
       }
 
-      const { invoice } = await res.json();
-      router.push(`/dashboard/${invoice.id}`);
+      const body = await res.json();
+      if (res.status === 202 && body.pendingSplitId) {
+        router.push(`/invoices/pending-splits/${body.pendingSplitId}`);
+        router.refresh();
+        return;
+      }
+      router.push(`/dashboard/${body.invoice.id}`);
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Upload failed");
