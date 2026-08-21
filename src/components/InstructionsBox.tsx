@@ -20,15 +20,23 @@ export function InstructionsBox({
   saveInstructions,
   approve,
   readOnly = false,
+  hasCosOrExtras = false,
 }: {
   entries: BillInstructionsEntry[];
   saveInstructions: (formData: FormData) => Promise<void>;
   approve?: (formData: FormData) => Promise<void>;
   readOnly?: boolean;
+  // True once any approver upstream has flagged the bill as having COs/
+  // Extras — from then on the box is checked and LOCKED.
+  hasCosOrExtras?: boolean;
 }) {
   const formRef = useRef<HTMLFormElement>(null);
   const [text, setText] = useState("");
-  const [hasCos, setHasCos] = useState(false);
+  const [localCos, setLocalCos] = useState(false);
+
+  // Locked once set upstream; otherwise the current approver can tick it.
+  const cos = hasCosOrExtras || localCos;
+  const cosLocked = hasCosOrExtras;
 
   // Wraps the server action so we can clear the box once the note is saved.
   // The textarea is controlled (value=text), so its value is submitted with
@@ -40,22 +48,34 @@ export function InstructionsBox({
   }
 
   // With the CO/Extras flag on, approval requires a note.
-  const requiresNote = hasCos && !!approve;
+  const requiresNote = cos && !!approve;
 
   return (
     <div className="flex h-full flex-col">
-      {/* CO/Extras flag — sits where the old explanation text was */}
-      <label className="mt-2 flex cursor-pointer items-center gap-2 text-sm text-slate-700">
-        <input
-          type="checkbox"
-          name="has_cos_or_extras"
-          checked={hasCos}
-          onChange={(e) => setHasCos(e.target.checked)}
-          disabled={readOnly}
-          className="h-4 w-4 rounded border-slate-300"
-        />
-        Does this invoice have COs or Extras?
-      </label>
+      {/* CO/Extras flag — only for APPROVERS (not the reviewer, who just
+          clears review). Once set upstream it's checked and locked. */}
+      {approve && (
+        <label className="mt-2 flex cursor-pointer items-center gap-2 text-sm text-slate-700">
+          <input
+            type="checkbox"
+            name="has_cos_or_extras"
+            checked={cos}
+            onChange={(e) => setLocalCos(e.target.checked)}
+            disabled={readOnly || cosLocked}
+            className="h-4 w-4 rounded border-slate-300"
+          />
+          {cosLocked ? (
+            <span>
+              Has COs or Extras{" "}
+              <span className="text-[10px] font-medium text-slate-400">
+                (set by an earlier approver — locked)
+              </span>
+            </span>
+          ) : (
+            "Does this invoice have COs or Extras?"
+          )}
+        </label>
+      )}
       {requiresNote && (
         <p className="mt-1 text-xs text-red-600">
           A note for accounting is required when this invoice has COs or

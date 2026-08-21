@@ -91,7 +91,20 @@ export async function decide(
   // approver typed is added as their own line, never overwriting anyone
   // else's (the whole thread becomes the QBO memo on sync).
   const instructions = String(formData.get("instructions") ?? "").trim();
-  const hasCosOrExtras = formData.get("has_cos_or_extras") === "on";
+  const tickingCos = formData.get("has_cos_or_extras") === "on";
+
+  const { data: invoice } = await supabase
+    .from("invoices")
+    .select("*")
+    .eq("id", invoiceId)
+    .single();
+  if (!invoice || !invoice.workflow_id) {
+    redirect(`/dashboard/${invoiceId}?error=not-your-step`);
+  }
+
+  // CO/Extras is decided by the approver (usually the PM), then LOCKED:
+  // once it's been set by anyone upstream, no later approver can remove it.
+  const hasCosOrExtras = invoice.has_cos_or_extras || tickingCos;
 
   // CO/Extras rule: when flagged, a note for accounting is REQUIRED before
   // approving (the Approve button is also disabled client-side; this is the
@@ -108,15 +121,6 @@ export async function decide(
       author_id: user.id,
       body: instructions,
     });
-  }
-
-  const { data: invoice } = await supabase
-    .from("invoices")
-    .select("*")
-    .eq("id", invoiceId)
-    .single();
-  if (!invoice || !invoice.workflow_id) {
-    redirect(`/dashboard/${invoiceId}?error=not-your-step`);
   }
 
   if (invoice.status !== "on_approval") {
@@ -192,14 +196,20 @@ export async function decide(
     const lastStep = orderedSteps[orderedSteps.length - 1]?.step_order ?? 1;
     const isFinalStep = invoice.current_step_order >= lastStep;
 
-    // CO/Extras rule: when the approver flagged the invoice as having COs
-    // or Extras, every line item's class is set to "Extras" so they're
-    // separated in QBO reports.
+    // CO/Extras rule: when the approver (usually the PM) flags the invoice
+    // as having COs or Extras, every line item's class is set to "Extras"
+    // (a real QBO class) so they're separated in QBO reports, and the flag
+    // is persisted on the invoice — LOCKED from here on, no later approver
+    // can remove it.
     if (hasCosOrExtras) {
       await supabase
         .from("invoice_line_items")
         .update({ class: "Extras" })
         .eq("invoice_id", invoiceId);
+      await supabase
+        .from("invoices")
+        .update({ has_cos_or_extras: true })
+        .eq("id", invoiceId);
     }
 
     await supabase

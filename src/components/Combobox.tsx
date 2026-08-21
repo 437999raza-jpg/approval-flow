@@ -153,6 +153,11 @@ export function Combobox({
     if (value !== committedRef.current) {
       committedRef.current = value;
       setSelected(value);
+      // Write the hidden input's DOM value SYNCHRONOUSLY — the form submits
+      // right after this, before React re-renders, so the hidden input must
+      // already hold the new value or the old one gets saved (e.g. picking
+      // project GM but saving the previous Lexus).
+      if (hiddenRef.current) hiddenRef.current.value = value;
       onCommit(value);
     }
   }
@@ -164,6 +169,8 @@ export function Combobox({
     setOpen(false);
     if (v !== committedRef.current) {
       committedRef.current = v;
+      // Same synchronous DOM write as commitCurrent — see above.
+      if (hiddenRef.current) hiddenRef.current.value = v;
       onCommit(v);
     }
   }

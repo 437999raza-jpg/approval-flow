@@ -319,6 +319,7 @@ export function BillPanel({
                   readOnly={instructions.readOnly}
                   saveInstructions={instructions.saveInstructions}
                   approve={instructions.approve}
+                  hasCosOrExtras={invoice.has_cos_or_extras}
                 />
               </div>
             </div>
