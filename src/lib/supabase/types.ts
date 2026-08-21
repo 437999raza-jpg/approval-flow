@@ -388,6 +388,94 @@ export interface Database {
         >;
         Relationships: [];
       };
+      qbo_categories: {
+        Row: {
+          id: string;
+          organization_id: string;
+          qbo_account_id: string;
+          name: string;
+          account_type: string | null;
+          account_sub_type: string | null;
+          active: boolean;
+          synced_at: string;
+        };
+        Insert: Partial<
+          Database["public"]["Tables"]["qbo_categories"]["Row"]
+        > & {
+          organization_id: string;
+          qbo_account_id: string;
+          name: string;
+        };
+        Update: Partial<
+          Database["public"]["Tables"]["qbo_categories"]["Row"]
+        >;
+        Relationships: [];
+      };
+      qbo_classes: {
+        Row: {
+          id: string;
+          organization_id: string;
+          qbo_class_id: string;
+          name: string;
+          active: boolean;
+          sub_class: boolean;
+          synced_at: string;
+        };
+        Insert: Partial<
+          Database["public"]["Tables"]["qbo_classes"]["Row"]
+        > & {
+          organization_id: string;
+          qbo_class_id: string;
+          name: string;
+        };
+        Update: Partial<
+          Database["public"]["Tables"]["qbo_classes"]["Row"]
+        >;
+        Relationships: [];
+      };
+      qbo_tax_codes: {
+        Row: {
+          id: string;
+          organization_id: string;
+          qbo_tax_code_id: string;
+          name: string;
+          description: string | null;
+          synced_at: string;
+        };
+        Insert: Partial<
+          Database["public"]["Tables"]["qbo_tax_codes"]["Row"]
+        > & {
+          organization_id: string;
+          qbo_tax_code_id: string;
+          name: string;
+        };
+        Update: Partial<
+          Database["public"]["Tables"]["qbo_tax_codes"]["Row"]
+        >;
+        Relationships: [];
+      };
+      qbo_tax_rates: {
+        Row: {
+          id: string;
+          organization_id: string;
+          qbo_tax_rate_id: string;
+          name: string;
+          rate_value: number;
+          synced_at: string;
+        };
+        Insert: Partial<
+          Database["public"]["Tables"]["qbo_tax_rates"]["Row"]
+        > & {
+          organization_id: string;
+          qbo_tax_rate_id: string;
+          name: string;
+          rate_value: number;
+        };
+        Update: Partial<
+          Database["public"]["Tables"]["qbo_tax_rates"]["Row"]
+        >;
+        Relationships: [];
+      };
       qbo_connections: {
         Row: {
           id: string;

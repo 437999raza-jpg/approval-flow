@@ -239,6 +239,197 @@ export async function ensureVendor(
   );
 }
 
+export interface QboCategory {
+  qboAccountId: string;
+  name: string;
+  accountType: string | null;
+  accountSubType: string | null;
+  active: boolean;
+}
+
+// READ-ONLY: pull the company's Chart of Accounts (categories). This is the
+// only QBO interaction that should happen for now — nothing is ever written
+// to QuickBooks from the categories flow, and no vendor data is fetched.
+//
+// When taxOnly is set, only accounts whose name looks like a tax account are
+// returned (GST/HST/PST/QST/VAT/CRA/Ministry of Revenue...). QBO's query
+// language can't OR several LIKE patterns, so we fetch active accounts once
+// and filter in code — cheap at this company's size (a few hundred rows).
+const TAX_NAME_PATTERN =
+  /(^|[^a-z])(gst|hst|pst|qst|vat|tax|ministry of revenue|revenue agency)([^a-z]|$)/i;
+
+export async function listCategories(
+  conn: QboConnection,
+  limit = 10,
+  opts: { taxOnly?: boolean } = {}
+): Promise<QboCategory[]> {
+  const taxOnly = opts.taxOnly ?? false;
+  // taxOnly needs the full active list to filter; otherwise honor the limit.
+  const q = taxOnly
+    ? "select Id, Name, AccountType, AccountSubType, Active from Account where Active = true maxresults 200"
+    : `select Id, Name, AccountType, AccountSubType, Active from Account where Active = true order by Name maxresults ${limit}`;
+  const res = await qboFetch(conn, `/query?query=${encodeURIComponent(q)}`);
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(
+      `QBO: category query failed (HTTP ${res.status}): ${body.slice(0, 300)}`
+    );
+  }
+  const json = (await res.json()) as {
+    QueryResponse?: {
+      Account?: {
+        Id: string;
+        Name?: string;
+        AccountType?: string;
+        AccountSubType?: string;
+        Active?: boolean;
+      }[];
+    };
+  };
+  let accounts = json.QueryResponse?.Account ?? [];
+  if (taxOnly) {
+    accounts = accounts.filter((a) => TAX_NAME_PATTERN.test(a.Name ?? ""));
+  }
+  return accounts
+    .slice(0, taxOnly ? 50 : limit)
+    .map((a) => ({
+      qboAccountId: a.Id,
+      name: a.Name ?? "",
+      accountType: a.AccountType ?? null,
+      accountSubType: a.AccountSubType ?? null,
+      active: a.Active ?? true,
+    }));
+}
+
+export interface QboTaxRate {
+  qboTaxRateId: string;
+  name: string;
+  rateValue: number; // e.g. 5 for 5%
+}
+
+// READ-ONLY: pull the company's tax RATES (the % applied to bills, e.g.
+// GST 5%, HST 13%). QBO only supports `select *` on TaxRate, so we filter
+// and dedupe by percentage in code. Inactive/zero/adjustment rates are
+// excluded; among duplicate percentages the purchase-side rate wins.
+export async function listTaxRates(conn: QboConnection): Promise<QboTaxRate[]> {
+  const q = "select * from TaxRate";
+  const res = await qboFetch(conn, `/query?query=${encodeURIComponent(q)}`);
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(
+      `QBO: tax rate query failed (HTTP ${res.status}): ${body.slice(0, 300)}`
+    );
+  }
+  const json = (await res.json()) as {
+    QueryResponse?: {
+      TaxRate?: {
+        Id: string;
+        Name?: string;
+        RateValue?: number | string | null;
+        Active?: boolean;
+      }[];
+    };
+  };
+  const rates = json.QueryResponse?.TaxRate ?? [];
+
+  // Keep active rates with a positive numeric value; dedupe by percentage,
+  // preferring names that mention purchases (bills are purchases).
+  const byValue = new Map<number, QboTaxRate>();
+  for (const t of rates) {
+    if (t.Active === false) continue;
+    const v = Number(t.RateValue);
+    if (!Number.isFinite(v) || v <= 0) continue;
+    const existing = byValue.get(v);
+    const name = t.Name ?? "";
+    const candidate = { qboTaxRateId: t.Id, name, rateValue: v };
+    if (
+      !existing ||
+      (name.toLowerCase().includes("purchase") &&
+        !existing.name.toLowerCase().includes("purchase"))
+    ) {
+      byValue.set(v, candidate);
+    }
+  }
+  return [...byValue.values()].sort((a, b) => a.rateValue - b.rateValue);
+}
+
+export interface QboTaxCode {
+  qboTaxCodeId: string;
+  name: string; // e.g. "H", "G", "P", "E", "Z", "M"
+  description: string | null;
+  active: boolean;
+}
+
+// READ-ONLY: pull the company's tax CODES (the letters typed on bills —
+// "H" = HST 13%, "G" = GST 5%...). Nothing is ever written to QuickBooks.
+export async function listTaxCodes(conn: QboConnection): Promise<QboTaxCode[]> {
+  const q = "select * from TaxCode";
+  const res = await qboFetch(conn, `/query?query=${encodeURIComponent(q)}`);
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(
+      `QBO: tax code query failed (HTTP ${res.status}): ${body.slice(0, 300)}`
+    );
+  }
+  const json = (await res.json()) as {
+    QueryResponse?: {
+      TaxCode?: {
+        Id: string;
+        Name?: string;
+        Description?: string | null;
+        Active?: boolean;
+      }[];
+    };
+  };
+  return (json.QueryResponse?.TaxCode ?? [])
+    .filter((c) => c.Active !== false)
+    .map((c) => ({
+      qboTaxCodeId: c.Id,
+      name: c.Name ?? "",
+      description: c.Description ?? null,
+      active: c.Active ?? true,
+    }));
+}
+
+export interface QboClass {
+  qboClassId: string;
+  name: string;
+  active: boolean;
+  subClass: boolean;
+}
+
+// READ-ONLY: pull the company's Classes (e.g. project numbers like
+// "2021-56"). Nothing is ever written to QuickBooks here.
+export async function listClasses(
+  conn: QboConnection,
+  limit = 200
+): Promise<QboClass[]> {
+  const q = `select * from Class maxresults ${limit}`;
+  const res = await qboFetch(conn, `/query?query=${encodeURIComponent(q)}`);
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(
+      `QBO: class query failed (HTTP ${res.status}): ${body.slice(0, 300)}`
+    );
+  }
+  const json = (await res.json()) as {
+    QueryResponse?: {
+      Class?: {
+        Id: string;
+        Name?: string;
+        Active?: boolean;
+        SubClass?: boolean;
+      }[];
+    };
+  };
+  return (json.QueryResponse?.Class ?? []).map((c) => ({
+    qboClassId: c.Id,
+    name: c.Name ?? "",
+    active: c.Active ?? true,
+    subClass: c.SubClass ?? false,
+  }));
+}
+
 // Find the account id by name; fall back to the first active Expense
 // account (QBO's default "Uncategorized Expense" is usually there).
 export async function findExpenseAccount(

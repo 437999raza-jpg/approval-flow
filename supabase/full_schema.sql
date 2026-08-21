@@ -1,4 +1,4 @@
--- Approval Flow: COMPLETE schema bundle (0001-0033), for a FRESH production
+-- Approval Flow: COMPLETE schema bundle (0001-0036), for a FRESH production
 -- Supabase project only. Do NOT run on an existing database.
 -- Generated 2026-08-21. Paste into the SQL editor and run once.
 
@@ -2151,3 +2151,123 @@ select id, submitted_by, accounting_instructions
 from invoices
 where accounting_instructions is not null and trim(accounting_instructions) <> '';
 
+
+--------------------------------------------------------------------
+-- >>> supabase/migrations/0034_qbo_categories.sql
+--------------------------------------------------------------------
+-- 0034: QuickBooks categories (Chart of Accounts mirror).
+-- READ-ONLY against QuickBooks: we pull the account list so the app can
+-- offer categories without ever writing to QBO. No vendor data is fetched.
+-- Run via `supabase db push` or paste into the Supabase SQL editor.
+
+create table if not exists qbo_categories (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references organizations(id) on delete cascade,
+  qbo_account_id text not null, -- QBO Account Id
+  name text not null,
+  account_type text, -- e.g. Expense, Income, Bank, Accounts Payable
+  account_sub_type text, -- e.g. OtherCurrentLiabilities, CashOnHand
+  active boolean not null default true,
+  synced_at timestamptz not null default now(),
+  unique (organization_id, qbo_account_id)
+);
+
+alter table qbo_categories enable row level security;
+
+-- Org members (any role) can read the category list.
+drop policy if exists "qbo_categories: org members read" on qbo_categories;
+create policy "qbo_categories: org members read" on qbo_categories
+  for select using (is_org_member(organization_id));
+
+-- Admins manage the mirror (insert/update/delete happen on sync).
+drop policy if exists "qbo_categories: admins manage" on qbo_categories;
+create policy "qbo_categories: admins manage" on qbo_categories
+  for all using (is_org_admin(organization_id)) with check (is_org_admin(organization_id));
+
+--------------------------------------------------------------------
+-- >>> supabase/migrations/0035_qbo_tax_rates.sql
+--------------------------------------------------------------------
+-- 0035: QuickBooks tax RATES + CODES (the % and the letter codes used on
+-- bills — e.g. "H" = HST 13%, "G" = GST 5%).
+-- HARD RULE: this app NEVER writes to QuickBooks. These tables are
+-- read-only mirrors of QBO TaxRate/TaxCode entities so Flow can offer the
+-- correct tax % and codes on bills. No vendor/customer/project/class/
+-- category data is ever pulled or written.
+-- Run via `supabase db push` or paste into the Supabase SQL editor.
+
+create table if not exists qbo_tax_rates (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references organizations(id) on delete cascade,
+  qbo_tax_rate_id text not null, -- QBO TaxRate Id
+  name text not null,
+  rate_value numeric not null, -- e.g. 5 for 5%
+  synced_at timestamptz not null default now(),
+  unique (organization_id, qbo_tax_rate_id)
+);
+
+alter table qbo_tax_rates enable row level security;
+
+-- Org members (any role) can read the tax rate list.
+drop policy if exists "qbo_tax_rates: org members read" on qbo_tax_rates;
+create policy "qbo_tax_rates: org members read" on qbo_tax_rates
+  for select using (is_org_member(organization_id));
+
+-- Admins manage the mirror (insert/update/delete happen on sync).
+drop policy if exists "qbo_tax_rates: admins manage" on qbo_tax_rates;
+create policy "qbo_tax_rates: admins manage" on qbo_tax_rates
+  for all using (is_org_admin(organization_id)) with check (is_org_admin(organization_id));
+
+create table if not exists qbo_tax_codes (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references organizations(id) on delete cascade,
+  qbo_tax_code_id text not null, -- QBO TaxCode Id
+  name text not null, -- e.g. "H", "G", "P", "E", "Z", "M"
+  description text,
+  synced_at timestamptz not null default now(),
+  unique (organization_id, qbo_tax_code_id)
+);
+
+alter table qbo_tax_codes enable row level security;
+
+-- Org members (any role) can read the tax code list.
+drop policy if exists "qbo_tax_codes: org members read" on qbo_tax_codes;
+create policy "qbo_tax_codes: org members read" on qbo_tax_codes
+  for select using (is_org_member(organization_id));
+
+-- Admins manage the mirror (insert/update/delete happen on sync).
+drop policy if exists "qbo_tax_codes: admins manage" on qbo_tax_codes;
+create policy "qbo_tax_codes: admins manage" on qbo_tax_codes
+  for all using (is_org_admin(organization_id)) with check (is_org_admin(organization_id));
+
+--------------------------------------------------------------------
+-- >>> supabase/migrations/0036_qbo_classes.sql
+--------------------------------------------------------------------
+-- 0036: QuickBooks CLASSES (project numbers etc.).
+-- HARD RULE: this app NEVER writes to QuickBooks. This table is a
+-- read-only mirror of QBO Class entities so new classes added in QBO show
+-- up in Flow after a sync. No vendor/customer/project/class/category data
+-- is ever written to QBO.
+-- Run via `supabase db push` or paste into the Supabase SQL editor.
+
+create table if not exists qbo_classes (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references organizations(id) on delete cascade,
+  qbo_class_id text not null, -- QBO Class Id
+  name text not null,
+  active boolean not null default true,
+  sub_class boolean not null default false,
+  synced_at timestamptz not null default now(),
+  unique (organization_id, qbo_class_id)
+);
+
+alter table qbo_classes enable row level security;
+
+-- Org members (any role) can read the class list.
+drop policy if exists "qbo_classes: org members read" on qbo_classes;
+create policy "qbo_classes: org members read" on qbo_classes
+  for select using (is_org_member(organization_id));
+
+-- Admins manage the mirror (insert/update/delete happen on sync).
+drop policy if exists "qbo_classes: admins manage" on qbo_classes;
+create policy "qbo_classes: admins manage" on qbo_classes
+  for all using (is_org_admin(organization_id)) with check (is_org_admin(organization_id));

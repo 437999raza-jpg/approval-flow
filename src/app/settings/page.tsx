@@ -5,7 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentOrg } from "@/lib/current-org";
 import { SignOutButton } from "@/components/SignOutButton";
-import { disconnectQbo, syncToQbo } from "@/lib/dashboard-actions";
+import { disconnectQbo, syncQboTaxes, syncQboClasses, syncQboCategories } from "@/lib/dashboard-actions";
 import { qboEnv } from "@/lib/qbo";
 import { Avatar } from "@/components/Avatar";
 import { AvatarUploadForm } from "@/components/AvatarUploadForm";
@@ -246,7 +246,7 @@ async function deleteProject(projectId: string) {
 export default async function SettingsPage({
   searchParams,
 }: {
-  searchParams: { error?: string; q?: string; qbo?: string };
+  searchParams: { error?: string; q?: string; qbo?: string; count?: string };
 }) {
   const supabase = createClient();
 
@@ -284,6 +284,36 @@ export default async function SettingsPage({
     .eq("organization_id", org.id)
     .maybeSingle();
 
+  // Categories pulled from QBO (read-only mirror; any org member can view).
+  const { data: qboCategories } = await supabase
+    .from("qbo_categories")
+    .select("id, name, account_type, account_sub_type, active, synced_at")
+    .eq("organization_id", org.id)
+    .order("name", { ascending: true })
+    .limit(200);
+
+  // Tax rates + codes pulled from QBO (read-only mirrors).
+  const { data: qboTaxRates } = await supabase
+    .from("qbo_tax_rates")
+    .select("id, name, rate_value, synced_at")
+    .eq("organization_id", org.id)
+    .order("rate_value", { ascending: true })
+    .limit(50);
+  const { data: qboTaxCodes } = await supabase
+    .from("qbo_tax_codes")
+    .select("id, name, description")
+    .eq("organization_id", org.id)
+    .order("name", { ascending: true })
+    .limit(50);
+
+  // Classes pulled from QBO (read-only mirror).
+  const { data: qboClasses } = await supabase
+    .from("qbo_classes")
+    .select("id, name, active")
+    .eq("organization_id", org.id)
+    .order("name", { ascending: true })
+    .limit(200);
+
   // Billing & usage: this month's invoice counts (org-wide, admin view).
   const monthStart = new Date();
   monthStart.setUTCDate(1);
@@ -299,16 +329,6 @@ export default async function SettingsPage({
   }
   const usageTotal = (monthInvoices ?? []).length;
 
-  // Sync center: invoices not yet synced to QBO (admin-only view).
-  const { data: unsyncedInvoices } = isAdmin
-    ? await supabase
-        .from("invoices")
-        .select("id, vendor_name, invoice_number, amount, currency, status, qbo_sync_status, qbo_error")
-        .eq("organization_id", org.id)
-        .neq("qbo_sync_status", "synced")
-        .order("created_at", { ascending: false })
-        .limit(30)
-    : { data: [] };
   const rate = Number(process.env.BILLING_RATE_PER_INVOICE || 5);
   const suggestedCharge = usageTotal * rate;
 
@@ -438,6 +458,21 @@ export default async function SettingsPage({
                 Connected to QuickBooks successfully.
               </div>
             )}
+            {searchParams.qbo === "categories_synced" && (
+              <div className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+                Imported {searchParams.count ?? 0} categor{Number(searchParams.count) === 1 ? "y" : "ies"} from QuickBooks (read-only).
+              </div>
+            )}
+            {searchParams.qbo === "tax_synced" && (
+              <div className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+                Synced tax rates and codes from QuickBooks (read-only).
+              </div>
+            )}
+            {searchParams.qbo === "classes_synced" && (
+              <div className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+                Synced {searchParams.count ?? 0} class{Number(searchParams.count) === 1 ? "" : "es"} from QuickBooks (read-only).
+              </div>
+            )}
             {searchParams.qbo === "error" && (
               <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
                 The QuickBooks connection failed. If you cancelled the
@@ -469,9 +504,9 @@ export default async function SettingsPage({
                 qboEnv() ? (
                   <div className="flex flex-wrap items-center gap-3">
                     <span className="text-slate-600">
-                      Connect this org to a QuickBooks company to sync
-                      approved bills (vendor, line items, memo, and the audit
-                      PDF + documents as attachments).
+                      Connect this org to a QuickBooks company to pull
+                      categories (Chart of Accounts) into the app. Read-only —
+                      nothing is written to QuickBooks.
                     </span>
                     <span className="flex-1" />
                     <a
@@ -499,53 +534,142 @@ export default async function SettingsPage({
               )}
               </div>
 
-              {/* Sync center */}
-              {isAdmin && qboConnection && (
-                <div className="mt-3 border-t border-slate-100 pt-3">
-                  <div className="text-xs font-bold uppercase tracking-wide text-slate-400">
-                    Bills to sync
+              {/* Data from QuickBooks — read-only pulls */}
+              <div className="mt-3 border-t border-slate-100 pt-3">
+                <div className="text-xs font-bold uppercase tracking-wide text-slate-400">
+                  Data from QuickBooks
+                </div>
+                <p className="mt-1 text-sm text-slate-500">
+                  QuickBooks is the source of truth. These lists are pulled
+                  read-only — when you add or update tax rates, tax codes, or
+                  classes in QuickBooks, sync them here to bring the changes
+                  into Flow. Nothing is ever written to QuickBooks from Flow.
+                </p>
+
+                {/* Tax rates + codes */}
+                <div className="mt-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-sm font-semibold text-slate-800">
+                      Tax rates &amp; codes
+                    </span>
+                    {isAdmin && (
+                      <form action={syncQboTaxes}>
+                        <button className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">
+                          Sync taxes from QuickBooks
+                        </button>
+                      </form>
+                    )}
                   </div>
-                  {unsyncedInvoices && unsyncedInvoices.length > 0 ? (
-                    <ul className="mt-2 divide-y divide-slate-100">
-                      {unsyncedInvoices.map((inv) => (
+                  {(qboTaxRates && qboTaxRates.length > 0) ||
+                  (qboTaxCodes && qboTaxCodes.length > 0) ? (
+                    <div className="mt-2 flex flex-wrap gap-4">
+                      <div>
+                        <div className="text-xs text-slate-400">
+                          Tax rates:
+                        </div>
+                        <ul className="mt-1 space-y-0.5">
+                          {(qboTaxRates ?? []).map((r) => (
+                            <li key={r.id} className="text-sm text-slate-700">
+                              {r.name} — {r.rate_value}%
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                      <div>
+                        <div className="text-xs text-slate-400">
+                          Tax codes (what you type on bills):
+                        </div>
+                        <ul className="mt-1 space-y-0.5">
+                          {(qboTaxCodes ?? []).map((c) => (
+                            <li key={c.id} className="text-sm text-slate-700">
+                              <strong>{c.name}</strong>
+                              {c.description ? ` — ${c.description}` : ""}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="mt-1 text-sm text-slate-400">
+                      No tax data synced yet.
+                    </p>
+                  )}
+                </div>
+
+                {/* Classes */}
+                <div className="mt-3 border-t border-slate-100 pt-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-sm font-semibold text-slate-800">
+                      Classes
+                    </span>
+                    {isAdmin && (
+                      <form action={syncQboClasses}>
+                        <button className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">
+                          Sync classes from QuickBooks
+                        </button>
+                      </form>
+                    )}
+                  </div>
+                  {qboClasses && qboClasses.length > 0 ? (
+                    <div className="mt-1">
+                      <div className="text-xs text-slate-400">
+                        {qboClasses.length} class{Number(qboClasses.length) === 1 ? "" : "es"} on file:
+                      </div>
+                      <ul className="mt-1 flex max-h-48 flex-wrap gap-x-4 gap-y-0.5 overflow-y-auto">
+                        {qboClasses.map((c) => (
+                          <li key={c.id} className="w-40 text-sm text-slate-700">
+                            {c.name}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : (
+                    <p className="mt-1 text-sm text-slate-400">
+                      No classes synced yet.
+                    </p>
+                  )}
+                </div>
+
+                {/* Categories (Chart of Accounts) */}
+                <div className="mt-3 border-t border-slate-100 pt-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-sm font-semibold text-slate-800">
+                      Categories (Chart of Accounts)
+                    </span>
+                    {isAdmin && (
+                      <form action={syncQboCategories}>
+                        <input type="hidden" name="mode" value="categories" />
+                        <input type="hidden" name="limit" value="10" />
+                        <button className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">
+                          Import first 10 categories
+                        </button>
+                      </form>
+                    )}
+                  </div>
+                  {qboCategories && qboCategories.length > 0 ? (
+                    <ul className="mt-1 max-h-48 divide-y divide-slate-100 overflow-y-auto">
+                      {qboCategories.map((c) => (
                         <li
-                          key={inv.id}
-                          className="flex flex-wrap items-center gap-3 py-2 text-sm"
+                          key={c.id}
+                          className="flex flex-wrap items-center gap-2 py-1.5 text-sm"
                         >
-                          <div className="min-w-0 flex-1">
-                            <div className="truncate font-medium text-slate-800">
-                              {inv.vendor_name ?? inv.invoice_number ?? "Invoice"}
-                            </div>
-                            <div className="text-xs text-slate-400">
-                              {inv.invoice_number ?? "—"} · {inv.status.replace(/_/g, " ")}
-                              {inv.qbo_sync_status === "error" && inv.qbo_error ? (
-                                <span className="ml-1 text-red-500">· {inv.qbo_error}</span>
-                              ) : null}
-                            </div>
-                          </div>
-                          {inv.amount != null && (
-                            <span className="text-xs text-slate-500">
-                              {inv.amount.toLocaleString(undefined, {
-                                style: "currency",
-                                currency: inv.currency,
-                              })}
-                            </span>
-                          )}
-                          <form action={syncToQbo.bind(null, inv.id)}>
-                            <button className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">
-                              Sync
-                            </button>
-                          </form>
+                          <span className="min-w-0 flex-1 truncate font-medium text-slate-800">
+                            {c.name}
+                          </span>
+                          <span className="text-xs text-slate-400">
+                            {c.account_type ?? "—"}
+                            {c.account_sub_type ? ` · ${c.account_sub_type}` : ""}
+                          </span>
                         </li>
                       ))}
                     </ul>
                   ) : (
-                    <p className="mt-2 text-sm text-slate-400">
-                      All invoices synced to QuickBooks.
+                    <p className="mt-1 text-sm text-slate-400">
+                      No categories imported yet.
                     </p>
                   )}
                 </div>
-              )}
+              </div>
             </div>
           </section>
 

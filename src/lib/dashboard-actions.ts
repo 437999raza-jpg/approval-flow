@@ -18,7 +18,7 @@ import {
   stepDecisionState,
 } from "@/lib/workflow-conditions";
 import type { Database, InvoiceStatus } from "@/lib/supabase/types";
-import { getQboConnection, createBill, attachDocuments } from "@/lib/qbo";
+import { getQboConnection, listCategories, listTaxRates, listTaxCodes, listClasses, createBill, attachDocuments } from "@/lib/qbo";
 import { buildQboAttachmentBundle } from "@/lib/qbo-attachments";
 
 // Server actions for the dashboard (moved out of the page component so
@@ -1218,6 +1218,174 @@ export async function reExtract(invoiceId: string) {
   });
 
   revalidatePath("/dashboard", "layout");
+}
+
+
+// Pull QuickBooks tax RATES + CODES (the % and the letters typed on bills)
+// into the app. READ-ONLY against QBO — nothing is ever written to
+// QuickBooks here. Admin only. Rates are deduped by percentage (e.g. GST
+// 5%, HST 13%); codes keep the one-letter names (H, G, P, E, Z, M...).
+export async function syncQboTaxes() {
+  "use server";
+
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
+  const org = await getCurrentOrg(supabase);
+  if (!org || org.role !== "admin") {
+    redirect("/settings?qbo=error");
+  }
+
+  const conn = await getQboConnection(supabase, org.id);
+  if (!conn) {
+    redirect("/settings?qbo=error");
+  }
+
+  try {
+    const [rates, codes] = await Promise.all([
+      listTaxRates(conn),
+      listTaxCodes(conn),
+    ]);
+
+    if (rates.length > 0) {
+      const { error } = await supabase.from("qbo_tax_rates").upsert(
+        rates.map((r) => ({
+          organization_id: org.id,
+          qbo_tax_rate_id: r.qboTaxRateId,
+          name: r.name,
+          rate_value: r.rateValue,
+          synced_at: new Date().toISOString(),
+        })),
+        { onConflict: "organization_id,qbo_tax_rate_id" }
+      );
+      if (error) throw error;
+    }
+
+    if (codes.length > 0) {
+      const { error } = await supabase.from("qbo_tax_codes").upsert(
+        codes.map((c) => ({
+          organization_id: org.id,
+          qbo_tax_code_id: c.qboTaxCodeId,
+          name: c.name,
+          description: c.description,
+          synced_at: new Date().toISOString(),
+        })),
+        { onConflict: "organization_id,qbo_tax_code_id" }
+      );
+      if (error) throw error;
+    }
+
+    revalidatePath("/settings");
+    redirect(`/settings?qbo=tax_synced&count=${rates.length}`);
+  } catch (e) {
+    console.error("syncQboTaxes failed:", e);
+    redirect("/settings?qbo=error");
+  }
+}
+
+
+// Pull QuickBooks CLASSES (project numbers etc.) into the app. READ-ONLY
+// against QBO — nothing is ever written to QuickBooks here. Admin only.
+// New classes added in QBO show up in Flow after a sync.
+export async function syncQboClasses() {
+  "use server";
+
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
+  const org = await getCurrentOrg(supabase);
+  if (!org || org.role !== "admin") {
+    redirect("/settings?qbo=error");
+  }
+
+  const conn = await getQboConnection(supabase, org.id);
+  if (!conn) {
+    redirect("/settings?qbo=error");
+  }
+
+  try {
+    const classes = await listClasses(conn);
+    if (classes.length > 0) {
+      const { error } = await supabase.from("qbo_classes").upsert(
+        classes.map((c) => ({
+          organization_id: org.id,
+          qbo_class_id: c.qboClassId,
+          name: c.name,
+          active: c.active,
+          sub_class: c.subClass,
+          synced_at: new Date().toISOString(),
+        })),
+        { onConflict: "organization_id,qbo_class_id" }
+      );
+      if (error) throw error;
+    }
+    revalidatePath("/settings");
+    redirect(`/settings?qbo=classes_synced&count=${classes.length}`);
+  } catch (e) {
+    console.error("syncQboClasses failed:", e);
+    redirect("/settings?qbo=error");
+  }
+}
+
+
+// Pull QuickBooks categories (Chart of Accounts) into the app. READ-ONLY
+// against QBO — nothing is ever written to QuickBooks here, and no vendor
+// data is fetched. Admin only. Supports two modes:
+//   mode=tax        — only tax accounts (GST/HST/PST/...) — the starting point
+//   mode=categories — first N accounts by name (limit, default 10)
+export async function syncQboCategories(formData: FormData) {
+  "use server";
+
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
+  const org = await getCurrentOrg(supabase);
+  if (!org || org.role !== "admin") {
+    redirect("/settings?qbo=error");
+  }
+
+  const mode = String(formData.get("mode") ?? "categories");
+  const taxOnly = mode === "tax";
+  const rawLimit = Number(String(formData.get("limit") ?? "10"));
+  const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(Math.round(rawLimit), 200) : 10;
+
+  const conn = await getQboConnection(supabase, org.id);
+  if (!conn) {
+    redirect("/settings?qbo=error");
+  }
+
+  try {
+    const categories = await listCategories(conn, limit, { taxOnly });
+    if (categories.length > 0) {
+      const { error } = await supabase.from("qbo_categories").upsert(
+        categories.map((c) => ({
+          organization_id: org.id,
+          qbo_account_id: c.qboAccountId,
+          name: c.name,
+          account_type: c.accountType,
+          account_sub_type: c.accountSubType,
+          active: c.active,
+          synced_at: new Date().toISOString(),
+        })),
+        { onConflict: "organization_id,qbo_account_id" }
+      );
+      if (error) throw error;
+    }
+    revalidatePath("/settings");
+    redirect(`/settings?qbo=categories_synced&count=${categories.length}`);
+  } catch (e) {
+    console.error("syncQboCategories failed:", e);
+    redirect("/settings?qbo=error");
+  }
 }
 
 
