@@ -158,6 +158,41 @@ export async function decide(
     (a) => a.approver_id === user.id
   );
   if (alreadyDecided) {
+    // Self-heal: if this step is already fully resolved (e.g. an earlier
+    // attempt recorded the vote but the status update never landed), advance
+    // the invoice instead of leaving it stuck on "already decided".
+    const state = stepDecisionState(
+      currentStep.approval_mode,
+      requiredApproverIds,
+      existingDecisions ?? []
+    );
+    if (state === "approved") {
+      const lastStep = orderedSteps[orderedSteps.length - 1]?.step_order ?? 1;
+      const isFinalStep = invoice.current_step_order >= lastStep;
+      if (hasCosOrExtras) {
+        await supabase
+          .from("invoice_line_items")
+          .update({ class: "Extras" })
+          .eq("invoice_id", invoiceId);
+        await supabase
+          .from("invoices")
+          .update({ has_cos_or_extras: true })
+          .eq("id", invoiceId);
+      }
+      await supabase
+        .from("invoices")
+        .update({
+          status: isFinalStep ? "qbo_ready" : "on_approval",
+          current_step_order: isFinalStep
+            ? invoice.current_step_order
+            : invoice.current_step_order + 1,
+          step_override_approver_id: null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", invoiceId);
+      revalidatePath("/dashboard", "layout");
+      return;
+    }
     redirect(`/dashboard/${invoiceId}?error=already-decided`);
   }
 

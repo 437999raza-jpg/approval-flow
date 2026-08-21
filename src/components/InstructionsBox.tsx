@@ -31,6 +31,7 @@ export function InstructionsBox({
   hasCosOrExtras?: boolean;
 }) {
   const formRef = useRef<HTMLFormElement>(null);
+  const formId = "instructions-form";
   const [text, setText] = useState("");
   const [localCos, setLocalCos] = useState(false);
 
@@ -59,6 +60,7 @@ export function InstructionsBox({
           <input
             type="checkbox"
             name="has_cos_or_extras"
+            form={formId}
             checked={cos}
             onChange={(e) => setLocalCos(e.target.checked)}
             disabled={readOnly || cosLocked}
@@ -110,6 +112,7 @@ export function InstructionsBox({
 
       {/* Add your own note (append-only) */}
       <form
+        id={formId}
         ref={formRef}
         action={handleSubmit}
         className="mt-2 flex flex-1 flex-col justify-end gap-3"
