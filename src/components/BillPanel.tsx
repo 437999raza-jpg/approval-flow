@@ -459,6 +459,9 @@ export function BillPanel({
                     vendorName={invoice.vendor_name}
                     initial={supplierDefaults}
                     projects={projects}
+                    qboCategories={qboCategories}
+                    qboClasses={qboClasses}
+                    qboTaxRates={qboTaxRates}
                     saveAction={saveSupplierDefaults}
                   />
                 </div>

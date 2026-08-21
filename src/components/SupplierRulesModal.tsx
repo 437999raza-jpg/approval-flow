@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { Combobox } from "@/components/Combobox";
 
 export interface SupplierDefaultsValues {
   category: string;
@@ -15,14 +16,22 @@ export function SupplierRulesModal({
   vendorName,
   initial,
   projects,
+  qboCategories,
+  qboClasses,
+  qboTaxRates,
   saveAction,
 }: {
   vendorName: string;
   initial: SupplierDefaultsValues;
   projects: { id: string; name: string }[];
+  // QBO mirrors (read-only) for searchable pick-lists, same as the bill.
+  qboCategories?: string[];
+  qboClasses?: string[];
+  qboTaxRates?: { value: string; label: string }[];
   saveAction: (formData: FormData) => Promise<void>;
 }) {
   const [open, setOpen] = useState(false);
+  const formId = "supplier-rules-form";
 
   return (
     <>
@@ -58,6 +67,7 @@ export function SupplierRulesModal({
             </div>
 
             <form
+              id={formId}
               action={async (formData) => {
                 await saveAction(formData);
                 setOpen(false);
@@ -75,10 +85,13 @@ export function SupplierRulesModal({
                   <label className="mb-1 block text-xs font-medium text-slate-600">
                     Category
                   </label>
-                  <input
+                  <Combobox
+                    formId={formId}
                     name="category"
+                    options={qboCategories ?? []}
                     defaultValue={initial.category}
-                    placeholder="e.g. Roofing"
+                    placeholder="Search category…"
+                    onCommit={() => {}}
                     className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
                   />
                 </div>
@@ -86,9 +99,13 @@ export function SupplierRulesModal({
                   <label className="mb-1 block text-xs font-medium text-slate-600">
                     Class
                   </label>
-                  <input
+                  <Combobox
+                    formId={formId}
                     name="class"
+                    options={qboClasses ?? []}
                     defaultValue={initial.class}
+                    placeholder="Search class…"
+                    onCommit={() => {}}
                     className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
                   />
                 </div>
@@ -98,18 +115,15 @@ export function SupplierRulesModal({
                 <label className="mb-1 block text-xs font-medium text-slate-600">
                   Project / customer
                 </label>
-                <select
+                <Combobox
+                  formId={formId}
                   name="project_id"
+                  options={projects.map((p) => ({ value: p.id, label: p.name }))}
                   defaultValue={initial.project_id}
+                  placeholder="Search project…"
+                    onCommit={() => {}}
                   className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
-                >
-                  <option value="">— none —</option>
-                  {projects.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name}
-                    </option>
-                  ))}
-                </select>
+                />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
@@ -117,11 +131,15 @@ export function SupplierRulesModal({
                   <label className="mb-1 block text-xs font-medium text-slate-600">
                     Tax rate (%)
                   </label>
-                  <input
+                  <Combobox
+                    formId={formId}
                     name="tax_rate"
-                    type="number"
-                    step="0.01"
+                    options={qboTaxRates ?? []}
                     defaultValue={initial.tax_rate}
+                    placeholder="Tax %"
+                    onCommit={() => {}}
+                    showValue
+                    minQueryLength={1}
                     className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
                   />
                 </div>
