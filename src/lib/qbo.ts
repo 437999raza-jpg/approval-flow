@@ -268,12 +268,12 @@ export async function listProjects(
   conn: QboConnection,
   limit = 2000
 ): Promise<QboProject[]> {
-  // QBO caps query results at 1000 per call, so page through.
+  // QBO's query language can't filter on IsProject, so fetch all customers
+  // (paginated) and keep the ones flagged as projects.
   const all: QboProject[] = [];
   let startPosition = 1;
-  while (all.length < limit) {
-    const pageSize = Math.min(1000, limit - all.length);
-    const q = `select Id, DisplayName, IsProject, Active from Customer where IsProject = true order by DisplayName startposition ${startPosition} maxresults ${pageSize}`;
+  while (all.length < limit * 2) {
+    const q = `select Id, DisplayName, IsProject, Active from Customer order by DisplayName startposition ${startPosition} maxresults 1000`;
     const res = await qboFetch(conn, `/query?query=${encodeURIComponent(q)}`);
     if (!res.ok) {
       const body = await res.text();
@@ -283,22 +283,23 @@ export async function listProjects(
     }
     const json = (await res.json()) as {
       QueryResponse?: {
-        Customer?: { Id: string; DisplayName?: string; Active?: boolean }[];
+        Customer?: { Id: string; DisplayName?: string; IsProject?: boolean; Active?: boolean }[];
       };
     };
     const rows = json.QueryResponse?.Customer ?? [];
     if (rows.length === 0) break;
     for (const c of rows) {
+      if (c.IsProject !== true) continue;
       all.push({
         qboCustomerId: c.Id,
         name: c.DisplayName ?? "",
         active: c.Active ?? true,
       });
     }
-    if (rows.length < pageSize) break;
+    if (rows.length < 1000) break;
     startPosition += rows.length;
   }
-  return all;
+  return all.slice(0, limit);
 }
 
 // READ-ONLY: pull the company's Chart of Accounts (categories). This is the
