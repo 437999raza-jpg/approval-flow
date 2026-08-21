@@ -4,6 +4,7 @@ import { extractInvoiceFields } from "@/lib/extract-invoice";
 import { selectWorkflowForInvoice } from "@/lib/workflow-routing";
 import { normalizeForMatching, matchProjectFromPoNumber } from "@/lib/matching";
 import { matchSupplier } from "@/lib/qbo";
+import { fetchAllQboSuppliers } from "@/lib/qbo-all";
 import { computeLineItemTotals } from "@/lib/invoice-totals";
 
 const INVOICE_BUCKET = "invoices";
@@ -112,21 +113,20 @@ export async function createInvoiceFromFile({
   }
 
   // RULE: Flow never creates suppliers in QuickBooks. Match the OCR'd
-  // vendor to the nearest supplier in the read-only QBO mirror so the
-  // invoice carries the canonical QBO supplier name (which is also what
-  // sync uses later). Unmatched vendors stay as OCR'd and simply can't
-  // sync to QBO until a matching supplier exists there.
+  // vendor EXACTLY (normalized) against the read-only QBO mirror. An exact
+  // match stores the canonical QBO name; no match keeps the OCR name but
+  // flags the invoice (qbo_vendor_matched=false) so it's visibly marked
+  // and can't sync until a human picks the right supplier.
   let matchedVendorName: string | null = null;
   if (extracted?.vendor_name) {
-    const { data: qboSuppliers } = await supabase
-      .from("qbo_suppliers")
-      .select("name")
-      .eq("organization_id", organizationId)
-      .eq("active", true)
-      .limit(1000);
-    matchedVendorName = matchSupplier(qboSuppliers ?? [], extracted.vendor_name);
+    // Paginated: PostgREST caps responses at 1000 rows, and the mirror has
+    // 2,045 — matching against a truncated list would silently keep the
+    // OCR name and break the QBO push later.
+    const qboSuppliers = await fetchAllQboSuppliers(supabase, organizationId);
+    matchedVendorName = matchSupplier(qboSuppliers, extracted.vendor_name);
   }
   const vendorName = matchedVendorName ?? extracted?.vendor_name ?? null;
+  const qboVendorMatched = matchedVendorName !== null;
 
   // Dext/ApprovalMax-style: a saved supplier rule wins over whatever the
   // extraction guessed for the fields it covers — it's a business rule a
@@ -228,6 +228,7 @@ export async function createInvoiceFromFile({
       file_path: filePath,
       file_name: file.name,
       vendor_name: vendorName,
+      qbo_vendor_matched: qboVendorMatched,
       invoice_number: extracted?.invoice_number ?? null,
       amount: computedAmount,
       currency: supplierDefaults?.currency ?? extracted?.currency ?? "USD",

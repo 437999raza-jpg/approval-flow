@@ -1,4 +1,4 @@
--- Approval Flow: COMPLETE schema bundle (0001-0040), for a FRESH production
+-- Approval Flow: COMPLETE schema bundle (0001-0041), for a FRESH production
 -- Supabase project only. Do NOT run on an existing database.
 -- Generated 2026-08-21. Paste into the SQL editor and run once.
 
@@ -2345,3 +2345,15 @@ alter table invoices add constraint invoices_status_check
 -- Run via `supabase db push` or paste into the Supabase SQL editor.
 
 alter table qbo_tax_codes add column if not exists rate_value numeric;
+
+--------------------------------------------------------------------
+-- >>> supabase/migrations/0041_qbo_vendor_matched.sql
+--------------------------------------------------------------------
+-- 0041: flag invoices whose OCR'd vendor did NOT exactly match a QBO
+-- supplier. Such bills are visibly marked and cannot sync to QBO until a
+-- human picks the correct supplier (exact match). This makes vendor
+-- mismatches visible upfront instead of at push time.
+-- Run via `supabase db push` or paste into the Supabase SQL editor.
+
+alter table invoices add column if not exists qbo_vendor_matched boolean
+  not null default true;

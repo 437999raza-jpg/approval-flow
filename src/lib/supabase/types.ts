@@ -230,6 +230,7 @@ export interface Database {
           qbo_sync_status: "pending" | "synced" | "error" | null;
           qbo_synced_at: string | null;
           qbo_error: string | null;
+          qbo_vendor_matched: boolean;
           created_at: string;
           updated_at: string;
         };

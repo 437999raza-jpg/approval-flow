@@ -225,33 +225,24 @@ export async function listSuppliers(
 
 // Match an OCR'd vendor name to the nearest supplier already in QBO
 // (case/punctuation-insensitive, like the duplicate-matching normalizer).
-// Returns null when nothing is close enough — the bill then can't sync
-// until the supplier exists in QBO. Flow never creates suppliers.
+// Match an OCR'd vendor name to a QBO supplier. EXACT match only
+// (case/punctuation-insensitive via normalizeForMatching): "TRI-AN ELECTRIC
+// 2024 LTD" == "Tri-An Electric 2024 Ltd" match; anything less does not.
+//
+// This is deliberate: a fuzzy match could silently pair the invoice with the
+// wrong supplier and push a mismatched bill to QBO. If there is no exact
+// match, we return null and the invoice is flagged so a human fixes the
+// vendor before it can sync. Flow never creates suppliers.
 export function matchSupplier(
   suppliers: { name: string }[],
   vendorName: string | null | undefined
 ): string | null {
   const needle = normalizeForMatching(vendorName);
   if (!needle) return null;
-
-  // Exact normalized match first.
-  const exact = suppliers.find(
+  const hit = suppliers.find(
     (s) => normalizeForMatching(s.name) === needle
   );
-  if (exact) return exact.name;
-
-  // Then: every token of the needle present in the supplier name (in any
-  // order) — catches "TRI-AN ELECTRIC 2024 LTD" vs "TRI-AN ELECTRIC 2024
-  // LTD." and small OCR deviations, without fuzzy-matching random names.
-  const needleTokens = needle.split(" ").filter(Boolean);
-  if (needleTokens.length >= 2) {
-    const subset = suppliers.find((s) => {
-      const nameTokens = new Set(normalizeForMatching(s.name).split(" "));
-      return needleTokens.every((t) => nameTokens.has(t));
-    });
-    if (subset) return subset.name;
-  }
-  return null;
+  return hit?.name ?? null;
 }
 
 // READ-ONLY: pull the company's PROJECTS. In QuickBooks, projects live on

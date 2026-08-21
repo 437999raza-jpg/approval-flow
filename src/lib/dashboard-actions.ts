@@ -19,6 +19,7 @@ import {
 } from "@/lib/workflow-conditions";
 import type { Database, InvoiceStatus } from "@/lib/supabase/types";
 import { getQboConnection, listCategories, listTaxRates, listTaxCodes, listClasses, listSuppliers, listProjects, matchSupplier, createBill, attachDocuments } from "@/lib/qbo";
+import { fetchAllQboSuppliers } from "@/lib/qbo-all";
 import { buildQboAttachmentBundle } from "@/lib/qbo-attachments";
 
 // Server actions for the dashboard (moved out of the page component so
@@ -470,10 +471,23 @@ export async function saveBill(invoiceId: string, formData: FormData) {
     if (from !== to) changes[key] = { from, to };
   }
 
+  // If the vendor changed, re-check it against the QBO mirror and update
+  // the matched flag: an exact (normalized) match clears the warning; a
+  // still-unmatched name keeps it flagged so the bill can't sync wrongly.
+  const vendorChanged = next.vendor_name !== (before.vendor_name ?? null);
+  let qboVendorMatched: boolean | undefined;
+  if (vendorChanged && next.vendor_name) {
+    const suppliers = await fetchAllQboSuppliers(supabase, before.organization_id);
+    qboVendorMatched = matchSupplier(suppliers, next.vendor_name) !== null;
+  } else if (vendorChanged && !next.vendor_name) {
+    qboVendorMatched = false;
+  }
+
   await supabase
     .from("invoices")
     .update({
       ...next,
+      ...(qboVendorMatched !== undefined ? { qbo_vendor_matched: qboVendorMatched } : {}),
       updated_at: new Date().toISOString(),
     })
     .eq("id", invoiceId);
@@ -1715,15 +1729,16 @@ export async function syncToQbo(invoiceId: string) {
   try {
     // RULE 2 — resolve the supplier from the read-only QBO mirror; never
     // create one. The mirror is refreshed via Settings → Refresh data.
-    const { data: suppliers } = await supabase
-      .from("qbo_suppliers")
-      .select("name")
-      .eq("organization_id", inv.organization_id)
-      .eq("active", true);
-    const matchedName = matchSupplier(suppliers ?? [], inv.vendor_name);
+    // Paginated: PostgREST caps at 1000 rows, and the mirror has 2,045 —
+    // a truncated list would mismatch suppliers past the first 1000.
+    const suppliers = await fetchAllQboSuppliers(
+      supabase,
+      inv.organization_id
+    );
+    const matchedName = matchSupplier(suppliers, inv.vendor_name);
     if (!matchedName) {
       await fail(
-        `No matching supplier found in QuickBooks for "${inv.vendor_name}". Add the supplier in QuickBooks, then run Refresh data in Settings before syncing this bill.`
+        `Vendor "${inv.vendor_name}" does not exactly match any QuickBooks supplier. Pick the correct supplier from the Vendor list on the bill (or add it in QuickBooks and run Refresh data in Settings), then try again.`
       );
       revalidatePath("/dashboard", "layout");
       revalidatePath("/settings");

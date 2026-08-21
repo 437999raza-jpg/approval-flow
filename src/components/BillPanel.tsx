@@ -541,6 +541,12 @@ export function BillPanel({
                 disabled={readOnly}
                 onCommit={() => billFormRef.current?.requestSubmit()}
               />
+              {invoice.qbo_vendor_matched === false && (
+                <span className="block text-[10px] font-medium text-red-600">
+                  ⚠ Vendor not matched to a QuickBooks supplier — pick the
+                  correct one above before this bill can sync.
+                </span>
+              )}
             </label>
             <label>
               <span className={ghostLabel}>Email</span>
