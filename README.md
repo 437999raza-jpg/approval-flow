@@ -172,6 +172,18 @@ written to be idempotent (safe to re-run). Roughly:
 | 0028 | Adds `category` as a fourth condition field alongside Class/Supplier/Customer. |
 | 0029 | `workflow_change_impacts` — after-save reports of which in-flight bills a step's approver/condition edit affected. See [Workflow change impact reports](#workflow-change-impact-reports). |
 | 0030 | Fixes another silent auditor gap: `"invoices: members can insert"` (0001) only ever checked `is_org_member()`, true for auditors too, so an auditor could create a new invoice via manual upload despite the role being documented everywhere else as fully read-only. Adds the missing `is_org_auditor()` exclusion here, plus on `audit_log`/`notifications` inserts for defense in depth. Matching app-layer checks: the upload API route 403s an auditor, `/invoices/new` redirects them, and the dashboard hides "+ Add invoice" for the role. |
+| 0031 | `vendor_name_normalized` generated column on `invoices` — DB-side normalized vendor matching (mirrors the app's `normalizeForMatching`). |
+| 0032 | **QuickBooks Online connection**: `qbo_connections` (tokens per org, admin-only RLS), plus `qbo_bill_id` / `qbo_sync_status` / `qbo_synced_at` / `qbo_error` on invoices. |
+| 0033 | **Accounting-instructions thread**: `accounting_instructions` becomes an append-only thread (author + body + timestamp), the whole thread becomes the QBO bill memo on sync. |
+| 0034 | `qbo_categories` — read-only mirror of the QBO Chart of Accounts. |
+| 0035 | `qbo_tax_rates` + `qbo_tax_codes` — read-only mirrors of QBO tax rates and the codes (H/G/P/…) with their resolved rates. |
+| 0036 | `qbo_classes` — read-only mirror of QBO classes. |
+| 0037 | `qbo_suppliers` — read-only mirror of QBO vendors. **Hard rule: Flow never creates suppliers.** |
+| 0038 | `qbo_categories.acct_num` — categories display/resolve as "5-15450 - HVAC" (number + name). |
+| 0039 | **`qbo_ready` status** — the admin-only final gate. A bill completing every workflow step lands in `qbo_ready` (not `approved`) until an admin presses the final Sync button. |
+| 0040 | `qbo_tax_codes.rate_value` — stores each tax code's resolved purchase-side rate (H → 13%). |
+| 0041 | `invoices.qbo_vendor_matched` — flags invoices whose OCR'd vendor did NOT exactly match a QBO supplier (visible warning; can't sync until fixed). |
+| 0042 | `invoices.has_cos_or_extras` — CO/Extras flag decided by an approver and LOCKED once set; line items get class "Extras". |
 
 ---
 
@@ -329,17 +341,20 @@ just hidden in the UI.
 
 ## Invoice lifecycle & statuses
 
-Six statuses (migration 0017), matching ApprovalMax's own set:
+Seven statuses (migrations 0017, 0039), matching ApprovalMax's own set plus
+the QBO Ready final gate:
 
 ```
         Review Complete (admin)
-on_review ─────────────────────▶ on_approval ──approve (final step)──▶ approved
-   │                                 │  ▲
+on_review ─────────────────────▶ on_approval ──approve (final step)──▶ qbo_ready
+   │                                 │  ▲                                  │
    │                                 │  └── Hold ──▶ on_hold ──Back to Review──▶ on_review
-   │                                 │
-   │                                 └── reject ──▶ rejected
-   │
+   │                                 │                                      │
+   │                                 └── reject ──▶ rejected                 │
+   │                                                                         │
    └── Cancel (submitter or admin, from on_review/on_approval/on_hold) ──▶ cancelled
+                                                                              │
+qbo_ready ── admin presses "Sync to QuickBooks (final)" ──▶ approved (synced)
 ```
 
 - **`on_review`** — every new invoice lands here regardless of source. An
@@ -348,12 +363,18 @@ on_review ─────────────────────▶ on_
   may now be known) and moves it to `on_approval` at step 1.
 - **`on_approval`** — waiting on whoever's assigned to `current_step_order`
   ([admins can reassign](#admin-overrides)). Approve advances to the next
-  step or, on the final step, to `approved`. Reject goes straight to
+  step or, on the final step, to `qbo_ready`. Reject goes straight to
   `rejected`.
+- **`qbo_ready`** — the bill completed **every** step of the workflow and is
+  waiting for the **admin-only final release**. It appears on the dashboard's
+  **QBO Ready** tab; the admin opens it and presses **"Sync to QuickBooks
+  (final)"** — the only path to QBO. On success the status becomes
+  `approved`.
 - **`on_hold`** — the current approver paused it instead of deciding;
   **Back to Review** (admin) sends it back to `on_review` at step 1,
   resetting decisions but keeping the audit trail.
-- **`approved`** / **`rejected`** — terminal.
+- **`approved`** / **`rejected`** — terminal. `approved` means the bill was
+  synced to QuickBooks.
 - **`cancelled`** — terminal; the submitter or an admin can withdraw an
   invoice that hasn't been decided yet.
 
@@ -553,9 +574,17 @@ same PM already covers).
 
 Dext/ApprovalMax-style: a **"Supplier rules"** link on the Bill panel
 (next to the vendor name) opens a modal to save defaults for that supplier
-— Category, Class, Project/customer, Tax rate, Currency, and Payment terms
-(days after invoice date, computes the due date).
+— **Category, Tax rate, Currency, and Payment terms** (days after invoice
+date, computes the due date). Class and Project are deliberately NOT part
+of a supplier rule: a supplier works on many projects, and class is a
+per-bill choice, so those are never auto-filled from a rule.
 
+- **Starts blank** — it never pre-fills from the current invoice or a saved
+  rule; only the fields you explicitly pick are saved (blank fields never
+  overwrite existing defaults).
+- **Searchable pick-lists from the QBO mirrors**: Category (numbered QBO
+  accounts — type "hvac" → "5-15450 - HVAC"), Tax (QBO codes — type "h" →
+  H 13%). No free-form typing.
 - **Matched by normalized vendor name** (trim + lowercase) — there's no
   first-class Supplier entity yet, same matching used for [duplicate
   detection](#document-search) and the Document Search Supplier filter.
@@ -563,10 +592,6 @@ Dext/ApprovalMax-style: a **"Supplier rules"** link on the Bill panel
   vendor picks up the rule the moment it's created (see [Field
   extraction](#field-extraction-openrouter-model-agnostic)) — nothing to
   click per invoice.
-- **Prefills from the current invoice**, not a blank form: if no rule
-  exists yet for a vendor, opening "Supplier rules" fills in whatever's
-  already on that invoice's first line item + currency/dates, so confirming
-  a new rule is a one-click "yes, remember this" instead of retyping.
 - **"Apply to all invoices still in review from this supplier"** (checked
   by default): retroactively pushes the new rule onto every other
   `on_review` invoice from that vendor, not just future ones.
@@ -782,12 +807,6 @@ This is groundwork, not a finished product. In priority-ish order:
   exists, [Settings](#settings) can invite everyone else; bootstrapping
   that first admin is still a manual SQL insert (see [First org
   setup](#first-org-setup)).
-- **Accounting system sync** (Xero/QuickBooks/NetSuite) — the other half of
-  what makes a tool like ApprovalMax useful; not started. The shape is
-  ready for it: [`src/lib/qbo-attachments.ts`](src/lib/qbo-attachments.ts)
-  already knows what should attach to the synced bill (audit-trail PDF +
-  every invoice document), and the Bill panel's fields map directly to QBO
-  bill fields.
 - **Real Supplier entity** — supplier defaults, duplicate detection, and
   the Document Search Supplier filter all match on normalized vendor-name
   text rather than a proper linked entity. Works, but fragile if the same
@@ -802,30 +821,80 @@ This is groundwork, not a finished product. In priority-ish order:
   the Bill panel's document-style pass.
 - **Rejection detail** — a rejected invoice records the decision but
   there's no UI prompt to capture *why* at reject time.
+- **Auto-sync on approval** — bills reach QBO Ready automatically; the
+  final push to QBO is still a manual admin button per bill (no queue /
+  scheduled auto-sync yet).
+- **Inbound email** — ingestion is upload-first; the email path is stubbed
+  but not wired to a real inbound receiver.
 
 ---
 
 ## QuickBooks Online sync
 
-Admins connect the org to a QBO company once (Settings → QuickBooks Online,
-or the Connect button in the Bill panel). Approved bills are pushed to QBO
-with:
+### The two hard rules
 
-- vendor (looked up or created), line items (category → expense account),
-  tax, due date, and the **accounting instructions as the bill memo
-  (PrivateNote)** — internal, not printed on the invoice
-- **attachments**: the audit-trail PDF (chat + approval history) and every
-  invoice document (primary + added pages)
+1. **Flow never writes to QuickBooks except the final approved bill.**
+   Suppliers, taxes, classes, projects, and categories are all **read-only
+   mirrors** — Flow pulls them and matches against them; it never creates or
+   updates them in QBO.
+2. **No bill reaches QBO until the full approval workflow is done AND an
+   admin presses the final button.** The status flow is:
+   `on_review → on_approval → qbo_ready → approved (synced)`.
 
-Sync is manual per invoice ("Sync to QuickBooks" in the Bill panel) until a
-queue/auto-sync on approval is added. Status is tracked on the invoice
-(synced / error), and synced bills link straight to QBO.
+### Read-only mirrors (Settings → Data from QuickBooks)
+
+Each has a "Sync" button; **Refresh data** pulls everything at once:
+
+| Mirror | What it is | Notes |
+|---|---|---|
+| Tax | Codes with resolved rates (H → 13%, M&E (ON) → 13%, Out of Scope → 0%) | Only active codes with usable rates appear, exactly like Dext/ApprovalMax. The bill's Tax field offers these — type "h" → H (13%). |
+| Classes | QBO class list | Feeds the workflow matrix cells + bill Class field |
+| Categories | QBO Chart of Accounts, account numbers starting 2/5/6 | Display as "5-15450 - HVAC" (number + name); the bill Category field searches this |
+| Suppliers | Full QBO vendor list (paginated — PostgREST caps at 1000/request) | OCR vendor names are matched EXACTLY (normalized) against this list |
+| Projects | QBO customers with `IsProject=true` | Regular customers are NOT imported; 450+ projects |
+
+### Vendor matching (exact only)
+
+At ingestion, the OCR'd vendor name is matched **exactly** (case- and
+punctuation-insensitive) against the QBO supplier mirror. An exact match
+stores the canonical QBO name; **no match keeps the OCR name but flags the
+invoice** (`qbo_vendor_matched=false`) with a visible warning — and sync is
+refused until a human picks the correct supplier. Flow never creates
+suppliers, and never fuzzy-matches (a near-miss is a mismatch, not a guess).
+
+### CO/Extras
+
+Approvers (usually the project manager) see a **"Does this invoice have COs
+or Extras?"** checkbox in the Instructions section. The reviewer/accountant
+does not. Once an approver ticks it and approves:
+- a note for accounting becomes **required** (the Approve button is disabled
+  until one is typed; server-side enforced too),
+- every line item's class is set to **"Extras"** (a real QBO class),
+- the flag is **locked** — no downstream approver can remove it.
+
+### The final sync
+
+When a bill completes every workflow step it lands in **QBO Ready** (a
+dashboard tab, admin-only). The admin opens it and presses **"Sync to
+QuickBooks (final)"** — the only path to QBO. The bill is created with:
+
+- the **matched supplier** (resolved QBO vendor id — never created),
+- line items with **numbered categories** (resolved by account number),
+- tax, due date, and the **accounting-instructions thread as the bill memo
+  (PrivateNote)**,
+- **attachments**: the audit-trail PDF and every invoice document.
+
+On success the status becomes `approved` and the bill links straight to QBO.
+Errors are recorded on the invoice (`qbo_sync_status='error'` + message).
+
+### Connection & auth
 
 Requires an Intuit Developer app: create one at developer.intuit.com,
-register `QBO_REDIRECT_URI` in its Redirect URIs (exact match), and set the
-three `QBO_*` env vars. OAuth uses `com.intuit.quickbooks.accounting` scope;
+register `QBO_REDIRECT_URI` in its Redirect URIs (exact match — and make
+sure it's in the **Production** tab's list, not just Development), and set
+the three `QBO_*` env vars. OAuth uses `com.intuit.quickbooks.accounting`;
 tokens are stored per-org in `qbo_connections` (RLS: admins only) and
-refresh automatically.
+refresh automatically. The Settings page has Reconnect / Disconnect.
 
 ## Product direction
 
