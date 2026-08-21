@@ -239,6 +239,20 @@ export async function ensureVendor(
   );
 }
 
+// READ-ONLY: pull the company's Chart of Accounts (categories). This is the
+// only QBO interaction that should happen for now — nothing is ever written
+// to QuickBooks from the categories flow, and no vendor data is fetched.
+//
+// Options:
+//   taxOnly         — only accounts whose name looks like a tax account
+//   acctNumPrefixes — only accounts whose AcctNum starts with one of these
+//                     prefixes (e.g. ["5","6"] = Division 5 & 6 — the bill
+//                     categories in a CSI-numbered chart of accounts).
+// QBO's query language can't OR several LIKE patterns, so we fetch active
+// accounts once and filter in code — cheap at this company's size.
+const TAX_NAME_PATTERN =
+  /(^|[^a-z])(gst|hst|pst|qst|vat|tax|ministry of revenue|revenue agency)([^a-z]|$)/i;
+
 export interface QboCategory {
   qboAccountId: string;
   name: string;
@@ -247,27 +261,17 @@ export interface QboCategory {
   active: boolean;
 }
 
-// READ-ONLY: pull the company's Chart of Accounts (categories). This is the
-// only QBO interaction that should happen for now — nothing is ever written
-// to QuickBooks from the categories flow, and no vendor data is fetched.
-//
-// When taxOnly is set, only accounts whose name looks like a tax account are
-// returned (GST/HST/PST/QST/VAT/CRA/Ministry of Revenue...). QBO's query
-// language can't OR several LIKE patterns, so we fetch active accounts once
-// and filter in code — cheap at this company's size (a few hundred rows).
-const TAX_NAME_PATTERN =
-  /(^|[^a-z])(gst|hst|pst|qst|vat|tax|ministry of revenue|revenue agency)([^a-z]|$)/i;
-
 export async function listCategories(
   conn: QboConnection,
   limit = 10,
-  opts: { taxOnly?: boolean } = {}
+  opts: { taxOnly?: boolean; acctNumPrefixes?: string[] } = {}
 ): Promise<QboCategory[]> {
-  const taxOnly = opts.taxOnly ?? false;
-  // taxOnly needs the full active list to filter; otherwise honor the limit.
-  const q = taxOnly
-    ? "select Id, Name, AccountType, AccountSubType, Active from Account where Active = true maxresults 200"
-    : `select Id, Name, AccountType, AccountSubType, Active from Account where Active = true order by Name maxresults ${limit}`;
+  const { taxOnly = false, acctNumPrefixes } = opts;
+  // Filtering modes need the full active list; otherwise honor the limit.
+  const needsFullList = taxOnly || (acctNumPrefixes && acctNumPrefixes.length > 0);
+  const q = needsFullList
+    ? "select Id, Name, AcctNum, AccountType, AccountSubType, Active from Account where Active = true maxresults 1000"
+    : `select Id, Name, AcctNum, AccountType, AccountSubType, Active from Account where Active = true order by Name maxresults ${limit}`;
   const res = await qboFetch(conn, `/query?query=${encodeURIComponent(q)}`);
   if (!res.ok) {
     const body = await res.text();
@@ -280,6 +284,7 @@ export async function listCategories(
       Account?: {
         Id: string;
         Name?: string;
+        AcctNum?: string | null;
         AccountType?: string;
         AccountSubType?: string;
         Active?: boolean;
@@ -290,8 +295,19 @@ export async function listCategories(
   if (taxOnly) {
     accounts = accounts.filter((a) => TAX_NAME_PATTERN.test(a.Name ?? ""));
   }
+  if (acctNumPrefixes && acctNumPrefixes.length > 0) {
+    // Division 5/6 = Cost of Goods Sold + Expense (the bill categories).
+    // Drop balance-sheet strays like A/P that happen to have a matching
+    // account number prefix.
+    accounts = accounts.filter((a) => {
+      const num = (a.AcctNum ?? "").trim();
+      if (!acctNumPrefixes.some((p) => num.startsWith(p))) return false;
+      const type = a.AccountType ?? "";
+      return type === "Cost of Goods Sold" || type === "Expense";
+    });
+  }
   return accounts
-    .slice(0, taxOnly ? 50 : limit)
+    .slice(0, needsFullList ? 500 : limit)
     .map((a) => ({
       qboAccountId: a.Id,
       name: a.Name ?? "",

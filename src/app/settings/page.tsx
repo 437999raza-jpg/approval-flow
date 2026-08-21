@@ -5,7 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentOrg } from "@/lib/current-org";
 import { SignOutButton } from "@/components/SignOutButton";
-import { disconnectQbo, syncQboTaxes, syncQboClasses, syncQboCategories } from "@/lib/dashboard-actions";
+import { disconnectQbo, refreshQboData, syncQboTaxes, syncQboClasses, syncQboCategories } from "@/lib/dashboard-actions";
 import { qboEnv } from "@/lib/qbo";
 import { Avatar } from "@/components/Avatar";
 import { AvatarUploadForm } from "@/components/AvatarUploadForm";
@@ -473,6 +473,11 @@ export default async function SettingsPage({
                 Synced {searchParams.count ?? 0} class{Number(searchParams.count) === 1 ? "" : "es"} from QuickBooks (read-only).
               </div>
             )}
+            {searchParams.qbo === "refresh_done" && (
+              <div className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+                Refreshed {searchParams.count ?? 0} items from QuickBooks (read-only).
+              </div>
+            )}
             {searchParams.qbo === "error" && (
               <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
                 The QuickBooks connection failed. If you cancelled the
@@ -494,6 +499,12 @@ export default async function SettingsPage({
                     realm {qboConnection.realm_id}
                   </span>
                   <span className="flex-1" />
+                  <a
+                    href="/api/qbo/auth"
+                    className="rounded-md border border-blue-600 px-3 py-1.5 text-xs font-medium text-blue-600 hover:bg-blue-50"
+                  >
+                    Reconnect
+                  </a>
                   <form action={disconnectQbo}>
                     <button className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">
                       Disconnect
@@ -536,14 +547,25 @@ export default async function SettingsPage({
 
               {/* Data from QuickBooks — read-only pulls */}
               <div className="mt-3 border-t border-slate-100 pt-3">
-                <div className="text-xs font-bold uppercase tracking-wide text-slate-400">
-                  Data from QuickBooks
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="text-xs font-bold uppercase tracking-wide text-slate-400">
+                    Data from QuickBooks
+                  </div>
+                  <span className="flex-1" />
+                  {isAdmin && qboConnection && (
+                    <form action={refreshQboData}>
+                      <button className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">
+                        Refresh data
+                      </button>
+                    </form>
+                  )}
                 </div>
                 <p className="mt-1 text-sm text-slate-500">
                   QuickBooks is the source of truth. These lists are pulled
-                  read-only — when you add or update tax rates, tax codes, or
-                  classes in QuickBooks, sync them here to bring the changes
-                  into Flow. Nothing is ever written to QuickBooks from Flow.
+                  read-only — when you add or update tax rates, tax codes,
+                  classes, or categories in QuickBooks, refresh to bring the
+                  changes into Flow. Nothing is ever written to QuickBooks
+                  from Flow.
                 </p>
 
                 {/* Tax rates + codes */}
@@ -630,18 +652,16 @@ export default async function SettingsPage({
                   )}
                 </div>
 
-                {/* Categories (Chart of Accounts) */}
+                {/* Categories (Chart of Accounts) — Divisions 5 & 6 */}
                 <div className="mt-3 border-t border-slate-100 pt-3">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="text-sm font-semibold text-slate-800">
-                      Categories (Chart of Accounts)
+                      Categories (Divisions 5 &amp; 6)
                     </span>
                     {isAdmin && (
                       <form action={syncQboCategories}>
-                        <input type="hidden" name="mode" value="categories" />
-                        <input type="hidden" name="limit" value="10" />
                         <button className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">
-                          Import first 10 categories
+                          Sync categories from QuickBooks
                         </button>
                       </form>
                     )}

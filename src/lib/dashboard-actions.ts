@@ -1345,10 +1345,9 @@ export async function syncQboClasses() {
 
 // Pull QuickBooks categories (Chart of Accounts) into the app. READ-ONLY
 // against QBO — nothing is ever written to QuickBooks here, and no vendor
-// data is fetched. Admin only. Supports two modes:
-//   mode=tax        — only tax accounts (GST/HST/PST/...) — the starting point
-//   mode=categories — first N accounts by name (limit, default 10)
-export async function syncQboCategories(formData: FormData) {
+// data is fetched. Admin only. Currently pulls only the bill categories:
+// Division 5 & 6 (AcctNum starting with 5 or 6).
+export async function syncQboCategories() {
   "use server";
 
   const supabase = createClient();
@@ -1362,11 +1361,6 @@ export async function syncQboCategories(formData: FormData) {
     redirect("/settings?qbo=error");
   }
 
-  const mode = String(formData.get("mode") ?? "categories");
-  const taxOnly = mode === "tax";
-  const rawLimit = Number(String(formData.get("limit") ?? "10"));
-  const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(Math.round(rawLimit), 200) : 10;
-
   const conn = await getQboConnection(supabase, org.id);
   if (!conn) {
     redirect("/settings?qbo=error");
@@ -1374,7 +1368,10 @@ export async function syncQboCategories(formData: FormData) {
 
   let categories: Awaited<ReturnType<typeof listCategories>> = [];
   try {
-    categories = await listCategories(conn, limit, { taxOnly });
+    // Bill categories only: Division 5 & 6 (AcctNum starting with 5 or 6).
+    categories = await listCategories(conn, 500, {
+      acctNumPrefixes: ["5", "6"],
+    });
     if (categories.length > 0) {
       const { error } = await supabase.from("qbo_categories").upsert(
         categories.map((c) => ({
@@ -1399,6 +1396,106 @@ export async function syncQboCategories(formData: FormData) {
   // successful sync doesn't get mislabeled as a failure.
   revalidatePath("/settings");
   redirect(`/settings?qbo=categories_synced&count=${categories.length}`);
+}
+
+
+// One-click refresh: pulls tax rates + codes, classes, and categories
+// (Divisions 5 & 6) from QuickBooks in a single action. READ-ONLY against
+// QBO — nothing is ever written to QuickBooks. Admin only.
+export async function refreshQboData() {
+  "use server";
+
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
+  const org = await getCurrentOrg(supabase);
+  if (!org || org.role !== "admin") {
+    redirect("/settings?qbo=error");
+  }
+
+  const conn = await getQboConnection(supabase, org.id);
+  if (!conn) {
+    redirect("/settings?qbo=error");
+  }
+
+  try {
+    const [rates, codes, classes, categories] = await Promise.all([
+      listTaxRates(conn),
+      listTaxCodes(conn),
+      listClasses(conn),
+      listCategories(conn, 500, { acctNumPrefixes: ["5", "6"] }),
+    ]);
+
+    if (rates.length > 0) {
+      const { error } = await supabase.from("qbo_tax_rates").upsert(
+        rates.map((r) => ({
+          organization_id: org.id,
+          qbo_tax_rate_id: r.qboTaxRateId,
+          name: r.name,
+          rate_value: r.rateValue,
+          synced_at: new Date().toISOString(),
+        })),
+        { onConflict: "organization_id,qbo_tax_rate_id" }
+      );
+      if (error) throw error;
+    }
+
+    if (codes.length > 0) {
+      const { error } = await supabase.from("qbo_tax_codes").upsert(
+        codes.map((c) => ({
+          organization_id: org.id,
+          qbo_tax_code_id: c.qboTaxCodeId,
+          name: c.name,
+          description: c.description,
+          synced_at: new Date().toISOString(),
+        })),
+        { onConflict: "organization_id,qbo_tax_code_id" }
+      );
+      if (error) throw error;
+    }
+
+    if (classes.length > 0) {
+      const { error } = await supabase.from("qbo_classes").upsert(
+        classes.map((c) => ({
+          organization_id: org.id,
+          qbo_class_id: c.qboClassId,
+          name: c.name,
+          active: c.active,
+          sub_class: c.subClass,
+          synced_at: new Date().toISOString(),
+        })),
+        { onConflict: "organization_id,qbo_class_id" }
+      );
+      if (error) throw error;
+    }
+
+    if (categories.length > 0) {
+      const { error } = await supabase.from("qbo_categories").upsert(
+        categories.map((c) => ({
+          organization_id: org.id,
+          qbo_account_id: c.qboAccountId,
+          name: c.name,
+          account_type: c.accountType,
+          account_sub_type: c.accountSubType,
+          active: c.active,
+          synced_at: new Date().toISOString(),
+        })),
+        { onConflict: "organization_id,qbo_account_id" }
+      );
+      if (error) throw error;
+    }
+
+    const total =
+      rates.length + codes.length + classes.length + categories.length;
+    revalidatePath("/settings");
+    redirect(`/settings?qbo=refresh_done&count=${total}`);
+  } catch (e) {
+    console.error("refreshQboData failed:", e);
+    redirect("/settings?qbo=error");
+  }
 }
 
 
