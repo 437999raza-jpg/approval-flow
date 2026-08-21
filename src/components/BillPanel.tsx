@@ -1,4 +1,4 @@
-import { useRef, type ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { SupplierRulesModal, type SupplierDefaultsValues } from "./SupplierRulesModal";
 import { CollapsibleSection } from "./CollapsibleSection";
 import { MentionComposer } from "./MentionComposer";
@@ -84,6 +84,7 @@ export function BillPanel({
   alerts,
   onOpenDocument,
   onCollapse,
+  resetScrollKey,
 }: {
   invoice: Invoice;
   documentCount: number;
@@ -114,7 +115,17 @@ export function BillPanel({
   alerts?: ReactNode;
   onOpenDocument: () => void;
   onCollapse: () => void;
+  // Changing invoice resets the panel scroll to the top (the scroller is
+  // reused across navigations, so without this the next invoice opens
+  // scrolled down). Pass the invoice id.
+  resetScrollKey?: string;
 }) {
+  // Reset the panel scroll to the top whenever the invoice changes.
+  const scrollerRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    scrollerRef.current?.scrollTo({ top: 0 });
+  }, [resetScrollKey]);
+
   const fmt = (n: number | null) =>
     n != null
       ? n.toLocaleString(undefined, {
@@ -212,7 +223,7 @@ export function BillPanel({
         </button>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div ref={scrollerRef} className="min-h-0 flex-1 overflow-y-auto">
         {alerts && <div className="space-y-3 px-6 pt-4">{alerts}</div>}
 
         {/* Admin toolbar (one line, admin-only, at the very top) + Instructions

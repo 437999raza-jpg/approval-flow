@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import {
   BillPanel,
@@ -76,8 +76,17 @@ export function DetailSplit({
   const [docIndex, setDocIndex] = useState(0);
   const [billW, setBillW] = useState(480);
   const docRef = useRef<HTMLDivElement>(null);
+  const docScrollerRef = useRef<HTMLDivElement>(null);
   const billRef = useRef<HTMLDivElement>(null);
   const formRef = useRef<HTMLFormElement>(null);
+
+  // Switching invoices (navigation keeps this component mounted) must not
+  // carry the previous invoice's scroll position into the new one — reset
+  // both panes to the top.
+  const invoiceId = bill?.invoice.id;
+  useEffect(() => {
+    docScrollerRef.current?.scrollTo({ top: 0 });
+  }, [invoiceId]);
 
   const safeIndex = Math.min(docIndex, Math.max(documents.length - 1, 0));
   const doc = documents[safeIndex];
@@ -183,7 +192,7 @@ export function DetailSplit({
               )}
             </span>
           </div>
-          <div className="min-h-0 flex-1 overflow-auto p-4">
+          <div ref={docScrollerRef} className="min-h-0 flex-1 overflow-auto p-4">
             {doc?.url ? (
               doc.isImage ? (
                 // Deliberately a plain <img>: the source is an expiring
@@ -307,6 +316,7 @@ export function DetailSplit({
             alerts={bill.alerts}
             onOpenDocument={openDocument}
             onCollapse={() => setBillOpen(false)}
+            resetScrollKey={bill.invoice.id}
           />
         </div>
       ) : (
