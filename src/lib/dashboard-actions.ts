@@ -12,6 +12,7 @@ import {
 } from "@/lib/extract-invoice";
 import { selectWorkflowForInvoice } from "@/lib/workflow-routing";
 import { computeLineItemTotals } from "@/lib/invoice-totals";
+import { normalizeForMatching } from "@/lib/matching";
 import {
   effectiveApproversForStep,
   stepDecisionState,
@@ -558,7 +559,7 @@ export async function saveSupplierDefaults(
   );
 
   if (formData.get("apply_to_inbox") === "on") {
-    const normalized = vendorName.trim().toLowerCase();
+    const normalized = normalizeForMatching(vendorName);
     const { data: candidates } = await supabase
       .from("invoices")
       .select("id, bill_date, vendor_name")
@@ -566,7 +567,7 @@ export async function saveSupplierDefaults(
       .eq("status", "on_review");
 
     const matches = (candidates ?? []).filter(
-      (i) => i.vendor_name?.trim().toLowerCase() === normalized
+      (i) => normalizeForMatching(i.vendor_name) === normalized
     );
 
     for (const inv of matches) {

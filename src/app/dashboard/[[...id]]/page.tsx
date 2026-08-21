@@ -14,6 +14,7 @@ import type { SupplierDefaultsValues } from "@/components/SupplierRulesModal";
 import type { MultiSelectOption } from "@/components/MultiSelect";
 import type { Database, InvoiceStatus } from "@/lib/supabase/types";
 import { isPdfName, isImageName } from "@/lib/file-types";
+import { normalizeForMatching } from "@/lib/matching";
 import { buildAuditTimeline } from "@/lib/audit-timeline";
 import {
   effectiveApproversForStep,
@@ -190,10 +191,12 @@ export default async function DashboardPage({
   // Duplicate detection, org-wide: same (normalized vendor name, invoice
   // number), excluding cancelled/rejected invoices from the pool. Reused
   // for both the per-invoice "Possible duplicate" banner below and for
-  // pinning/badging duplicate pairs in the list pane.
+  // pinning/badging duplicate pairs in the list pane. Vendor/invoice
+  // numbers are normalized (lowercase, punctuation collapsed — e.g.
+  // "ONYX•FIRE…" and "ONYX FIRE…" match), see src/lib/matching.ts.
   const duplicateGroupKey = (i: Invoice): string | null =>
     i.invoice_number && i.vendor_name
-      ? `${i.vendor_name.trim().toLowerCase()}::${i.invoice_number.trim().toLowerCase()}`
+      ? `${normalizeForMatching(i.vendor_name)}::${normalizeForMatching(i.invoice_number)}`
       : null;
   const duplicateGroups = new Map<string, Invoice[]>();
   for (const inv of invoices ?? []) {
@@ -601,7 +604,7 @@ export default async function DashboardPage({
         .from("supplier_defaults")
         .select("*")
         .eq("organization_id", org.id)
-        .eq("vendor_name_normalized", selected.vendor_name.trim().toLowerCase())
+        .eq("vendor_name_normalized", normalizeForMatching(selected.vendor_name))
         .maybeSingle();
       if (sd) {
         supplierDefaultsForSelected = {

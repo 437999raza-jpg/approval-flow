@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database, InvoiceSource } from "@/lib/supabase/types";
 import { extractInvoiceFields } from "@/lib/extract-invoice";
 import { selectWorkflowForInvoice } from "@/lib/workflow-routing";
+import { normalizeForMatching } from "@/lib/matching";
 import { computeLineItemTotals } from "@/lib/invoice-totals";
 
 const INVOICE_BUCKET = "invoices";
@@ -37,7 +38,7 @@ async function getSupplierDefaults(
     .from("supplier_defaults")
     .select("category, class, project_id, tax_rate, payment_terms_days, currency")
     .eq("organization_id", organizationId)
-    .eq("vendor_name_normalized", vendorName.trim().toLowerCase())
+    .eq("vendor_name_normalized", normalizeForMatching(vendorName))
     .maybeSingle();
   return data ?? null;
 }
