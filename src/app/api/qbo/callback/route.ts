@@ -35,6 +35,11 @@ export async function GET(request: Request) {
 
   try {
     const tokens = await exchangeCodeForTokens(code);
+    if (!tokens.realmId) {
+      // Without the company id every API call fails with 3100 — surface it
+      // instead of storing a broken connection.
+      return NextResponse.redirect(new URL("/settings?qbo=error", url.origin));
+    }
     const admin = createAdminClient();
     await admin
       .from("qbo_connections")

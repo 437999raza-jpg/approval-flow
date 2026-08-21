@@ -69,13 +69,20 @@ async function tokenRequest(body: URLSearchParams): Promise<TokenResult> {
     access_token: string;
     refresh_token: string;
     expires_in: number;
-    realmId?: string;
+    realmId?: string | number;
   };
+  // Intuit returns the QBO company id as "realmId" in the token response.
+  // It is REQUIRED — without it every API call fails with 3100
+  // (ApplicationAuthorizationFailed) because the company context is empty.
+  const realmId =
+    typeof json.realmId === "string" || typeof json.realmId === "number"
+      ? String(json.realmId)
+      : "";
   return {
     accessToken: json.access_token,
     refreshToken: json.refresh_token,
     expiresIn: json.expires_in,
-    realmId: json.realmId ?? "",
+    realmId,
   };
 }
 
@@ -184,6 +191,12 @@ export async function ensureVendor(
   // 1) Exact display-name match first.
   const q = `select Id from Vendor where DisplayName = '${escaped}' and Active = true`;
   const res = await qboFetch(conn, `/query?query=${encodeURIComponent(q)}`);
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(
+      `QBO: vendor lookup failed (HTTP ${res.status}): ${body.slice(0, 300)}`
+    );
+  }
   const json = (await res.json()) as {
     QueryResponse?: { Vendor?: { Id: string }[] };
   };
@@ -235,6 +248,12 @@ export async function findExpenseAccount(
   if (name) {
     const q = `select Id from Account where Name = '${name.replace(/'/g, "''")}' and Active = true`;
     const res = await qboFetch(conn, `/query?query=${encodeURIComponent(q)}`);
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(
+        `QBO: account lookup failed (HTTP ${res.status}): ${body.slice(0, 300)}`
+      );
+    }
     const json = (await res.json()) as {
       QueryResponse?: { Account?: { Id: string }[] };
     };
