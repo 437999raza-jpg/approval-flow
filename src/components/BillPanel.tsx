@@ -1,7 +1,9 @@
 import { useRef } from "react";
 import { SupplierRulesModal, type SupplierDefaultsValues } from "./SupplierRulesModal";
+import { CollapsibleSection } from "./CollapsibleSection";
 import type { Database } from "@/lib/supabase/types";
 import { computeLineItemTotals } from "@/lib/invoice-totals";
+import type { AuditTimelineEntry } from "@/lib/audit-timeline";
 
 type Invoice = Database["public"]["Tables"]["invoices"]["Row"];
 type LineItem = Database["public"]["Tables"]["invoice_line_items"]["Row"];
@@ -33,6 +35,7 @@ export function BillPanel({
   readOnly,
   supplierDefaults,
   saveSupplierDefaults,
+  auditTimeline,
   onOpenDocument,
   onCollapse,
 }: {
@@ -52,6 +55,7 @@ export function BillPanel({
   readOnly: boolean;
   supplierDefaults: SupplierDefaultsValues;
   saveSupplierDefaults: (formData: FormData) => Promise<void>;
+  auditTimeline: AuditTimelineEntry[];
   onOpenDocument: () => void;
   onCollapse: () => void;
 }) {
@@ -333,6 +337,48 @@ export function BillPanel({
           <span className="text-slate-400" title="Available once QBO sync is enabled">
             Open in QuickBooks Online
           </span>
+        </div>
+
+        <div className="border-t border-slate-100 px-6 py-3">
+          <CollapsibleSection
+            title="Audit trail"
+            badge={auditTimeline.length}
+            defaultOpen={false}
+          >
+            <div className="mt-3 flex items-center justify-between gap-2">
+              <p className="text-xs text-slate-400">
+                Everything that happened on this invoice, in order.
+              </p>
+              <a
+                href={`/api/invoices/${invoice.id}/audit-trail`}
+                className="flex-none text-xs font-medium text-blue-600 hover:underline"
+              >
+                Download PDF
+              </a>
+            </div>
+            {auditTimeline.length === 0 ? (
+              <p className="mt-3 text-sm text-slate-400">No activity recorded yet.</p>
+            ) : (
+              <ol className="mt-3 space-y-3">
+                {auditTimeline.map((entry) => (
+                  <li key={entry.id} className="border-l-2 border-slate-200 pl-3">
+                    <div className="flex items-baseline justify-between gap-2">
+                      <p className="text-sm text-slate-700">
+                        <span className="font-medium">{entry.actorName}</span>{" "}
+                        {entry.kind === "comment" ? "commented" : entry.summary}
+                      </p>
+                      <span className="flex-none text-[11px] text-slate-400">
+                        {new Date(entry.at).toLocaleString()}
+                      </span>
+                    </div>
+                    {entry.detail && (
+                      <p className="mt-0.5 text-xs text-slate-500">{entry.detail}</p>
+                    )}
+                  </li>
+                ))}
+              </ol>
+            )}
+          </CollapsibleSection>
         </div>
       </div>
     </div>

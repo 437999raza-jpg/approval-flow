@@ -1941,6 +1941,7 @@ export default async function DashboardPage({
                     selected.id,
                     selected.vendor_name ?? selected.file_name
                   ),
+                  auditTimeline: auditTimelineForSelected,
                 }}
               >
                 {/* Side panel content: header + collapsible sections */}
@@ -2222,81 +2223,6 @@ export default async function DashboardPage({
                     )}
                   </CollapsibleSection>
 
-                  <CollapsibleSection title="Document details">
-                    <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
-                      <dt className="text-slate-500">Source</dt>
-                      <dd className="capitalize">
-                        {selected.source}
-                        {selected.source_email
-                          ? ` (${selected.source_email})`
-                          : ""}
-                      </dd>
-                      <dt className="text-slate-500">File</dt>
-                      <dd>
-                        {signedFileUrl ? (
-                          <a
-                            href={signedFileUrl}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="text-blue-600 hover:underline"
-                          >
-                            {selected.file_name}
-                          </a>
-                        ) : (
-                          selected.file_name
-                        )}
-                      </dd>
-                      <dt className="text-slate-500">Received</dt>
-                      <dd>{new Date(selected.created_at).toLocaleString()}</dd>
-                    </dl>
-                  </CollapsibleSection>
-
-                  <CollapsibleSection
-                    title="Audit trail"
-                    badge={auditTimelineForSelected.length}
-                    defaultOpen={false}
-                  >
-                    <div className="mt-3 flex items-center justify-between gap-2">
-                      <p className="text-xs text-slate-400">
-                        Everything that happened on this invoice, in order.
-                      </p>
-                      <a
-                        href={`/api/invoices/${selected.id}/audit-trail`}
-                        className="flex-none text-xs font-medium text-blue-600 hover:underline"
-                      >
-                        Download PDF
-                      </a>
-                    </div>
-                    {auditTimelineForSelected.length === 0 ? (
-                      <p className="mt-3 text-sm text-slate-400">
-                        No activity recorded yet.
-                      </p>
-                    ) : (
-                      <ol className="mt-3 space-y-3">
-                        {auditTimelineForSelected.map((entry) => (
-                          <li
-                            key={entry.id}
-                            className="border-l-2 border-slate-200 pl-3"
-                          >
-                            <div className="flex items-baseline justify-between gap-2">
-                              <p className="text-sm text-slate-700">
-                                <span className="font-medium">{entry.actorName}</span>{" "}
-                                {entry.kind === "comment" ? "commented" : entry.summary}
-                              </p>
-                              <span className="flex-none text-[11px] text-slate-400">
-                                {new Date(entry.at).toLocaleString()}
-                              </span>
-                            </div>
-                            {entry.detail && (
-                              <p className="mt-0.5 text-xs text-slate-500">
-                                {entry.detail}
-                              </p>
-                            )}
-                          </li>
-                        ))}
-                      </ol>
-                    )}
-                  </CollapsibleSection>
               </DetailSplit>
             )}
           </div>

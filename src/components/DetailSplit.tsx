@@ -5,6 +5,7 @@ import { BillPanel } from "./BillPanel";
 import { ResizeHandle } from "./ResizeHandle";
 import type { SupplierDefaultsValues } from "./SupplierRulesModal";
 import type { Database } from "@/lib/supabase/types";
+import type { AuditTimelineEntry } from "@/lib/audit-timeline";
 
 type Invoice = Database["public"]["Tables"]["invoices"]["Row"];
 type LineItem = Database["public"]["Tables"]["invoice_line_items"]["Row"];
@@ -34,6 +35,7 @@ export interface BillData {
   readOnly: boolean;
   supplierDefaults: SupplierDefaultsValues;
   saveSupplierDefaults: (formData: FormData) => Promise<void>;
+  auditTimeline: AuditTimelineEntry[];
 }
 
 interface DetailSplitProps {
@@ -303,6 +305,7 @@ export function DetailSplit({
             readOnly={bill.readOnly}
             supplierDefaults={bill.supplierDefaults}
             saveSupplierDefaults={bill.saveSupplierDefaults}
+            auditTimeline={bill.auditTimeline}
             onOpenDocument={openDocument}
             onCollapse={() => setBillOpen(false)}
           />
