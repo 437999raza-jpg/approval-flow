@@ -40,6 +40,7 @@ import {
   saveLineItem,
   deleteLineItem,
   reExtract,
+  syncToQbo,
 } from "@/lib/dashboard-actions";
 
 type Invoice = Database["public"]["Tables"]["invoices"]["Row"];
@@ -220,6 +221,13 @@ export default async function DashboardPage({
           .order("step_order", { ascending: true })
       : { data: [] };
   const stepIds = (allSteps ?? []).map((s) => s.id);
+
+  // QBO connection (RLS: admins only — everyone else gets null).
+  const { data: qboConnection } = await supabase
+    .from("qbo_connections")
+    .select("realm_id, company_name")
+    .eq("organization_id", org.id)
+    .maybeSingle();
 
   const [
     { data: allStepApprovers },
@@ -1053,6 +1061,10 @@ export default async function DashboardPage({
                   saveLineItem: saveLineItem.bind(null, selected.id),
                   deleteLineItem: deleteLineItem.bind(null, selected.id),
                   reExtract: reExtract.bind(null, selected.id),
+                  syncToQbo: syncToQbo.bind(null, selected.id),
+                  qboConnected: !!qboConnection,
+                  qboCompanyName: qboConnection?.company_name ?? null,
+                  qboRealmId: qboConnection?.realm_id ?? null,
                   backToReview: backToReview.bind(null, selected.id),
                   canReview: canReviewNow,
                   readOnly: !canEdit,

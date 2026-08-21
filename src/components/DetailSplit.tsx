@@ -50,6 +50,10 @@ export interface BillData {
   approval: BillApprovalData;
   admin: BillAdminData;
   instructions: BillInstructionsData;
+  syncToQbo: () => Promise<void>;
+  qboConnected: boolean;
+  qboCompanyName: string | null;
+  qboRealmId: string | null;
   alerts?: ReactNode;
 }
 
@@ -313,6 +317,10 @@ export function DetailSplit({
             approval={bill.approval}
             admin={bill.admin}
             instructions={bill.instructions}
+            syncToQbo={bill.syncToQbo}
+            qboConnected={bill.qboConnected}
+            qboCompanyName={bill.qboCompanyName}
+            qboRealmId={bill.qboRealmId}
             alerts={bill.alerts}
             onOpenDocument={openDocument}
             onCollapse={() => setBillOpen(false)}

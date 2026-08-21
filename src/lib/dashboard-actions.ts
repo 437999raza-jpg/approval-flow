@@ -18,6 +18,8 @@ import {
   stepDecisionState,
 } from "@/lib/workflow-conditions";
 import type { Database, InvoiceStatus } from "@/lib/supabase/types";
+import { getQboConnection, createBill, attachDocuments } from "@/lib/qbo";
+import { buildQboAttachmentBundle } from "@/lib/qbo-attachments";
 
 // Server actions for the dashboard (moved out of the page component so
 // the page stays render-only). Authored by Araza.
@@ -1186,3 +1188,122 @@ export async function reExtract(invoiceId: string) {
   revalidatePath("/dashboard", "layout");
 }
 
+
+// Sync an invoice's bill to QuickBooks Online (admin only). Creates the
+// bill (vendor, line items, tax, memo/PrivateNote from the accounting
+// instructions) and attaches the audit-trail PDF plus every invoice
+// document. Errors are recorded on the invoice (qbo_sync_status='error').
+export async function syncToQbo(invoiceId: string) {
+  "use server";
+
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+  if (!(await canReview(supabase))) return;
+
+  const { data: inv } = await supabase
+    .from("invoices")
+    .select(
+      "id, organization_id, vendor_name, invoice_number, bill_date, due_date, currency, tax_amount, accounting_instructions, created_at"
+    )
+    .eq("id", invoiceId)
+    .single();
+  if (!inv || !inv.vendor_name) return;
+
+  const fail = async (message: string) => {
+    await supabase
+      .from("invoices")
+      .update({
+        qbo_sync_status: "error",
+        qbo_error: message,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", invoiceId);
+    await supabase.from("audit_log").insert({
+      organization_id: inv.organization_id,
+      invoice_id: invoiceId,
+      actor_id: user.id,
+      action: "invoice.qbo_sync_failed",
+      metadata: { error: message },
+    });
+  };
+
+  const conn = await getQboConnection(supabase, inv.organization_id);
+  if (!conn) {
+    await fail("QuickBooks is not connected — connect it in Settings.");
+    revalidatePath("/dashboard", "layout");
+    return;
+  }
+
+  try {
+    const { data: lineItems } = await supabase
+      .from("invoice_line_items")
+      .select("description, amount, category")
+      .eq("invoice_id", invoiceId);
+
+    const bill = await createBill(conn, {
+      vendorName: inv.vendor_name,
+      billDate: inv.bill_date ?? inv.created_at.slice(0, 10),
+      dueDate: inv.due_date ?? undefined,
+      currency: inv.currency,
+      memo: inv.accounting_instructions ?? undefined,
+      lines: (lineItems ?? []).map((li) => ({
+        description: li.description,
+        amount: li.amount ?? 0,
+        account: li.category,
+      })),
+      taxAmount: inv.tax_amount ?? 0,
+    });
+
+    const attachments = await buildQboAttachmentBundle(supabase, invoiceId);
+    if (attachments) {
+      await attachDocuments(conn, bill.billId, attachments);
+    }
+
+    await supabase
+      .from("invoices")
+      .update({
+        qbo_bill_id: bill.billId,
+        qbo_sync_status: "synced",
+        qbo_synced_at: new Date().toISOString(),
+        qbo_error: null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", invoiceId);
+
+    await supabase.from("audit_log").insert({
+      organization_id: inv.organization_id,
+      invoice_id: invoiceId,
+      actor_id: user.id,
+      action: "invoice.qbo_synced",
+      metadata: { qbo_bill_id: bill.billId },
+    });
+  } catch (e) {
+    await fail(e instanceof Error ? e.message : String(e));
+  }
+
+  revalidatePath("/dashboard", "layout");
+}
+
+// Disconnect the org from QuickBooks (admin only).
+export async function disconnectQbo() {
+  "use server";
+
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
+  const org = await getCurrentOrg(supabase);
+  if (!org || org.role !== "admin") return;
+
+  await supabase
+    .from("qbo_connections")
+    .delete()
+    .eq("organization_id", org.id);
+
+  revalidatePath("/settings");
+}

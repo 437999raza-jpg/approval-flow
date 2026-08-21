@@ -81,6 +81,10 @@ export function BillPanel({
   approval,
   admin,
   instructions,
+  syncToQbo,
+  qboConnected,
+  qboCompanyName,
+  qboRealmId,
   alerts,
   onOpenDocument,
   onCollapse,
@@ -110,6 +114,10 @@ export function BillPanel({
   approval: BillApprovalData;
   admin: BillAdminData;
   instructions: BillInstructionsData;
+  syncToQbo: () => Promise<void>;
+  qboConnected: boolean;
+  qboCompanyName: string | null;
+  qboRealmId: string | null;
   // Server-rendered banners (decision errors, possible-duplicate warnings)
   // slotted in above everything else.
   alerts?: ReactNode;
@@ -622,9 +630,66 @@ export function BillPanel({
               </button>
             </form>
           )}
-          <span className="text-slate-400" title="Available once QBO sync is enabled">
-            Open in QuickBooks Online
-          </span>
+        </div>
+
+        {/* QuickBooks Online sync */}
+        <div className="border-t border-slate-100 px-6 py-3 text-xs">
+          <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">
+            QuickBooks Online
+          </div>
+          <div className="mt-2 space-y-2">
+            {invoice.qbo_sync_status === "synced" ? (
+              <p className="flex items-center gap-2 text-emerald-700">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                Synced to QuickBooks
+                {invoice.qbo_synced_at
+                  ? ` — ${new Date(invoice.qbo_synced_at).toLocaleDateString()}`
+                  : ""}
+                {qboConnected && qboRealmId && invoice.qbo_bill_id && (
+                  <a
+                    href={`https://qbo.intuit.com/app/bill?txnId=${invoice.qbo_bill_id}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="font-medium text-blue-600 hover:underline"
+                  >
+                    Open in QuickBooks Online ↗
+                  </a>
+                )}
+              </p>
+            ) : invoice.qbo_sync_status === "error" ? (
+              <p className="text-red-600">
+                Sync failed
+                {invoice.qbo_error ? `: ${invoice.qbo_error}` : ""}
+              </p>
+            ) : (
+              <p className="text-slate-400">Not synced to QuickBooks yet.</p>
+            )}
+            {!readOnly && (
+              <div className="flex flex-wrap items-center gap-2">
+                {qboConnected ? (
+                  <form action={syncToQbo}>
+                    <button className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">
+                      {invoice.qbo_sync_status === "synced"
+                        ? "Sync again"
+                        : "Sync to QuickBooks"}
+                    </button>
+                  </form>
+                ) : (
+                  <a
+                    href="/api/qbo/auth"
+                    className="rounded-md border border-slate-300 px-3 py-1.5 font-medium text-slate-600 hover:bg-slate-50"
+                  >
+                    Connect QuickBooks
+                  </a>
+                )}
+                {qboConnected && qboCompanyName && (
+                  <span className="text-slate-400">
+                    Connected to {qboCompanyName}
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
         </div>
 
         <div className="border-t border-slate-100 px-6 py-3">

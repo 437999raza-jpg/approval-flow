@@ -5,6 +5,8 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentOrg } from "@/lib/current-org";
 import { SignOutButton } from "@/components/SignOutButton";
+import { disconnectQbo } from "@/lib/dashboard-actions";
+import { qboEnv } from "@/lib/qbo";
 import { Avatar } from "@/components/Avatar";
 import { AvatarUploadForm } from "@/components/AvatarUploadForm";
 import { AddUsersModal } from "@/components/AddUsersModal";
@@ -244,7 +246,7 @@ async function deleteProject(projectId: string) {
 export default async function SettingsPage({
   searchParams,
 }: {
-  searchParams: { error?: string; q?: string };
+  searchParams: { error?: string; q?: string; qbo?: string };
 }) {
   const supabase = createClient();
 
@@ -274,6 +276,13 @@ export default async function SettingsPage({
   }
 
   const isAdmin = org.role === "admin";
+
+  // QBO connection (RLS: admins only — everyone else sees nothing).
+  const { data: qboConnection } = await supabase
+    .from("qbo_connections")
+    .select("realm_id, company_name, connected_at")
+    .eq("organization_id", org.id)
+    .maybeSingle();
 
   const [{ data: members }, { data: projects }] = await Promise.all([
     supabase
@@ -386,6 +395,72 @@ export default async function SettingsPage({
                   <AvatarUploadForm uploadAction={uploadAvatar} />
                 </div>
               </div>
+            </div>
+          </section>
+
+          {/* QuickBooks Online */}
+          <section className="mt-8">
+            <h2 className="text-lg font-semibold">QuickBooks Online</h2>
+            {searchParams.qbo === "connected" && (
+              <div className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+                Connected to QuickBooks successfully.
+              </div>
+            )}
+            {searchParams.qbo === "error" && (
+              <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                The QuickBooks connection failed. If you cancelled the
+                authorization, just try again.
+              </div>
+            )}
+            <div className="mt-3 rounded-lg border border-slate-200 bg-white p-4 text-sm">
+              {qboConnection ? (
+                <div className="flex flex-wrap items-center gap-3">
+                  <span className="text-slate-700">
+                    Connected to{" "}
+                    <strong>{qboConnection.company_name ?? "QuickBooks"}</strong>
+                  </span>
+                  <span className="text-xs text-slate-400">
+                    realm {qboConnection.realm_id}
+                  </span>
+                  <span className="flex-1" />
+                  <form action={disconnectQbo}>
+                    <button className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">
+                      Disconnect
+                    </button>
+                  </form>
+                </div>
+              ) : isAdmin ? (
+                qboEnv() ? (
+                  <div className="flex flex-wrap items-center gap-3">
+                    <span className="text-slate-600">
+                      Connect this org to a QuickBooks company to sync
+                      approved bills (vendor, line items, memo, and the audit
+                      PDF + documents as attachments).
+                    </span>
+                    <span className="flex-1" />
+                    <a
+                      href="/api/qbo/auth"
+                      className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+                    >
+                      Connect QuickBooks
+                    </a>
+                  </div>
+                ) : (
+                  <p className="text-slate-500">
+                    QuickBooks is not configured on this server. Set{" "}
+                    <code className="rounded bg-slate-100 px-1">QBO_CLIENT_ID</code>,{" "}
+                    <code className="rounded bg-slate-100 px-1">QBO_CLIENT_SECRET</code>{" "}
+                    and{" "}
+                    <code className="rounded bg-slate-100 px-1">QBO_REDIRECT_URI</code>{" "}
+                    in <code className="rounded bg-slate-100 px-1">.env.local</code>{" "}
+                    (and register the redirect URI in your Intuit app).
+                  </p>
+                )
+              ) : (
+                <p className="text-slate-500">
+                  QuickBooks sync is managed by the org admin.
+                </p>
+              )}
             </div>
           </section>
 

@@ -224,6 +224,10 @@ export interface Database {
           current_step_order: number;
           accounting_instructions: string | null;
           step_override_approver_id: string | null;
+          qbo_bill_id: string | null;
+          qbo_sync_status: "pending" | "synced" | "error" | null;
+          qbo_synced_at: string | null;
+          qbo_error: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -365,6 +369,32 @@ export interface Database {
         > & { organization_id: string; name: string };
         Update: Partial<
           Database["public"]["Tables"]["saved_reports"]["Row"]
+        >;
+        Relationships: [];
+      };
+      qbo_connections: {
+        Row: {
+          id: string;
+          organization_id: string;
+          realm_id: string;
+          access_token: string;
+          refresh_token: string;
+          expires_at: string;
+          company_name: string | null;
+          connected_at: string;
+          updated_at: string;
+        };
+        Insert: Partial<
+          Database["public"]["Tables"]["qbo_connections"]["Row"]
+        > & {
+          organization_id: string;
+          realm_id: string;
+          access_token: string;
+          refresh_token: string;
+          expires_at: string;
+        };
+        Update: Partial<
+          Database["public"]["Tables"]["qbo_connections"]["Row"]
         >;
         Relationships: [];
       };
