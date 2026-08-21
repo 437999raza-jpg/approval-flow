@@ -1244,8 +1244,10 @@ export async function syncQboTaxes() {
     redirect("/settings?qbo=error");
   }
 
+  let rates: Awaited<ReturnType<typeof listTaxRates>> = [];
+  let codes: Awaited<ReturnType<typeof listTaxCodes>> = [];
   try {
-    const [rates, codes] = await Promise.all([
+    [rates, codes] = await Promise.all([
       listTaxRates(conn),
       listTaxCodes(conn),
     ]);
@@ -1277,13 +1279,16 @@ export async function syncQboTaxes() {
       );
       if (error) throw error;
     }
-
-    revalidatePath("/settings");
-    redirect(`/settings?qbo=tax_synced&count=${rates.length}`);
   } catch (e) {
     console.error("syncQboTaxes failed:", e);
     redirect("/settings?qbo=error");
   }
+
+  // NOTE: redirect() throws internally — it must live OUTSIDE the try/catch
+  // above, or the catch swallows it and every sync shows the error banner
+  // even when it succeeded.
+  revalidatePath("/settings");
+  redirect(`/settings?qbo=tax_synced&count=${rates.length}`);
 }
 
 
@@ -1309,8 +1314,9 @@ export async function syncQboClasses() {
     redirect("/settings?qbo=error");
   }
 
+  let classes: Awaited<ReturnType<typeof listClasses>> = [];
   try {
-    const classes = await listClasses(conn);
+    classes = await listClasses(conn);
     if (classes.length > 0) {
       const { error } = await supabase.from("qbo_classes").upsert(
         classes.map((c) => ({
@@ -1325,12 +1331,15 @@ export async function syncQboClasses() {
       );
       if (error) throw error;
     }
-    revalidatePath("/settings");
-    redirect(`/settings?qbo=classes_synced&count=${classes.length}`);
   } catch (e) {
     console.error("syncQboClasses failed:", e);
     redirect("/settings?qbo=error");
   }
+
+  // redirect() throws internally — keep it OUTSIDE the try/catch so a
+  // successful sync doesn't get mislabeled as a failure.
+  revalidatePath("/settings");
+  redirect(`/settings?qbo=classes_synced&count=${classes.length}`);
 }
 
 
@@ -1363,8 +1372,9 @@ export async function syncQboCategories(formData: FormData) {
     redirect("/settings?qbo=error");
   }
 
+  let categories: Awaited<ReturnType<typeof listCategories>> = [];
   try {
-    const categories = await listCategories(conn, limit, { taxOnly });
+    categories = await listCategories(conn, limit, { taxOnly });
     if (categories.length > 0) {
       const { error } = await supabase.from("qbo_categories").upsert(
         categories.map((c) => ({
@@ -1380,12 +1390,15 @@ export async function syncQboCategories(formData: FormData) {
       );
       if (error) throw error;
     }
-    revalidatePath("/settings");
-    redirect(`/settings?qbo=categories_synced&count=${categories.length}`);
   } catch (e) {
     console.error("syncQboCategories failed:", e);
     redirect("/settings?qbo=error");
   }
+
+  // redirect() throws internally — keep it OUTSIDE the try/catch so a
+  // successful sync doesn't get mislabeled as a failure.
+  revalidatePath("/settings");
+  redirect(`/settings?qbo=categories_synced&count=${categories.length}`);
 }
 
 
