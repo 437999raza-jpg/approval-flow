@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import type { BillInstructionsEntry } from "./BillPanel";
 
 // Instructions for accounting — an append-only thread. Each approver ADDS
@@ -10,6 +10,8 @@ import type { BillInstructionsEntry } from "./BillPanel";
 //
 // For the approver the Add box IS the Approve button: type a note, press
 // Approve — the note is appended and the invoice approved in one motion.
+// The box is controlled and clears after a successful save, so a saved
+// note never lingers as if it were still unsent.
 // Authored by Araza.
 export function InstructionsBox({
   entries,
@@ -23,6 +25,16 @@ export function InstructionsBox({
   readOnly?: boolean;
 }) {
   const formRef = useRef<HTMLFormElement>(null);
+  const [text, setText] = useState("");
+
+  // Wraps the server action so we can clear the box once the note is saved.
+  // The textarea is controlled (value=text), so its value is submitted with
+  // the form; after the action resolves we reset it to empty.
+  async function handleSubmit(formData: FormData) {
+    const action = approve ?? saveInstructions;
+    await action(formData);
+    setText("");
+  }
 
   return (
     <div className="flex h-full flex-col">
@@ -60,13 +72,14 @@ export function InstructionsBox({
       {/* Add your own note (append-only) */}
       <form
         ref={formRef}
-        action={approve ?? saveInstructions}
+        action={handleSubmit}
         className="mt-2 flex flex-1 flex-col justify-end gap-3"
       >
         {!readOnly && (
           <textarea
             name="instructions"
-            defaultValue=""
+            value={text}
+            onChange={(e) => setText(e.target.value)}
             rows={2}
             placeholder="Add a note for accounting (e.g. Bill to the customer, add 5% profit…)"
             onBlur={
