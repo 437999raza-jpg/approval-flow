@@ -45,7 +45,6 @@ import {
   saveLineItem,
   deleteLineItem,
   reExtract,
-  syncToQbo,
 } from "@/lib/dashboard-actions";
 
 type Invoice = Database["public"]["Tables"]["invoices"]["Row"];
@@ -1112,7 +1111,6 @@ export default async function DashboardPage({
                   saveLineItem: saveLineItem.bind(null, selected.id),
                   deleteLineItem: deleteLineItem.bind(null, selected.id),
                   reExtract: reExtract.bind(null, selected.id),
-                  syncToQbo: syncToQbo.bind(null, selected.id),
                   qboConnected: !!qboConnection,
                   qboRealmId: qboConnection?.realm_id ?? null,
                   backToReview: backToReview.bind(null, selected.id),

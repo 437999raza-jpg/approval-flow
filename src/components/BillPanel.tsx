@@ -90,7 +90,6 @@ export function BillPanel({
   approval,
   admin,
   instructions,
-  syncToQbo,
   qboConnected,
   qboRealmId,
   alerts,
@@ -122,7 +121,6 @@ export function BillPanel({
   approval: BillApprovalData;
   admin: BillAdminData;
   instructions: BillInstructionsData;
-  syncToQbo: () => Promise<void>;
   qboConnected: boolean;
   qboRealmId: string | null;
   // Server-rendered banners (decision errors, possible-duplicate warnings)
@@ -679,18 +677,9 @@ export function BillPanel({
             ) : (
               <p className="text-slate-400">Not synced to QuickBooks yet.</p>
             )}
-            {!readOnly && qboConnected && (
-              <form action={syncToQbo}>
-                <button className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">
-                  {invoice.qbo_sync_status === "synced"
-                    ? "Sync again"
-                    : "Sync to QuickBooks"}
-                </button>
-              </form>
-            )}
-            {!readOnly && !qboConnected && (
+            {!readOnly && (
               <p className="text-slate-400">
-                Connect QuickBooks in Settings to enable sync.
+                Sync to QuickBooks is managed in Settings → Integrations.
               </p>
             )}
           </div>

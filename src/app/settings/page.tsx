@@ -5,7 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentOrg } from "@/lib/current-org";
 import { SignOutButton } from "@/components/SignOutButton";
-import { disconnectQbo } from "@/lib/dashboard-actions";
+import { disconnectQbo, syncToQbo } from "@/lib/dashboard-actions";
 import { qboEnv } from "@/lib/qbo";
 import { Avatar } from "@/components/Avatar";
 import { AvatarUploadForm } from "@/components/AvatarUploadForm";
@@ -298,6 +298,17 @@ export default async function SettingsPage({
     usageByStatus.set(inv.status, (usageByStatus.get(inv.status) ?? 0) + 1);
   }
   const usageTotal = (monthInvoices ?? []).length;
+
+  // Sync center: invoices not yet synced to QBO (admin-only view).
+  const { data: unsyncedInvoices } = isAdmin
+    ? await supabase
+        .from("invoices")
+        .select("id, vendor_name, invoice_number, amount, currency, status, qbo_sync_status, qbo_error")
+        .eq("organization_id", org.id)
+        .neq("qbo_sync_status", "synced")
+        .order("created_at", { ascending: false })
+        .limit(30)
+    : { data: [] };
   const rate = Number(process.env.BILLING_RATE_PER_INVOICE || 5);
   const suggestedCharge = usageTotal * rate;
 
@@ -487,6 +498,54 @@ export default async function SettingsPage({
                 </p>
               )}
               </div>
+
+              {/* Sync center */}
+              {isAdmin && qboConnection && (
+                <div className="mt-3 border-t border-slate-100 pt-3">
+                  <div className="text-xs font-bold uppercase tracking-wide text-slate-400">
+                    Bills to sync
+                  </div>
+                  {unsyncedInvoices && unsyncedInvoices.length > 0 ? (
+                    <ul className="mt-2 divide-y divide-slate-100">
+                      {unsyncedInvoices.map((inv) => (
+                        <li
+                          key={inv.id}
+                          className="flex flex-wrap items-center gap-3 py-2 text-sm"
+                        >
+                          <div className="min-w-0 flex-1">
+                            <div className="truncate font-medium text-slate-800">
+                              {inv.vendor_name ?? inv.invoice_number ?? "Invoice"}
+                            </div>
+                            <div className="text-xs text-slate-400">
+                              {inv.invoice_number ?? "—"} · {inv.status.replace(/_/g, " ")}
+                              {inv.qbo_sync_status === "error" && inv.qbo_error ? (
+                                <span className="ml-1 text-red-500">· {inv.qbo_error}</span>
+                              ) : null}
+                            </div>
+                          </div>
+                          {inv.amount != null && (
+                            <span className="text-xs text-slate-500">
+                              {inv.amount.toLocaleString(undefined, {
+                                style: "currency",
+                                currency: inv.currency,
+                              })}
+                            </span>
+                          )}
+                          <form action={syncToQbo.bind(null, inv.id)}>
+                            <button className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">
+                              Sync
+                            </button>
+                          </form>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="mt-2 text-sm text-slate-400">
+                      All invoices synced to QuickBooks.
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
           </section>
 

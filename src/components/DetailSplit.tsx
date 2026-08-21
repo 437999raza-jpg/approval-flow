@@ -50,7 +50,6 @@ export interface BillData {
   approval: BillApprovalData;
   admin: BillAdminData;
   instructions: BillInstructionsData;
-  syncToQbo: () => Promise<void>;
   qboConnected: boolean;
   qboRealmId: string | null;
   alerts?: ReactNode;
@@ -316,7 +315,6 @@ export function DetailSplit({
             approval={bill.approval}
             admin={bill.admin}
             instructions={bill.instructions}
-            syncToQbo={bill.syncToQbo}
             qboConnected={bill.qboConnected}
             qboRealmId={bill.qboRealmId}
             alerts={bill.alerts}

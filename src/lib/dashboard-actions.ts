@@ -1266,6 +1266,7 @@ export async function syncToQbo(invoiceId: string) {
   if (!conn) {
     await fail("QuickBooks is not connected — connect it in Settings.");
     revalidatePath("/dashboard", "layout");
+    revalidatePath("/settings");
     return;
   }
 
@@ -1352,6 +1353,7 @@ export async function syncToQbo(invoiceId: string) {
   }
 
   revalidatePath("/dashboard", "layout");
+  revalidatePath("/settings");
 }
 
 // Disconnect the org from QuickBooks (admin only).
