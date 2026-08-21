@@ -40,6 +40,13 @@ const FIELD_LABELS: Record<string, string> = {
   bill_date: "Bill date",
   due_date: "Due date",
   currency: "Currency",
+  description: "Description",
+  category: "Category",
+  class: "Class",
+  project_id: "Project",
+  tax_rate: "Tax %",
+  amount: "Amount",
+  linked: "Linked",
 };
 
 function describeBillFieldChanges(m: Record<string, unknown>): string | undefined {
@@ -102,7 +109,11 @@ const ACTION_DESCRIBERS: Record<
   }),
   "invoice.line_item_edited": (m) => ({
     summary: "Line item edited",
-    detail: typeof m.description === "string" && m.description ? m.description : undefined,
+    // New format records exact field changes (from → to). Older entries only
+    // carried the description — keep showing that as the detail.
+    detail:
+      describeBillFieldChanges(m) ??
+      (typeof m.description === "string" && m.description ? m.description : undefined),
   }),
   "invoice.line_item_deleted": (m) => ({
     summary: "Line item removed",
