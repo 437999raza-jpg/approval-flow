@@ -2,7 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database, InvoiceSource } from "@/lib/supabase/types";
 import { extractInvoiceFields } from "@/lib/extract-invoice";
 import { selectWorkflowForInvoice } from "@/lib/workflow-routing";
-import { normalizeForMatching } from "@/lib/matching";
+import { normalizeForMatching, matchProjectFromPoNumber } from "@/lib/matching";
 import { matchSupplier } from "@/lib/qbo";
 import { computeLineItemTotals } from "@/lib/invoice-totals";
 
@@ -121,6 +121,24 @@ export async function createInvoiceFromFile({
     vendorName
   );
 
+  // Project detection from the PO number: suppliers commonly put their job
+  // number on the PO ("2022-589-PO-1234" starts with project code 2022-58).
+  // A supplier rule's project wins; otherwise the PO match fills it in.
+  let detectedProjectId: string | null = null;
+  if (!supplierDefaults?.project_id && extracted?.po_number) {
+    const { data: orgProjects } = await supabase
+      .from("projects")
+      .select("id, name")
+      .eq("organization_id", organizationId)
+      .eq("source", "qbo")
+      .eq("active", true);
+    detectedProjectId = matchProjectFromPoNumber(
+      orgProjects ?? [],
+      extracted.po_number
+    );
+  }
+  const projectId = supplierDefaults?.project_id ?? detectedProjectId ?? null;
+
   // Build the line items with any supplier-rule overrides applied first,
   // then derive the invoice's amount/tax from THOSE final line items (tax
   // per line as amount × tax rate%, blank rate = no tax) — not the
@@ -135,7 +153,7 @@ export async function createInvoiceFromFile({
         tax_rate: supplierDefaults?.tax_rate ?? li.tax_rate,
         category: supplierDefaults?.category ?? li.category,
         class: supplierDefaults?.class ?? li.class,
-        project_id: supplierDefaults?.project_id ?? null,
+        project_id: projectId,
       }))
     : supplierDefaults
       ? [
@@ -145,7 +163,7 @@ export async function createInvoiceFromFile({
             tax_rate: supplierDefaults.tax_rate,
             category: supplierDefaults.category,
             class: supplierDefaults.class,
-            project_id: supplierDefaults.project_id,
+            project_id: projectId,
           },
         ]
       : [];
