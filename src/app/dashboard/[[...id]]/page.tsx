@@ -570,6 +570,12 @@ export default async function DashboardPage({
   let lineItemsForSelected: Database["public"]["Tables"]["invoice_line_items"]["Row"][] = [];
   let auditEntriesForSelected: Database["public"]["Tables"]["audit_log"]["Row"][] = [];
   let authorNameById = new Map<string, string>();
+  let instructionEntriesForSelected: {
+    id: string;
+    authorName: string;
+    body: string;
+    createdAt: string;
+  }[] = [];
   let supplierDefaultsForSelected: SupplierDefaultsValues = {
     category: "",
     class: "",
@@ -703,6 +709,38 @@ export default async function DashboardPage({
     authorNameById = new Map(
       (authors ?? []).map((a) => [a.id, a.full_name ?? "Team member"])
     );
+
+    // Accounting-instructions thread (append-only; becomes the QBO memo).
+    const { data: instrRows } = await supabase
+      .from("accounting_instructions")
+      .select("id, author_id, body, created_at")
+      .eq("invoice_id", selected.id)
+      .order("created_at", { ascending: true });
+    const instrAuthorIds = [
+      ...new Set(
+        (instrRows ?? [])
+          .map((r) => r.author_id)
+          .filter((id): id is string => !!id)
+      ),
+    ];
+    const { data: instrProfiles } =
+      instrAuthorIds.length > 0
+        ? await supabase
+            .from("profiles")
+            .select("id, full_name")
+            .in("id", instrAuthorIds)
+        : { data: [] };
+    const instrNameById = new Map(
+      (instrProfiles ?? []).map((p) => [p.id, p.full_name ?? "Team member"])
+    );
+    instructionEntriesForSelected = (instrRows ?? []).map((r) => ({
+      id: r.id,
+      authorName: r.author_id
+        ? (instrNameById.get(r.author_id) ?? "Team member")
+        : "System",
+      body: r.body,
+      createdAt: r.created_at,
+    }));
   }
 
   const auditTimelineForSelected = buildAuditTimeline({
@@ -1122,7 +1160,7 @@ export default async function DashboardPage({
                     deleteInvoice: deleteInvoiceAction.bind(null, selected.id),
                   },
                   instructions: {
-                    initialValue: selected.accounting_instructions ?? "",
+                    entries: instructionEntriesForSelected,
                     readOnly: isAuditor,
                     saveInstructions: saveAccountingInstructions.bind(
                       null,

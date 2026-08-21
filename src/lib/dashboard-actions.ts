@@ -86,23 +86,16 @@ export async function decide(
   } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
+  // The accounting-instructions thread is append-only: whatever the
+  // approver typed is added as their own line, never overwriting anyone
+  // else's (the whole thread becomes the QBO memo on sync).
   const instructions = String(formData.get("instructions") ?? "").trim();
-  let instructionsChanged = false;
   if (instructions) {
-    const { data: beforeDecide } = await supabase
-      .from("invoices")
-      .select("accounting_instructions")
-      .eq("id", invoiceId)
-      .single();
-    instructionsChanged =
-      (beforeDecide?.accounting_instructions ?? "") !== instructions;
-    await supabase
-      .from("invoices")
-      .update({
-        accounting_instructions: instructions,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", invoiceId);
+    await supabase.from("accounting_instructions").insert({
+      invoice_id: invoiceId,
+      author_id: user.id,
+      body: instructions,
+    });
   }
 
   const { data: invoice } = await supabase
@@ -204,15 +197,6 @@ export async function decide(
   // approvers; this vote is recorded but the invoice stays on the same
   // step until everyone required has weighed in.
 
-  if (instructionsChanged) {
-    await supabase.from("audit_log").insert({
-      organization_id: invoice.organization_id,
-      invoice_id: invoiceId,
-      actor_id: user.id,
-      action: "invoice.accounting_instructions_edited",
-      metadata: { instructions },
-    });
-  }
 
   await supabase.from("audit_log").insert({
     organization_id: invoice.organization_id,
@@ -380,32 +364,30 @@ export async function saveAccountingInstructions(
   } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
+  // Append-only: adds a new instruction line for the signed-in user.
   const instructions = String(formData.get("instructions") ?? "").trim();
+  if (!instructions) return;
 
   const { data: before } = await supabase
     .from("invoices")
-    .select("organization_id, accounting_instructions")
+    .select("organization_id")
     .eq("id", invoiceId)
     .single();
   if (!before) return;
 
-  await supabase
-    .from("invoices")
-    .update({
-      accounting_instructions: instructions || null,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", invoiceId);
+  await supabase.from("accounting_instructions").insert({
+    invoice_id: invoiceId,
+    author_id: user.id,
+    body: instructions,
+  });
 
-  if ((before.accounting_instructions ?? "") !== instructions) {
-    await supabase.from("audit_log").insert({
-      organization_id: before.organization_id,
-      invoice_id: invoiceId,
-      actor_id: user.id,
-      action: "invoice.accounting_instructions_edited",
-      metadata: { instructions },
-    });
-  }
+  await supabase.from("audit_log").insert({
+    organization_id: before.organization_id,
+    invoice_id: invoiceId,
+    actor_id: user.id,
+    action: "invoice.accounting_instruction_added",
+    metadata: { instructions },
+  });
 
   revalidatePath("/dashboard", "layout");
 }
@@ -1288,17 +1270,52 @@ export async function syncToQbo(invoiceId: string) {
   }
 
   try {
-    const { data: lineItems } = await supabase
-      .from("invoice_line_items")
-      .select("description, amount, category")
-      .eq("invoice_id", invoiceId);
+    const [{ data: lineItems }, { data: instrRows }] = await Promise.all([
+      supabase
+        .from("invoice_line_items")
+        .select("description, amount, category")
+        .eq("invoice_id", invoiceId),
+      supabase
+        .from("accounting_instructions")
+        .select("author_id, body")
+        .eq("invoice_id", invoiceId)
+        .order("created_at", { ascending: true }),
+    ]);
+
+    // The QBO memo is the full accounting-instructions thread — every
+    // approver's line, oldest first, so accountants see the whole trail in
+    // QBO reports (not just the latest note).
+    const instrAuthorIds = [
+      ...new Set(
+        (instrRows ?? [])
+          .map((r) => r.author_id)
+          .filter((id): id is string => !!id)
+      ),
+    ];
+    const { data: instrProfiles } =
+      instrAuthorIds.length > 0
+        ? await supabase
+            .from("profiles")
+            .select("id, full_name")
+            .in("id", instrAuthorIds)
+        : { data: [] };
+    const instrName = new Map(
+      (instrProfiles ?? []).map((p) => [p.id, p.full_name ?? "Team member"])
+    );
+    const memo =
+      (instrRows ?? [])
+        .map(
+          (r) =>
+            `${r.author_id ? (instrName.get(r.author_id) ?? "Team member") : "System"}: ${r.body}`
+        )
+        .join("\n") || undefined;
 
     const bill = await createBill(conn, {
       vendorName: inv.vendor_name,
       billDate: inv.bill_date ?? inv.created_at.slice(0, 10),
       dueDate: inv.due_date ?? undefined,
       currency: inv.currency,
-      memo: inv.accounting_instructions ?? undefined,
+      memo,
       lines: (lineItems ?? []).map((li) => ({
         description: li.description,
         amount: li.amount ?? 0,

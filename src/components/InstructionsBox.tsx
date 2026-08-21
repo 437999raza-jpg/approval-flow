@@ -1,58 +1,82 @@
 "use client";
 
 import { useRef } from "react";
+import type { BillInstructionsEntry } from "./BillPanel";
 
-// Instructions for accounting (maps to the QBO bill memo / PrivateNote).
-// For the approver this IS the Approve button: the note sits in the form
-// and pressing Approve saves it together with the decision — the typical
-// PM flow is "type a note, press Approve". For everyone else it's a plain
-// auto-saving text box with a Save button.
+// Instructions for accounting — an append-only thread. Each approver ADDS
+// their own line (nobody can change a previous one), and the whole thread
+// becomes the QBO bill memo (PrivateNote) on sync, so accountants see every
+// approver's note in order in QBO reports.
+//
+// For the approver the Add box IS the Approve button: type a note, press
+// Approve — the note is appended and the invoice approved in one motion.
 // Authored by Araza.
 export function InstructionsBox({
-  initialValue,
+  entries,
   saveInstructions,
   approve,
   readOnly = false,
 }: {
-  initialValue: string;
+  entries: BillInstructionsEntry[];
   saveInstructions: (formData: FormData) => Promise<void>;
   approve?: (formData: FormData) => Promise<void>;
   readOnly?: boolean;
 }) {
   const formRef = useRef<HTMLFormElement>(null);
 
-  // Full-height flex column, action row anchored to the bottom via
-  // justify-end so the Approve button lands on the same baseline as the
-  // Hold/Reject/Cancel row beside it, whatever height the two columns are
-  // stretched to. The fixed gap-3 between the textarea and the button is a
-  // real reserved gap, not slack space — it holds even when this column
-  // ends up exactly as tall as its content (no free space to distribute),
-  // which is what left the two touching before. border-transparent keeps
-  // every button here exactly as tall as the bordered ones opposite.
   return (
     <div className="flex h-full flex-col">
       <p className="mt-2 text-xs text-slate-400">
-        Internal guidance for your accounting team. On QBO sync this becomes
-        the bill&apos;s memo (PrivateNote) — not printed on the invoice.
+        Internal guidance for your accounting team. Every note here is added
+        to the thread and becomes part of the bill&apos;s memo (PrivateNote)
+        in QuickBooks — not printed on the invoice.
       </p>
+
+      {/* History — everyone's notes, oldest first */}
+      {entries.length > 0 ? (
+        <div className="mt-2 space-y-1.5">
+          {entries.map((e) => (
+            <div key={e.id} className="rounded-md bg-slate-50 px-2.5 py-1.5">
+              <div className="flex items-baseline justify-between gap-2">
+                <span className="text-[11px] font-semibold text-slate-700">
+                  {e.authorName}
+                </span>
+                <span className="text-[10px] text-slate-400">
+                  {new Date(e.createdAt).toLocaleString()}
+                </span>
+              </div>
+              <p className="mt-0.5 whitespace-pre-wrap text-xs text-slate-700">
+                {e.body}
+              </p>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="mt-2 text-xs text-slate-400">
+          No instructions yet — add the first note for accounting.
+        </p>
+      )}
+
+      {/* Add your own note (append-only) */}
       <form
         ref={formRef}
         action={approve ?? saveInstructions}
         className="mt-2 flex flex-1 flex-col justify-end gap-3"
       >
-        <textarea
-          name="instructions"
-          defaultValue={initialValue}
-          rows={2}
-          disabled={readOnly}
-          placeholder="e.g. Allocate to job 12-45, net-30 terms, prior approval required…"
-          onBlur={
-            approve || readOnly
-              ? undefined // never auto-submit to Approve on blur
-              : () => formRef.current?.requestSubmit()
-          }
-          className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none disabled:bg-slate-50 disabled:text-slate-500"
-        />
+        {!readOnly && (
+          <textarea
+            name="instructions"
+            defaultValue=""
+            rows={2}
+            placeholder="Add a note for accounting (e.g. Bill to the customer, add 5% profit…)"
+            onBlur={
+              approve
+                ? undefined // never auto-submit to Approve on blur
+                : () => formRef.current?.requestSubmit()
+            }
+            className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+          />
+        )}
         {approve ? (
           <button className="w-full rounded-md border border-transparent bg-emerald-600 px-4 py-2 text-center text-sm font-semibold text-white hover:bg-emerald-700">
             Approve
@@ -60,10 +84,10 @@ export function InstructionsBox({
         ) : readOnly ? null : (
           <div className="flex items-center justify-between">
             <span className="text-[10px] text-slate-400">
-              auto-saves on edit
+              note is added to the thread
             </span>
             <button className="rounded-md border border-transparent bg-slate-800 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-700">
-              Save
+              Add note
             </button>
           </div>
         )}

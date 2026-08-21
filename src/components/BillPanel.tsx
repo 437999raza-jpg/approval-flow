@@ -41,8 +41,15 @@ export interface BillAdminData {
   deleteInvoice: () => Promise<void>;
 }
 
+export interface BillInstructionsEntry {
+  id: string;
+  authorName: string;
+  body: string;
+  createdAt: string;
+}
+
 export interface BillInstructionsData {
-  initialValue: string;
+  entries: BillInstructionsEntry[];
   readOnly: boolean;
   saveInstructions: (formData: FormData) => Promise<void>;
   approve?: (formData: FormData) => Promise<void>;
@@ -297,7 +304,7 @@ export function BillPanel({
               <div className="flex-1">
                 <InstructionsBox
                   key={`instructions-${invoice.id}`}
-                  initialValue={instructions.initialValue}
+                  entries={instructions.entries}
                   readOnly={instructions.readOnly}
                   saveInstructions={instructions.saveInstructions}
                   approve={instructions.approve}

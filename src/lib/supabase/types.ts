@@ -338,6 +338,22 @@ export interface Database {
         >;
         Relationships: [];
       };
+      accounting_instructions: {
+        Row: {
+          id: string;
+          invoice_id: string;
+          author_id: string | null;
+          body: string;
+          created_at: string;
+        };
+        Insert: Partial<
+          Database["public"]["Tables"]["accounting_instructions"]["Row"]
+        > & { invoice_id: string; body: string };
+        Update: Partial<
+          Database["public"]["Tables"]["accounting_instructions"]["Row"]
+        >;
+        Relationships: [];
+      };
       audit_log: {
         Row: {
           id: string;
