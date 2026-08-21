@@ -813,10 +813,16 @@ export default async function DashboardPage({
     }));
   }
 
+  const projectNameById = new Map(
+    (projects ?? []).map((p) => [p.id, p.name])
+  );
+
   const auditTimelineForSelected = buildAuditTimeline({
     auditEntries: auditEntriesForSelected,
     comments: commentsForSelected,
     nameOf: (id) => (id ? authorNameById.get(id) ?? "Team member" : "System"),
+    // Show project names, not UUIDs, in change details.
+    idName: (id) => projectNameById.get(id),
   });
 
   const currentStepApprovers = selected ? holderOf(selected) : [];

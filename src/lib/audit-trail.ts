@@ -159,7 +159,20 @@ export async function buildInvoiceAuditDocument(
   }
   const nameOf = (id: string | null) => (id ? names.get(id) ?? id.slice(0, 8) : "System");
 
-  const timeline = buildAuditTimeline({ auditEntries, comments, nameOf });
+  // Project names for change details (project_id is stored as a UUID — the
+  // timeline must show the name, never the raw id).
+  const { data: projectRows } = await supabase
+    .from("projects")
+    .select("id, name")
+    .eq("organization_id", invoice.organization_id);
+  const projectNameById = new Map((projectRows ?? []).map((p) => [p.id, p.name]));
+
+  const timeline = buildAuditTimeline({
+    auditEntries,
+    comments,
+    nameOf,
+    idName: (id) => projectNameById.get(id),
+  });
 
   const fmtDate = (iso: string) =>
     new Date(iso).toLocaleString(undefined, {

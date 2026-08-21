@@ -14,6 +14,10 @@ export interface AuditTimelineEntry {
   detail?: string;
 }
 
+// Optional resolver for ids stored in change metadata (e.g. project_id is
+// a UUID — show the project name, not the raw id).
+export type IdNameResolver = (id: string) => string | undefined;
+
 interface RawAuditRow {
   id: string;
   created_at: string;
@@ -49,7 +53,10 @@ const FIELD_LABELS: Record<string, string> = {
   linked: "Linked",
 };
 
-function describeBillFieldChanges(m: Record<string, unknown>): string | undefined {
+function describeBillFieldChanges(
+  m: Record<string, unknown>,
+  idName?: IdNameResolver
+): string | undefined {
   const changes = m.changes;
   if (!changes || typeof changes !== "object") return undefined;
   const parts: string[] = [];
@@ -57,15 +64,20 @@ function describeBillFieldChanges(m: Record<string, unknown>): string | undefine
     if (!value || typeof value !== "object") continue;
     const { from, to } = value as { from: unknown; to: unknown };
     const label = FIELD_LABELS[key] ?? key;
-    parts.push(`${label}: "${from ?? "—"}" → "${to ?? "—"}"`);
+    const fmt = (v: unknown) => {
+      if (v == null || v === "") return "—";
+      if (typeof v === "string" && idName) return idName(v) ?? v;
+      return String(v);
+    };
+    parts.push(`${label}: "${fmt(from)}" → "${fmt(to)}"`);
   }
   return parts.length > 0 ? parts.join("; ") : undefined;
 }
 
-// action -> (metadata) => { summary, detail? }
+// action -> (metadata, idName) => { summary, detail? }
 const ACTION_DESCRIBERS: Record<
   string,
-  (m: Record<string, unknown>) => { summary: string; detail?: string }
+  (m: Record<string, unknown>, idName?: IdNameResolver) => { summary: string; detail?: string }
 > = {
   "invoice.uploaded": () => ({ summary: "Invoice uploaded" }),
   "invoice.received_by_email": (m) => ({
@@ -94,8 +106,7 @@ const ACTION_DESCRIBERS: Record<
   "invoice.bill_fields_edited": (m) => ({
     summary: "Bill fields edited",
     detail: describeBillFieldChanges(m),
-  }),
-  "invoice.document_added": (m) => ({
+  }),  "invoice.document_added": (m) => ({
     summary: "Document attached",
     detail: typeof m.file_name === "string" ? m.file_name : undefined,
   }),
@@ -107,12 +118,12 @@ const ACTION_DESCRIBERS: Record<
     summary: "Line item added",
     detail: typeof m.description === "string" && m.description ? m.description : undefined,
   }),
-  "invoice.line_item_edited": (m) => ({
+  "invoice.line_item_edited": (m, idName) => ({
     summary: "Line item edited",
     // New format records exact field changes (from → to). Older entries only
     // carried the description — keep showing that as the detail.
     detail:
-      describeBillFieldChanges(m) ??
+      describeBillFieldChanges(m, idName) ??
       (typeof m.description === "string" && m.description ? m.description : undefined),
   }),
   "invoice.line_item_deleted": (m) => ({
@@ -125,10 +136,14 @@ const ACTION_DESCRIBERS: Record<
   }),
 };
 
-function describeAction(action: string, metadata: unknown): { summary: string; detail?: string } {
+function describeAction(
+  action: string,
+  metadata: unknown,
+  idName?: IdNameResolver
+): { summary: string; detail?: string } {
   const m = meta(metadata);
   const describer = ACTION_DESCRIBERS[action];
-  if (describer) return describer(m);
+  if (describer) return describer(m, idName);
   // Fallback for any action not in the map above: turn "invoice.foo_bar"
   // into "Foo bar" rather than silently dropping it from the trail.
   const readable = action.replace(/^invoice\./, "").replace(/_/g, " ");
@@ -139,13 +154,17 @@ export function buildAuditTimeline({
   auditEntries,
   comments,
   nameOf,
+  idName,
 }: {
   auditEntries: RawAuditRow[];
   comments: RawComment[];
   nameOf: (id: string | null) => string;
+  // Resolve ids stored in change metadata to display names (e.g.
+  // project_id UUID → project name) so no raw ids leak into the trail.
+  idName?: IdNameResolver;
 }): AuditTimelineEntry[] {
   const events: AuditTimelineEntry[] = auditEntries.map((entry) => {
-    const { summary, detail } = describeAction(entry.action, entry.metadata);
+    const { summary, detail } = describeAction(entry.action, entry.metadata, idName);
     return {
       id: entry.id,
       at: entry.created_at,
