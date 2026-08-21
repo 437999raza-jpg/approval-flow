@@ -18,7 +18,7 @@ import {
   stepDecisionState,
 } from "@/lib/workflow-conditions";
 import type { Database, InvoiceStatus } from "@/lib/supabase/types";
-import { getQboConnection, listCategories, listTaxRates, listTaxCodes, listClasses, createBill, attachDocuments } from "@/lib/qbo";
+import { getQboConnection, listCategories, listTaxRates, listClasses, createBill, attachDocuments } from "@/lib/qbo";
 import { buildQboAttachmentBundle } from "@/lib/qbo-attachments";
 
 // Server actions for the dashboard (moved out of the page component so
@@ -1221,10 +1221,9 @@ export async function reExtract(invoiceId: string) {
 }
 
 
-// Pull QuickBooks tax RATES + CODES (the % and the letters typed on bills)
-// into the app. READ-ONLY against QBO — nothing is ever written to
-// QuickBooks here. Admin only. Rates are deduped by percentage (e.g. GST
-// 5%, HST 13%); codes keep the one-letter names (H, G, P, E, Z, M...).
+// Pull QuickBooks tax RATES (the % applied to bills) into the app.
+// READ-ONLY against QBO — nothing is ever written to QuickBooks here.
+// Admin only. Rates are deduped by percentage (e.g. GST 5%, HST 13%).
 export async function syncQboTaxes() {
   "use server";
 
@@ -1245,12 +1244,8 @@ export async function syncQboTaxes() {
   }
 
   let rates: Awaited<ReturnType<typeof listTaxRates>> = [];
-  let codes: Awaited<ReturnType<typeof listTaxCodes>> = [];
   try {
-    [rates, codes] = await Promise.all([
-      listTaxRates(conn),
-      listTaxCodes(conn),
-    ]);
+    rates = await listTaxRates(conn);
 
     if (rates.length > 0) {
       const { error } = await supabase.from("qbo_tax_rates").upsert(
@@ -1262,20 +1257,6 @@ export async function syncQboTaxes() {
           synced_at: new Date().toISOString(),
         })),
         { onConflict: "organization_id,qbo_tax_rate_id" }
-      );
-      if (error) throw error;
-    }
-
-    if (codes.length > 0) {
-      const { error } = await supabase.from("qbo_tax_codes").upsert(
-        codes.map((c) => ({
-          organization_id: org.id,
-          qbo_tax_code_id: c.qboTaxCodeId,
-          name: c.name,
-          description: c.description,
-          synced_at: new Date().toISOString(),
-        })),
-        { onConflict: "organization_id,qbo_tax_code_id" }
       );
       if (error) throw error;
     }
@@ -1399,7 +1380,7 @@ export async function syncQboCategories() {
 }
 
 
-// One-click refresh: pulls tax rates + codes, classes, and categories
+// One-click refresh: pulls tax rates, classes, and categories
 // (Divisions 5 & 6) from QuickBooks in a single action. READ-ONLY against
 // QBO — nothing is ever written to QuickBooks. Admin only.
 export async function refreshQboData() {
@@ -1422,9 +1403,8 @@ export async function refreshQboData() {
   }
 
   try {
-    const [rates, codes, classes, categories] = await Promise.all([
+    const [rates, classes, categories] = await Promise.all([
       listTaxRates(conn),
-      listTaxCodes(conn),
       listClasses(conn),
       listCategories(conn, 500, { acctNumPrefixes: ["5", "6"] }),
     ]);
@@ -1439,20 +1419,6 @@ export async function refreshQboData() {
           synced_at: new Date().toISOString(),
         })),
         { onConflict: "organization_id,qbo_tax_rate_id" }
-      );
-      if (error) throw error;
-    }
-
-    if (codes.length > 0) {
-      const { error } = await supabase.from("qbo_tax_codes").upsert(
-        codes.map((c) => ({
-          organization_id: org.id,
-          qbo_tax_code_id: c.qboTaxCodeId,
-          name: c.name,
-          description: c.description,
-          synced_at: new Date().toISOString(),
-        })),
-        { onConflict: "organization_id,qbo_tax_code_id" }
       );
       if (error) throw error;
     }
@@ -1488,8 +1454,7 @@ export async function refreshQboData() {
       if (error) throw error;
     }
 
-    const total =
-      rates.length + codes.length + classes.length + categories.length;
+    const total = rates.length + classes.length + categories.length;
     revalidatePath("/settings");
     redirect(`/settings?qbo=refresh_done&count=${total}`);
   } catch (e) {

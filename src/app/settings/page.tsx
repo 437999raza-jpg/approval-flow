@@ -292,18 +292,12 @@ export default async function SettingsPage({
     .order("name", { ascending: true })
     .limit(200);
 
-  // Tax rates + codes pulled from QBO (read-only mirrors).
+  // Tax rates pulled from QBO (read-only mirror).
   const { data: qboTaxRates } = await supabase
     .from("qbo_tax_rates")
     .select("id, name, rate_value, synced_at")
     .eq("organization_id", org.id)
     .order("rate_value", { ascending: true })
-    .limit(50);
-  const { data: qboTaxCodes } = await supabase
-    .from("qbo_tax_codes")
-    .select("id, name, description")
-    .eq("organization_id", org.id)
-    .order("name", { ascending: true })
     .limit(50);
 
   // Classes pulled from QBO (read-only mirror).
@@ -465,7 +459,7 @@ export default async function SettingsPage({
             )}
             {searchParams.qbo === "tax_synced" && (
               <div className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
-                Synced tax rates and codes from QuickBooks (read-only).
+                Synced tax rates from QuickBooks (read-only).
               </div>
             )}
             {searchParams.qbo === "classes_synced" && (
@@ -562,17 +556,16 @@ export default async function SettingsPage({
                 </div>
                 <p className="mt-1 text-sm text-slate-500">
                   QuickBooks is the source of truth. These lists are pulled
-                  read-only — when you add or update tax rates, tax codes,
-                  classes, or categories in QuickBooks, refresh to bring the
-                  changes into Flow. Nothing is ever written to QuickBooks
-                  from Flow.
+                  read-only — when you add or update tax rates, classes, or
+                  categories in QuickBooks, refresh to bring the changes into
+                  Flow. Nothing is ever written to QuickBooks from Flow.
                 </p>
 
-                {/* Tax rates + codes */}
+                {/* Tax rates */}
                 <div className="mt-3">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="text-sm font-semibold text-slate-800">
-                      Tax rates &amp; codes
+                      Tax rates
                     </span>
                     {isAdmin && (
                       <form action={syncQboTaxes}>
@@ -582,35 +575,14 @@ export default async function SettingsPage({
                       </form>
                     )}
                   </div>
-                  {(qboTaxRates && qboTaxRates.length > 0) ||
-                  (qboTaxCodes && qboTaxCodes.length > 0) ? (
-                    <div className="mt-2 flex flex-wrap gap-4">
-                      <div>
-                        <div className="text-xs text-slate-400">
-                          Tax rates:
-                        </div>
-                        <ul className="mt-1 space-y-0.5">
-                          {(qboTaxRates ?? []).map((r) => (
-                            <li key={r.id} className="text-sm text-slate-700">
-                              {r.name} — {r.rate_value}%
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                      <div>
-                        <div className="text-xs text-slate-400">
-                          Tax codes (what you type on bills):
-                        </div>
-                        <ul className="mt-1 space-y-0.5">
-                          {(qboTaxCodes ?? []).map((c) => (
-                            <li key={c.id} className="text-sm text-slate-700">
-                              <strong>{c.name}</strong>
-                              {c.description ? ` — ${c.description}` : ""}
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    </div>
+                  {qboTaxRates && qboTaxRates.length > 0 ? (
+                    <ul className="mt-2 space-y-0.5">
+                      {(qboTaxRates ?? []).map((r) => (
+                        <li key={r.id} className="text-sm text-slate-700">
+                          {r.name} — {r.rate_value}%
+                        </li>
+                      ))}
+                    </ul>
                   ) : (
                     <p className="mt-1 text-sm text-slate-400">
                       No tax data synced yet.

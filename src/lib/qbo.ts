@@ -369,44 +369,6 @@ export async function listTaxRates(conn: QboConnection): Promise<QboTaxRate[]> {
   return [...byValue.values()].sort((a, b) => a.rateValue - b.rateValue);
 }
 
-export interface QboTaxCode {
-  qboTaxCodeId: string;
-  name: string; // e.g. "H", "G", "P", "E", "Z", "M"
-  description: string | null;
-  active: boolean;
-}
-
-// READ-ONLY: pull the company's tax CODES (the letters typed on bills —
-// "H" = HST 13%, "G" = GST 5%...). Nothing is ever written to QuickBooks.
-export async function listTaxCodes(conn: QboConnection): Promise<QboTaxCode[]> {
-  const q = "select * from TaxCode";
-  const res = await qboFetch(conn, `/query?query=${encodeURIComponent(q)}`);
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(
-      `QBO: tax code query failed (HTTP ${res.status}): ${body.slice(0, 300)}`
-    );
-  }
-  const json = (await res.json()) as {
-    QueryResponse?: {
-      TaxCode?: {
-        Id: string;
-        Name?: string;
-        Description?: string | null;
-        Active?: boolean;
-      }[];
-    };
-  };
-  return (json.QueryResponse?.TaxCode ?? [])
-    .filter((c) => c.Active !== false)
-    .map((c) => ({
-      qboTaxCodeId: c.Id,
-      name: c.Name ?? "",
-      description: c.Description ?? null,
-      active: c.Active ?? true,
-    }));
-}
-
 export interface QboClass {
   qboClassId: string;
   name: string;
