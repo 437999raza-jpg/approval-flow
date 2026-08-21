@@ -139,9 +139,10 @@ export async function createInvoiceFromFile({
 
   // Project detection from the PO number: suppliers commonly put their job
   // number on the PO ("2022-589-PO-1234" starts with project code 2022-58).
-  // A supplier rule's project wins; otherwise the PO match fills it in.
+  // Project is always a per-bill choice (a supplier can work on many jobs),
+  // so it comes from the PO match, never from a supplier rule.
   let detectedProjectId: string | null = null;
-  if (!supplierDefaults?.project_id && extracted?.po_number) {
+  if (extracted?.po_number) {
     const { data: orgProjects } = await supabase
       .from("projects")
       .select("id, name")
@@ -153,7 +154,7 @@ export async function createInvoiceFromFile({
       extracted.po_number
     );
   }
-  const projectId = supplierDefaults?.project_id ?? detectedProjectId ?? null;
+  const projectId = detectedProjectId ?? null;
 
   // Build the line items with any supplier-rule overrides applied first,
   // then derive the invoice's amount/tax from THOSE final line items (tax
@@ -161,6 +162,8 @@ export async function createInvoiceFromFile({
   // document's own printed totals, and not the pre-override tax rates.
   // When extraction found no line items there's nothing to derive from,
   // so the whole-document totals are the only numbers available.
+  // Supplier rules carry Category, Tax rate, Payment terms, Currency —
+  // never Class or Project (those are per-bill choices).
   const hasLineItems = !!extracted && extracted.line_items.length > 0;
   const finalLineItems = hasLineItems
     ? extracted!.line_items.map((li) => ({
@@ -168,7 +171,7 @@ export async function createInvoiceFromFile({
         amount: li.amount,
         tax_rate: supplierDefaults?.tax_rate ?? li.tax_rate,
         category: hbPayableCategoryFor(li) ?? supplierDefaults?.category ?? li.category,
-        class: supplierDefaults?.class ?? li.class,
+        class: li.class,
         project_id: projectId,
       }))
     : supplierDefaults
@@ -178,7 +181,7 @@ export async function createInvoiceFromFile({
             amount: extracted?.total_amount ?? null,
             tax_rate: supplierDefaults.tax_rate,
             category: supplierDefaults.category,
-            class: supplierDefaults.class,
+            class: null,
             project_id: projectId,
           },
         ]

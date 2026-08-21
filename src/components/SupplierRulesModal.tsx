@@ -14,24 +14,28 @@ export interface SupplierDefaultsValues {
 
 export function SupplierRulesModal({
   vendorName,
-  initial,
-  projects,
   qboCategories,
-  qboClasses,
   qboTaxRates,
   saveAction,
 }: {
   vendorName: string;
-  initial: SupplierDefaultsValues;
-  projects: { id: string; name: string }[];
   // QBO mirrors (read-only) for searchable pick-lists, same as the bill.
   qboCategories?: string[];
-  qboClasses?: string[];
   qboTaxRates?: { value: string; label: string }[];
   saveAction: (formData: FormData) => Promise<void>;
 }) {
   const [open, setOpen] = useState(false);
   const formId = "supplier-rules-form";
+  // Always start BLANK — never pre-fill from the current invoice or a
+  // saved rule. Only what you explicitly pick in this dialog is saved.
+  const blank: SupplierDefaultsValues = {
+    category: "",
+    class: "",
+    project_id: "",
+    tax_rate: "",
+    payment_terms_days: "",
+    currency: "",
+  };
 
   return (
     <>
@@ -75,53 +79,23 @@ export function SupplierRulesModal({
               className="space-y-3 p-6"
             >
               <p className="text-xs text-slate-500">
-                Applied automatically to future invoices from this supplier — Category,
-                Class, and Tax rate fill in on every line item, and Payment terms
-                computes the due date. Leave a field blank to leave it to extraction.
+                Applied automatically to future invoices from this supplier —
+                only the fields you set here are saved. Leave a field blank
+                to leave it to extraction. Project and Class are chosen per
+                bill, never as a supplier rule.
               </p>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-slate-600">
-                    Category
-                  </label>
-                  <Combobox
-                    formId={formId}
-                    name="category"
-                    options={qboCategories ?? []}
-                    defaultValue={initial.category}
-                    placeholder="Search category…"
-                    onCommit={() => {}}
-                    className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-slate-600">
-                    Class
-                  </label>
-                  <Combobox
-                    formId={formId}
-                    name="class"
-                    options={qboClasses ?? []}
-                    defaultValue={initial.class}
-                    placeholder="Search class…"
-                    onCommit={() => {}}
-                    className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
-                  />
-                </div>
-              </div>
 
               <div>
                 <label className="mb-1 block text-xs font-medium text-slate-600">
-                  Project / customer
+                  Category
                 </label>
                 <Combobox
                   formId={formId}
-                  name="project_id"
-                  options={projects.map((p) => ({ value: p.id, label: p.name }))}
-                  defaultValue={initial.project_id}
-                  placeholder="Search project…"
-                    onCommit={() => {}}
+                  name="category"
+                  options={qboCategories ?? []}
+                  defaultValue={blank.category}
+                  placeholder="Search category…"
+                  onCommit={() => {}}
                   className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
                 />
               </div>
@@ -135,7 +109,7 @@ export function SupplierRulesModal({
                     formId={formId}
                     name="tax_rate"
                     options={qboTaxRates ?? []}
-                    defaultValue={initial.tax_rate}
+                    defaultValue={blank.tax_rate}
                     placeholder="Tax %"
                     onCommit={() => {}}
                     showValue
@@ -149,7 +123,7 @@ export function SupplierRulesModal({
                   </label>
                   <input
                     name="currency"
-                    defaultValue={initial.currency}
+                    defaultValue={blank.currency}
                     placeholder="e.g. CAD"
                     className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
                   />
@@ -165,7 +139,7 @@ export function SupplierRulesModal({
                     name="payment_terms_days"
                     type="number"
                     min={0}
-                    defaultValue={initial.payment_terms_days}
+                    defaultValue={blank.payment_terms_days}
                     className="w-24 rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
                   />
                   <span className="text-sm text-slate-500">days after invoice date</span>

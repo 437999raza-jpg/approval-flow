@@ -549,12 +549,24 @@ export async function saveSupplierDefaults(
     currency: text("currency")?.toUpperCase() ?? null,
   };
 
+  // Only fields the user explicitly set become the rule — blanks never
+  // overwrite existing defaults (and class/project are per-bill choices,
+  // never saved as supplier rules).
+  const rule: Database["public"]["Tables"]["supplier_defaults"]["Update"] = {
+    vendor_name: vendorName,
+    updated_at: new Date().toISOString(),
+  };
+  if (values.category) rule.category = values.category;
+  if (values.tax_rate != null) rule.tax_rate = values.tax_rate;
+  if (values.payment_terms_days != null)
+    rule.payment_terms_days = values.payment_terms_days;
+  if (values.currency) rule.currency = values.currency;
+
   await supabase.from("supplier_defaults").upsert(
     {
       organization_id: org.id,
       vendor_name: vendorName,
-      ...values,
-      updated_at: new Date().toISOString(),
+      ...rule,
     },
     { onConflict: "organization_id,vendor_name_normalized" }
   );
@@ -586,8 +598,6 @@ export async function saveSupplierDefaults(
       const lineItemUpdate: Database["public"]["Tables"]["invoice_line_items"]["Update"] =
         {};
       if (values.category) lineItemUpdate.category = values.category;
-      if (values.class) lineItemUpdate.class = values.class;
-      if (values.project_id) lineItemUpdate.project_id = values.project_id;
       if (values.tax_rate != null) lineItemUpdate.tax_rate = values.tax_rate;
       if (Object.keys(lineItemUpdate).length > 0) {
         await supabase
