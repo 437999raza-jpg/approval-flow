@@ -21,9 +21,11 @@ export interface BillApprovalData {
   steps: WorkflowStep[];
   stepStates: Map<number, "pending" | "approved" | "rejected">;
   canDecide: boolean;
+  canUnhold: boolean;
   canCancel: boolean;
   reviewComplete: (formData: FormData) => Promise<void>;
   hold: (formData: FormData) => Promise<void>;
+  unhold: (formData: FormData) => Promise<void>;
   reject: (formData: FormData) => Promise<void>;
   cancel: (formData: FormData) => Promise<void>;
 }
@@ -341,8 +343,8 @@ export function BillPanel({
                       )}
                       {invoice.status === "on_hold" && (
                         <p className="mt-3 text-sm text-slate-500">
-                          On hold — return it to review or approve/reject once
-                          the decision is ready.
+                          On hold — set aside for later. Click Unhold to
+                          resume working on it.
                         </p>
                       )}
                       {invoice.status !== "on_review" &&
@@ -374,12 +376,20 @@ export function BillPanel({
                           they're all exactly the same height. */}
                       {((invoice.status === "on_review" && canReview) ||
                         approval.canDecide ||
+                        approval.canUnhold ||
                         approval.canCancel) && (
                         <div className="mt-auto flex gap-2 pt-3">
                           {invoice.status === "on_review" && canReview && (
                             <form action={approval.reviewComplete} className="flex-1">
                               <button className="w-full rounded-md border border-transparent bg-blue-600 px-4 py-2 text-center text-sm font-semibold text-white hover:bg-blue-700">
                                 Review Complete
+                              </button>
+                            </form>
+                          )}
+                          {approval.canUnhold && (
+                            <form action={approval.unhold} className="flex-1">
+                              <button className="w-full rounded-md border border-transparent bg-blue-600 px-4 py-2 text-center text-sm font-semibold text-white hover:bg-blue-700">
+                                Unhold
                               </button>
                             </form>
                           )}
@@ -397,7 +407,7 @@ export function BillPanel({
                               </form>
                             </>
                           )}
-                          {approval.canCancel && (
+                          {approval.canCancel && !approval.canUnhold && (
                             <form action={approval.cancel} className="flex-1">
                               <button className="w-full rounded-md border border-slate-300 px-4 py-2 text-center text-sm font-semibold text-slate-600 hover:bg-slate-50">
                                 Cancel

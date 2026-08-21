@@ -38,6 +38,7 @@ import {
   saveSupplierDefaults,
   reviewComplete,
   holdInvoice,
+  unholdInvoice,
   deleteInvoiceAction,
   reassignApprover,
   overrideStatus,
@@ -720,6 +721,14 @@ export default async function DashboardPage({
     selected.workflow_id !== null &&
     currentStepApprovers.includes(user.id);
 
+  // The approver who put an invoice on hold can resume it — on hold the
+  // whole action row collapses to a single "Unhold" button.
+  const canUnhold =
+    selected != null &&
+    selected.status === "on_hold" &&
+    selected.workflow_id !== null &&
+    currentStepApprovers.includes(user.id);
+
   // Per step_order, has that step's required approver(s) resolved it yet
   // — for the ApprovalStepper display. Mirrors holderOf's own logic per
   // step rather than just the current one.
@@ -1089,9 +1098,11 @@ export default async function DashboardPage({
                     steps: stepsForSelected,
                     stepStates: stepStatesForSelected,
                     canDecide,
+                    canUnhold,
                     canCancel,
                     reviewComplete: reviewComplete.bind(null, selected.id),
                     hold: holdInvoice.bind(null, selected.id),
+                    unhold: unholdInvoice.bind(null, selected.id),
                     reject: decide.bind(null, selected.id, "rejected"),
                     cancel: cancelInvoice.bind(null, selected.id),
                   },

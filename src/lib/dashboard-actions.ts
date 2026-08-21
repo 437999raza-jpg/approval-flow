@@ -747,6 +747,56 @@ export async function holdInvoice(invoiceId: string) {
   revalidatePath("/dashboard", "layout");
 }
 
+// Unhold: the approver who put an invoice on hold resumes it — back to
+// on_approval at the same step, with all decision buttons restored.
+export async function unholdInvoice(invoiceId: string) {
+  "use server";
+
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
+  const { data: invoice } = await supabase
+    .from("invoices")
+    .select(
+      "id, organization_id, status, workflow_id, current_step_order, step_override_approver_id, vendor_name, project_id"
+    )
+    .eq("id", invoiceId)
+    .single();
+  if (!invoice || !invoice.workflow_id) return;
+  if (invoice.status !== "on_hold") return;
+
+  const { data: currentStep } = await supabase
+    .from("approval_workflow_steps")
+    .select("*")
+    .eq("workflow_id", invoice.workflow_id)
+    .eq("step_order", invoice.current_step_order)
+    .maybeSingle();
+  if (!currentStep) return;
+  const requiredApproverIds = await requiredApproversFor(
+    supabase,
+    currentStep,
+    invoice
+  );
+  if (!requiredApproverIds.includes(user.id)) return;
+
+  await supabase
+    .from("invoices")
+    .update({ status: "on_approval", updated_at: new Date().toISOString() })
+    .eq("id", invoiceId);
+
+  await supabase.from("audit_log").insert({
+    organization_id: invoice.organization_id,
+    invoice_id: invoiceId,
+    actor_id: user.id,
+    action: "invoice.unheld",
+  });
+
+  revalidatePath("/dashboard", "layout");
+}
+
 // Back to Review: return a non-approved invoice to the Pending Review
 // queue. Approval decisions are reset (the workflow re-runs from step 1)
 // but the audit trail is preserved.
