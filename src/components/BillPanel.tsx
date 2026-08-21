@@ -1,7 +1,12 @@
-import { useRef } from "react";
+import { useRef, type ReactNode } from "react";
 import { SupplierRulesModal, type SupplierDefaultsValues } from "./SupplierRulesModal";
 import { CollapsibleSection } from "./CollapsibleSection";
 import { MentionComposer } from "./MentionComposer";
+import { ApprovalStepper } from "./ApprovalStepper";
+import { InlineSelectSave } from "./InlineSelectSave";
+import { ConfirmSubmitButton } from "./ConfirmSubmitButton";
+import { InstructionsBox } from "./InstructionsBox";
+import { InvoiceStatusBadge } from "./InvoiceStatusBadge";
 import type { Database } from "@/lib/supabase/types";
 import { computeLineItemTotals } from "@/lib/invoice-totals";
 import type { AuditTimelineEntry } from "@/lib/audit-timeline";
@@ -9,6 +14,37 @@ import type { AuditTimelineEntry } from "@/lib/audit-timeline";
 type Invoice = Database["public"]["Tables"]["invoices"]["Row"];
 type LineItem = Database["public"]["Tables"]["invoice_line_items"]["Row"];
 type Comment = Database["public"]["Tables"]["invoice_comments"]["Row"];
+type WorkflowStep = Database["public"]["Tables"]["approval_workflow_steps"]["Row"];
+
+export interface BillApprovalData {
+  currentStepApproverNames: string[];
+  steps: WorkflowStep[];
+  stepStates: Map<number, "pending" | "approved" | "rejected">;
+  canDecide: boolean;
+  canCancel: boolean;
+  reviewComplete: (formData: FormData) => Promise<void>;
+  hold: (formData: FormData) => Promise<void>;
+  reject: (formData: FormData) => Promise<void>;
+  cancel: (formData: FormData) => Promise<void>;
+}
+
+export interface BillAdminData {
+  visible: boolean;
+  showReassign: boolean;
+  reassignDefaultValue: string;
+  memberOptions: { id: string; label: string }[];
+  reassign: (formData: FormData) => Promise<void>;
+  statusOptions: { value: string; label: string }[];
+  overrideStatus: (formData: FormData) => Promise<void>;
+  deleteInvoice: () => Promise<void>;
+}
+
+export interface BillInstructionsData {
+  initialValue: string;
+  readOnly: boolean;
+  saveInstructions: (formData: FormData) => Promise<void>;
+  approve?: (formData: FormData) => Promise<void>;
+}
 
 // Ghost fields: invisible border at rest, a line appears on hover/focus.
 // The point is to read like a finished invoice document, not a form full
@@ -42,6 +78,10 @@ export function BillPanel({
   authorNameById,
   addComment,
   members,
+  approval,
+  admin,
+  instructions,
+  alerts,
   onOpenDocument,
   onCollapse,
 }: {
@@ -66,6 +106,12 @@ export function BillPanel({
   authorNameById: Map<string, string>;
   addComment: (formData: FormData) => Promise<void>;
   members: { id: string; label: string }[];
+  approval: BillApprovalData;
+  admin: BillAdminData;
+  instructions: BillInstructionsData;
+  // Server-rendered banners (decision errors, possible-duplicate warnings)
+  // slotted in above everything else.
+  alerts?: ReactNode;
   onOpenDocument: () => void;
   onCollapse: () => void;
 }) {
@@ -167,6 +213,189 @@ export function BillPanel({
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
+        {alerts && <div className="space-y-3 px-6 pt-4">{alerts}</div>}
+
+        {/* Admin toolbar (one line, admin-only, at the very top) + Instructions
+            for accounting / Status & approval side by side below it — above
+            the bill itself, since who has it and what to do about it is the
+            most actionable thing here. */}
+        <div className="border-b border-slate-200 bg-slate-50 px-6 py-4">
+          {admin.visible && (
+            <div className="mb-4 border-b border-slate-200 pb-4">
+              <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">
+                Admin
+              </div>
+              <div className="mt-2 flex flex-wrap items-center gap-x-6 gap-y-2">
+                {admin.showReassign && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-slate-500">Reassign to</span>
+                    <InlineSelectSave
+                      key={`reassign-${invoice.id}`}
+                      name="approver_id"
+                      defaultValue={admin.reassignDefaultValue}
+                      options={[
+                        { value: "", label: "— workflow default —" },
+                        ...admin.memberOptions.map((m) => ({
+                          value: m.id,
+                          label: m.label,
+                        })),
+                      ]}
+                      action={admin.reassign}
+                    />
+                  </div>
+                )}
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-slate-500">Override status</span>
+                  <InlineSelectSave
+                    key={`override-status-${invoice.id}`}
+                    name="status"
+                    defaultValue={invoice.status}
+                    options={admin.statusOptions}
+                    action={admin.overrideStatus}
+                  />
+                </div>
+                <ConfirmSubmitButton
+                  action={admin.deleteInvoice}
+                  confirmMessage={`Permanently delete this invoice${
+                    invoice.vendor_name ? ` from ${invoice.vendor_name}` : ""
+                  }? This removes it, its line items, documents, and discussion — it cannot be undone.`}
+                  className="rounded-md border border-red-200 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50"
+                >
+                  Delete invoice
+                </ConfirmSubmitButton>
+              </div>
+            </div>
+          )}
+
+          {/* Both columns are full-height flex columns whose action rows are
+              pushed down with mt-auto, so Approve and Hold/Reject/Cancel sit
+              on one baseline regardless of how the copy above them wraps. */}
+          <div className="grid grid-cols-2 items-stretch gap-6">
+            <div className="flex flex-col">
+              <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">
+                Instructions for accounting
+              </div>
+              <div className="flex-1">
+                <InstructionsBox
+                  key={`instructions-${invoice.id}`}
+                  initialValue={instructions.initialValue}
+                  readOnly={instructions.readOnly}
+                  saveInstructions={instructions.saveInstructions}
+                  approve={instructions.approve}
+                />
+              </div>
+            </div>
+
+            <div className="flex flex-col">
+              <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">
+                Status &amp; approval
+              </div>
+              <div className="flex flex-1 flex-col">
+                {approval.currentStepApproverNames.length > 0 && (
+                  <p className="mt-2 text-sm text-slate-600">
+                    Currently with{" "}
+                    <span className="font-medium text-slate-800">
+                      {approval.currentStepApproverNames.join(", ")}
+                    </span>
+                  </p>
+                )}
+                {approval.steps.length > 0 && (
+                  <div className="mt-3">
+                    <ApprovalStepper
+                      steps={approval.steps}
+                      stepStates={approval.stepStates}
+                      currentStepOrder={invoice.current_step_order}
+                      invoiceStatus={invoice.status}
+                    />
+                  </div>
+                )}
+                {invoice.status !== "approved" &&
+                  invoice.status !== "rejected" &&
+                  invoice.status !== "cancelled" && (
+                    <>
+                      {/* Status copy sits in normal flow right under the
+                          stepper; only the button row is pinned to the
+                          bottom so it lines up with Approve. */}
+                      {invoice.status === "on_review" && !canReview && (
+                        <p className="mt-3 text-sm text-slate-500">
+                          Awaiting review — an admin must complete the review
+                          to send it into the approval workflow.
+                        </p>
+                      )}
+                      {invoice.status === "on_hold" && (
+                        <p className="mt-3 text-sm text-slate-500">
+                          On hold — return it to review or approve/reject once
+                          the decision is ready.
+                        </p>
+                      )}
+                      {invoice.status !== "on_review" &&
+                        invoice.status !== "on_hold" &&
+                        !approval.canDecide &&
+                        (approval.currentStepApproverNames.length > 0 ? (
+                          <p className="mt-3 text-sm text-slate-500">
+                            Waiting on the approver for step{" "}
+                            {invoice.current_step_order}.
+                          </p>
+                        ) : (
+                          <p className="mt-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                            No approver currently matches this invoice at
+                            step {invoice.current_step_order} — its
+                            Class/Category/Supplier/Customer don&apos;t match
+                            any configured approver, and there&apos;s no
+                            default approver on this step to fall back to. It
+                            can&apos;t be approved as-is.
+                            {canReview
+                              ? " Use Reassign to in the Admin panel, or fix the step's approvers/conditions in Workflows."
+                              : " An admin needs to reassign it or fix the step's approvers in Workflows."}
+                          </p>
+                        ))}
+
+                      {/* Every button is flex-1, so one or several, the row
+                          always spans the full column width — matching the
+                          Approve button opposite. Each carries a border
+                          (transparent where there's no visible outline) so
+                          they're all exactly the same height. */}
+                      {((invoice.status === "on_review" && canReview) ||
+                        approval.canDecide ||
+                        approval.canCancel) && (
+                        <div className="mt-auto flex gap-2 pt-3">
+                          {invoice.status === "on_review" && canReview && (
+                            <form action={approval.reviewComplete} className="flex-1">
+                              <button className="w-full rounded-md border border-transparent bg-blue-600 px-4 py-2 text-center text-sm font-semibold text-white hover:bg-blue-700">
+                                Review Complete
+                              </button>
+                            </form>
+                          )}
+                          {approval.canDecide && (
+                            <>
+                              <form action={approval.hold} className="flex-1">
+                                <button className="w-full rounded-md border border-amber-300 bg-amber-50 px-4 py-2 text-center text-sm font-semibold text-amber-800 hover:bg-amber-100">
+                                  Hold
+                                </button>
+                              </form>
+                              <form action={approval.reject} className="flex-1">
+                                <button className="w-full rounded-md border border-transparent bg-red-600 px-4 py-2 text-center text-sm font-semibold text-white hover:bg-red-700">
+                                  Reject
+                                </button>
+                              </form>
+                            </>
+                          )}
+                          {approval.canCancel && (
+                            <form action={approval.cancel} className="flex-1">
+                              <button className="w-full rounded-md border border-slate-300 px-4 py-2 text-center text-sm font-semibold text-slate-600 hover:bg-slate-50">
+                                Cancel
+                              </button>
+                            </form>
+                          )}
+                        </div>
+                      )}
+                    </>
+                  )}
+              </div>
+            </div>
+          </div>
+        </div>
+
         {/* Document header: title + big total, like a real invoice */}
         <div className="border-b border-slate-200 px-6 py-5">
           <div className="flex items-start justify-between gap-4">
@@ -195,6 +424,9 @@ export function BillPanel({
                 {fmt(amount)}
               </div>
               <div className="text-xs font-medium text-slate-400">{invoice.currency}</div>
+              <div className="mt-1.5">
+                <InvoiceStatusBadge status={invoice.status} />
+              </div>
             </div>
           </div>
 

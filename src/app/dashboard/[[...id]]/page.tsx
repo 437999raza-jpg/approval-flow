@@ -10,17 +10,12 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentOrg } from "@/lib/current-org";
 import { sendMentionEmail } from "@/lib/notify";
 import { InvoiceStatusBadge } from "@/components/InvoiceStatusBadge";
-import { ApprovalStepper } from "@/components/ApprovalStepper";
 import { SearchInput } from "@/components/SearchInput";
 import { SignOutButton } from "@/components/SignOutButton";
-import { CollapsibleSection } from "@/components/CollapsibleSection";
-import { InstructionsBox } from "@/components/InstructionsBox";
 import { CollapsiblePane } from "@/components/CollapsiblePane";
 import { DetailSplit, type DocumentRef } from "@/components/DetailSplit";
 import { Sidebar } from "@/components/Sidebar";
 import { DocumentSearchModal, type DocumentSearchFilters } from "@/components/DocumentSearchModal";
-import { InlineSelectSave } from "@/components/InlineSelectSave";
-import { ConfirmSubmitButton } from "@/components/ConfirmSubmitButton";
 import type { SupplierDefaultsValues } from "@/components/SupplierRulesModal";
 import type { MultiSelectOption } from "@/components/MultiSelect";
 import type { Database, InvoiceStatus } from "@/lib/supabase/types";
@@ -2235,247 +2230,90 @@ export default async function DashboardPage({
                   authorNameById,
                   addComment: addComment.bind(null, selected.id),
                   members: memberOptions,
-                }}
-              >
-                {/* Side panel content: header + collapsible sections */}
-                  <div className="border-b border-slate-200 px-4 py-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <h1 className="truncate text-base font-semibold">
-                          {selected.vendor_name ?? selected.file_name}
-                        </h1>
-                        {selected.invoice_number && (
-                          <p className="text-sm text-slate-500">
-                            Invoice #{selected.invoice_number}
+                  approval: {
+                    currentStepApproverNames: currentStepApprovers.map(
+                      (id) => memberNameById.get(id) ?? "Team member"
+                    ),
+                    steps: stepsForSelected,
+                    stepStates: stepStatesForSelected,
+                    canDecide,
+                    canCancel,
+                    reviewComplete: reviewComplete.bind(null, selected.id),
+                    hold: holdInvoice.bind(null, selected.id),
+                    reject: decide.bind(null, selected.id, "rejected"),
+                    cancel: cancelInvoice.bind(null, selected.id),
+                  },
+                  admin: {
+                    visible: canReviewNow,
+                    showReassign:
+                      selected.status === "on_approval" ||
+                      selected.status === "on_hold",
+                    reassignDefaultValue: selected.step_override_approver_id ?? "",
+                    memberOptions,
+                    reassign: reassignApprover.bind(null, selected.id),
+                    statusOptions: STATUS_OPTIONS.map((s) => ({
+                      value: s.id,
+                      label: s.label,
+                    })),
+                    overrideStatus: overrideStatus.bind(null, selected.id),
+                    deleteInvoice: deleteInvoiceAction.bind(null, selected.id),
+                  },
+                  instructions: {
+                    initialValue: selected.accounting_instructions ?? "",
+                    readOnly: isAuditor,
+                    saveInstructions: saveAccountingInstructions.bind(
+                      null,
+                      selected.id
+                    ),
+                    approve: canDecide
+                      ? decide.bind(null, selected.id, "approved")
+                      : undefined,
+                  },
+                  alerts: (
+                    <>
+                      {searchParams.error && (
+                        <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                          {DECISION_ERRORS[searchParams.error] ??
+                            "That action could not be completed."}
+                        </div>
+                      )}
+
+                      {possibleDuplicates.length > 0 && (
+                        <div className="rounded-md border border-orange-200 bg-orange-50 px-4 py-3 text-sm text-orange-800">
+                          <p className="font-medium">
+                            Possible duplicate — invoice #{selected!.invoice_number} from{" "}
+                            {selected!.vendor_name} already exists.
                           </p>
-                        )}
-                      </div>
-                      <div className="text-right">
-                        {selected.amount != null && (
-                          <div className="text-lg font-semibold">
-                            {selected.amount.toLocaleString(undefined, {
-                              style: "currency",
-                              currency: selected.currency,
-                            })}
-                          </div>
-                        )}
-                        <div className="mt-1">
-                          <InvoiceStatusBadge status={selected.status} />
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {searchParams.error && (
-                    <div className="mx-4 mt-4 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                      {DECISION_ERRORS[searchParams.error] ??
-                        "That action could not be completed."}
-                    </div>
-                  )}
-
-                  {possibleDuplicates.length > 0 && (
-                    <div className="mx-4 mt-4 rounded-md border border-orange-200 bg-orange-50 px-4 py-3 text-sm text-orange-800">
-                      <p className="font-medium">
-                        Possible duplicate — invoice #{selected!.invoice_number} from{" "}
-                        {selected!.vendor_name} already exists.
-                      </p>
-                      <ul className="mt-1.5 space-y-1">
-                        {possibleDuplicates.map((d) => (
-                          <li key={d.id}>
-                            <Link
-                              href={`/dashboard/${d.id}${qs}`}
-                              className="underline hover:no-underline"
-                            >
-                              {new Date(d.created_at).toLocaleDateString()} —{" "}
-                              {d.amount != null
-                                ? d.amount.toLocaleString(undefined, {
-                                    style: "currency",
-                                    currency: d.currency,
-                                  })
-                                : "no amount"}
-                            </Link>
-                            {d.amount !== selected!.amount && (
-                              <span className="ml-1 text-xs text-orange-700">
-                                (amount differs from this one — possible price-corrected
-                                resubmission, not necessarily a true duplicate)
-                              </span>
-                            )}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-
-                  <CollapsibleSection title="Status & approval">
-                    {selected && currentStepApprovers.length > 0 && (
-                      <p className="mt-2 text-sm text-slate-600">
-                        Currently with{" "}
-                        <span className="font-medium text-slate-800">
-                          {currentStepApprovers
-                            .map((id) => memberNameById.get(id) ?? "Team member")
-                            .join(", ")}
-                        </span>
-                      </p>
-                    )}
-                    {stepsForSelected.length > 0 && (
-                      <div className="mt-3">
-                        <ApprovalStepper
-                          steps={stepsForSelected}
-                          stepStates={stepStatesForSelected}
-                          currentStepOrder={selected.current_step_order}
-                          invoiceStatus={selected.status}
-                        />
-                      </div>
-                    )}
-                    {selected.status !== "approved" &&
-                      selected.status !== "rejected" &&
-                      selected.status !== "cancelled" && (
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          {selected.status === "on_review" &&
-                          canReviewNow ? (
-                            <form
-                              action={reviewComplete.bind(null, selected.id)}
-                            >
-                              <button className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700">
-                                Review Complete
-                              </button>
-                            </form>
-                          ) : null}
-                          {selected.status === "on_review" &&
-                          !canReviewNow ? (
-                            <p className="text-sm text-slate-500">
-                              Awaiting review — an admin must complete the
-                              review to send it into the approval workflow.
-                            </p>
-                          ) : null}
-                          {canDecide ? (
-                            <>
-                              <form
-                                action={holdInvoice.bind(null, selected.id)}
-                              >
-                                <button className="rounded-md border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-medium text-amber-800 hover:bg-amber-100">
-                                  Hold
-                                </button>
-                              </form>
-                              <form
-                                action={decide.bind(null, selected.id, "rejected")}
-                              >
-                                <button className="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700">
-                                  Reject
-                                </button>
-                              </form>
-                            </>
-                          ) : null}
-                          {selected.status === "on_hold" && (
-                            <p className="text-sm text-slate-500">
-                              On hold — return it to review or approve/reject
-                              once the decision is ready.
-                            </p>
-                          )}
-                          {canCancel && (
-                            <form action={cancelInvoice.bind(null, selected.id)}>
-                              <button className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50">
-                                Cancel
-                              </button>
-                            </form>
-                          )}
-                          {selected.status !== "on_review" &&
-                            selected.status !== "on_hold" &&
-                            !canDecide &&
-                            (currentStepApprovers.length > 0 ? (
-                              <p className="text-sm text-slate-500">
-                                Waiting on the approver for step{" "}
-                                {selected.current_step_order}.
-                              </p>
-                            ) : (
-                              <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-                                No approver currently matches this invoice at
-                                step {selected.current_step_order} — its
-                                Class/Category/Supplier/Customer don&apos;t
-                                match any configured approver, and there&apos;s
-                                no default approver on this step to fall
-                                back to. It can&apos;t be approved as-is.
-                                {canReviewNow
-                                  ? " Use Reassign to below to unstick it, or fix the step's approvers/conditions in Workflows."
-                                  : " An admin needs to reassign it or fix the step's approvers in Workflows."}
-                              </p>
+                          <ul className="mt-1.5 space-y-1">
+                            {possibleDuplicates.map((d) => (
+                              <li key={d.id}>
+                                <Link
+                                  href={`/dashboard/${d.id}${qs}`}
+                                  className="underline hover:no-underline"
+                                >
+                                  {new Date(d.created_at).toLocaleDateString()} —{" "}
+                                  {d.amount != null
+                                    ? d.amount.toLocaleString(undefined, {
+                                        style: "currency",
+                                        currency: d.currency,
+                                      })
+                                    : "no amount"}
+                                </Link>
+                                {d.amount !== selected!.amount && (
+                                  <span className="ml-1 text-xs text-orange-700">
+                                    (amount differs from this one — possible price-corrected
+                                    resubmission, not necessarily a true duplicate)
+                                  </span>
+                                )}
+                              </li>
                             ))}
+                          </ul>
                         </div>
                       )}
-                    {canReviewNow && (
-                      <div className="mt-4 space-y-2 border-t border-slate-100 pt-3">
-                        <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
-                          Admin
-                        </p>
-                        {(selected.status === "on_approval" ||
-                          selected.status === "on_hold") && (
-                          <div>
-                            <label className="mb-1 block text-xs text-slate-500">
-                              Reassign to
-                            </label>
-                            <InlineSelectSave
-                              key={`reassign-${selected.id}`}
-                              name="approver_id"
-                              defaultValue={selected.step_override_approver_id ?? ""}
-                              options={[
-                                { value: "", label: "— workflow default —" },
-                                ...memberOptions.map((m) => ({
-                                  value: m.id,
-                                  label: m.label,
-                                })),
-                              ]}
-                              action={reassignApprover.bind(null, selected.id)}
-                            />
-                          </div>
-                        )}
-                        <div>
-                          <label className="mb-1 block text-xs text-slate-500">
-                            Override status
-                          </label>
-                          <InlineSelectSave
-                            key={`override-status-${selected.id}`}
-                            name="status"
-                            defaultValue={selected.status}
-                            options={STATUS_OPTIONS.map((s) => ({
-                              value: s.id,
-                              label: s.label,
-                            }))}
-                            action={overrideStatus.bind(null, selected.id)}
-                          />
-                        </div>
-                        <div className="border-t border-slate-100 pt-2">
-                          <ConfirmSubmitButton
-                            action={deleteInvoiceAction.bind(null, selected.id)}
-                            confirmMessage={`Permanently delete this invoice${
-                              selected.vendor_name ? ` from ${selected.vendor_name}` : ""
-                            }? This removes it, its line items, documents, and discussion — it cannot be undone.`}
-                            className="w-full rounded-md border border-red-200 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50"
-                          >
-                            Delete invoice
-                          </ConfirmSubmitButton>
-                        </div>
-                      </div>
-                    )}
-                  </CollapsibleSection>
-
-                  <CollapsibleSection title="Instructions for accounting">
-                    <InstructionsBox
-                      key={`instructions-${selected.id}`}
-                      initialValue={selected.accounting_instructions ?? ""}
-                      readOnly={isAuditor}
-                      saveInstructions={saveAccountingInstructions.bind(
-                        null,
-                        selected.id
-                      )}
-                      approve={
-                        canDecide
-                          ? decide.bind(null, selected.id, "approved")
-                          : undefined
-                      }
-                    />
-                  </CollapsibleSection>
-
-              </DetailSplit>
+                    </>
+                  ),
+                }}
+              />
             )}
           </div>
         </div>

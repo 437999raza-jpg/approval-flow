@@ -1,7 +1,13 @@
 "use client";
 
 import { useRef, useState, type ReactNode } from "react";
-import { BillPanel } from "./BillPanel";
+
+import {
+  BillPanel,
+  type BillApprovalData,
+  type BillAdminData,
+  type BillInstructionsData,
+} from "./BillPanel";
 import { ResizeHandle } from "./ResizeHandle";
 import type { SupplierDefaultsValues } from "./SupplierRulesModal";
 import type { Database } from "@/lib/supabase/types";
@@ -41,6 +47,10 @@ export interface BillData {
   authorNameById: Map<string, string>;
   addComment: (formData: FormData) => Promise<void>;
   members: { id: string; label: string }[];
+  approval: BillApprovalData;
+  admin: BillAdminData;
+  instructions: BillInstructionsData;
+  alerts?: ReactNode;
 }
 
 interface DetailSplitProps {
@@ -48,28 +58,23 @@ interface DetailSplitProps {
   bill?: BillData;
   uploadAction?: (formData: FormData) => Promise<void>; // add a document
   canEdit?: boolean; // auditors are read-only
-  children: ReactNode; // side panel content (server-rendered)
 }
 
-// Three-pane detail: invoice document(s), the ApprovalMax-style bill panel,
-// and the side panel. The document starts COLLAPSED (the bill is the main
-// focus — that's where the detail lives); click the strip to view the
-// document. The bill panel flexes like the side panel: fixed width when the
-// document is open, expanding to fill when it's hidden. Authored by Araza.
+// Two-pane detail: invoice document(s) and the ApprovalMax-style bill panel.
+// The document starts COLLAPSED (the bill is the main focus — that's where
+// the detail lives); click the strip to view the document. The bill takes a
+// fixed, draggable width while the document is open and expands to fill the
+// pane once it's hidden. Authored by Araza.
 export function DetailSplit({
   documents,
   bill,
   uploadAction,
   canEdit = true,
-  children,
 }: DetailSplitProps) {
   const [showDoc, setShowDoc] = useState(false);
   const [billOpen, setBillOpen] = useState(true);
   const [docIndex, setDocIndex] = useState(0);
-  const [docW, setDocW] = useState<number | null>(null); // null = auto (fills)
   const [billW, setBillW] = useState(480);
-  const [billPinned, setBillPinned] = useState(false); // true once dragged
-  const [sideW, setSideW] = useState(360);
   const docRef = useRef<HTMLDivElement>(null);
   const billRef = useRef<HTMLDivElement>(null);
   const formRef = useRef<HTMLFormElement>(null);
@@ -79,19 +84,11 @@ export function DetailSplit({
   const multi = documents.length > 1;
 
   const openDocument = () => {
-    // Always reopen in the clean "auto" layout — any pinned widths from a
-    // previous drag are reset so nothing gets squeezed.
     setShowDoc(true);
     setDocIndex(0);
-    setDocW(null);
-    setBillPinned(false);
   };
 
-  const hideDocument = () => {
-    setShowDoc(false);
-    setDocW(null); // back to auto (fills) on next open
-    setBillPinned(false);
-  };
+  const hideDocument = () => setShowDoc(false);
 
   const prevDoc = () =>
     setDocIndex((i) => (i + documents.length - 1) % documents.length);
@@ -102,12 +99,7 @@ export function DetailSplit({
       {showDoc ? (
         <div
           ref={docRef}
-          style={docW != null ? { width: docW } : undefined}
-          className={
-            docW != null
-              ? "flex flex-none flex-col border-r border-slate-200 bg-slate-100"
-              : "flex min-w-0 flex-1 flex-col border-r border-slate-200 bg-slate-100"
-          }
+          className="flex min-w-0 flex-1 flex-col border-r border-slate-200 bg-slate-100"
         >
           <div className="flex flex-none items-center justify-between gap-2 border-b border-slate-200 bg-white px-4 py-2">
             <span className="flex min-w-0 items-center gap-2">
@@ -272,14 +264,14 @@ export function DetailSplit({
         </div>
       )}
 
-      {/* Resize handle: document pane's right edge */}
-      {showDoc && (
+      {/* The split between the two panes. The document always absorbs the
+          surplus (flex-1) and the bill holds a fixed width, so dragging
+          adjusts the bill inversely — right shrinks it, left grows it —
+          and the pair always fills the pane exactly. */}
+      {showDoc && billOpen && (
         <ResizeHandle
           onDrag={(dx) =>
-            setDocW((w) => {
-              const base = w ?? docRef.current?.offsetWidth ?? 560;
-              return Math.min(2400, Math.max(240, base + dx));
-            })
+            setBillW((w) => Math.min(1600, Math.max(320, w - dx)))
           }
         />
       )}
@@ -287,14 +279,8 @@ export function DetailSplit({
       {bill && (billOpen ? (
         <div
           ref={billRef}
-          style={
-            showDoc || billPinned ? { width: billW } : undefined
-          }
-          className={
-            showDoc || billPinned
-              ? "flex-none"
-              : "min-w-0 flex-1"
-          }
+          style={showDoc ? { width: billW } : undefined}
+          className={showDoc ? "flex-none" : "min-w-0 flex-1"}
         >
           <BillPanel
             invoice={bill.invoice}
@@ -315,6 +301,10 @@ export function DetailSplit({
             authorNameById={bill.authorNameById}
             addComment={bill.addComment}
             members={bill.members}
+            approval={bill.approval}
+            admin={bill.admin}
+            instructions={bill.instructions}
+            alerts={bill.alerts}
             onOpenDocument={openDocument}
             onCollapse={() => setBillOpen(false)}
           />
@@ -347,45 +337,6 @@ export function DetailSplit({
           </span>
         </div>
       ))}
-
-      {/* Resize handle: bill pane's right edge. Always visible while the
-          bill is open; the first drag pins the bill to a fixed width (it
-          auto-fills when the document is hidden until then). */}
-      {billOpen && (
-        <ResizeHandle
-          onDrag={(dx) => {
-            const base = billPinned
-              ? billW
-              : billRef.current?.offsetWidth ?? billW;
-            setBillPinned(true);
-            setBillW(Math.min(1600, Math.max(320, base + dx)));
-          }}
-        />
-      )}
-
-      {/* The side panel absorbs surplus only when nothing else can: the
-          document is pinned fixed, or the document is hidden AND the bill
-          is pinned. When the document is auto (flex-1) it absorbs instead,
-          so the two never fight over the space. */}
-      <div
-        style={
-          docW != null || (!showDoc && billPinned)
-            ? { flexBasis: sideW }
-            : { width: sideW }
-        }
-        className={
-          docW != null || (!showDoc && billPinned)
-            ? "min-w-0 flex-1 overflow-y-auto bg-white"
-            : "flex-none overflow-y-auto bg-white"
-        }
-      >
-        {children}
-      </div>
-      <ResizeHandle
-        onDrag={(dx) =>
-          setSideW((w) => Math.min(1200, Math.max(300, w + dx)))
-        }
-      />
     </div>
   );
 }
