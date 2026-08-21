@@ -10,8 +10,10 @@ import type { BillInstructionsEntry } from "./BillPanel";
 //
 // For the approver the Add box IS the Approve button: type a note, press
 // Approve — the note is appended and the invoice approved in one motion.
-// The box is controlled and clears after a successful save, so a saved
-// note never lingers as if it were still unsent.
+//
+// CO/Extras flag: when the approver says the invoice has COs or Extras, a
+// note is REQUIRED before approving, and the line items are classed
+// "Extras" on approval. The box clears after a successful save.
 // Authored by Araza.
 export function InstructionsBox({
   entries,
@@ -26,6 +28,7 @@ export function InstructionsBox({
 }) {
   const formRef = useRef<HTMLFormElement>(null);
   const [text, setText] = useState("");
+  const [hasCos, setHasCos] = useState(false);
 
   // Wraps the server action so we can clear the box once the note is saved.
   // The textarea is controlled (value=text), so its value is submitted with
@@ -36,13 +39,29 @@ export function InstructionsBox({
     setText("");
   }
 
+  // With the CO/Extras flag on, approval requires a note.
+  const requiresNote = hasCos && !!approve;
+
   return (
     <div className="flex h-full flex-col">
-      <p className="mt-2 text-xs text-slate-400">
-        Internal guidance for your accounting team. Every note here is added
-        to the thread and becomes part of the bill&apos;s memo (PrivateNote)
-        in QuickBooks — not printed on the invoice.
-      </p>
+      {/* CO/Extras flag — sits where the old explanation text was */}
+      <label className="mt-2 flex cursor-pointer items-center gap-2 text-sm text-slate-700">
+        <input
+          type="checkbox"
+          name="has_cos_or_extras"
+          checked={hasCos}
+          onChange={(e) => setHasCos(e.target.checked)}
+          disabled={readOnly}
+          className="h-4 w-4 rounded border-slate-300"
+        />
+        Does this invoice have COs or Extras?
+      </label>
+      {requiresNote && (
+        <p className="mt-1 text-xs text-red-600">
+          A note for accounting is required when this invoice has COs or
+          Extras — add it above to approve.
+        </p>
+      )}
 
       {/* History — everyone's notes, oldest first */}
       {entries.length > 0 ? (
@@ -91,7 +110,10 @@ export function InstructionsBox({
           />
         )}
         {approve ? (
-          <button className="w-full rounded-md border border-transparent bg-emerald-600 px-4 py-2 text-center text-sm font-semibold text-white hover:bg-emerald-700">
+          <button
+            disabled={requiresNote && text.trim().length === 0}
+            className="w-full rounded-md border border-transparent bg-emerald-600 px-4 py-2 text-center text-sm font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
             Approve
           </button>
         ) : readOnly ? null : (

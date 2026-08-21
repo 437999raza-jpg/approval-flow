@@ -91,6 +91,17 @@ export async function decide(
   // approver typed is added as their own line, never overwriting anyone
   // else's (the whole thread becomes the QBO memo on sync).
   const instructions = String(formData.get("instructions") ?? "").trim();
+  const hasCosOrExtras = formData.get("has_cos_or_extras") === "on";
+
+  // CO/Extras rule: when flagged, a note for accounting is REQUIRED before
+  // approving (the Approve button is also disabled client-side; this is the
+  // server-side enforcement so it can't be bypassed).
+  if (hasCosOrExtras && !instructions) {
+    redirect(
+      `/dashboard/${invoiceId}?error=cos-requires-note`
+    );
+  }
+
   if (instructions) {
     await supabase.from("accounting_instructions").insert({
       invoice_id: invoiceId,
@@ -180,6 +191,17 @@ export async function decide(
   } else if (state === "approved") {
     const lastStep = orderedSteps[orderedSteps.length - 1]?.step_order ?? 1;
     const isFinalStep = invoice.current_step_order >= lastStep;
+
+    // CO/Extras rule: when the approver flagged the invoice as having COs
+    // or Extras, every line item's class is set to "Extras" so they're
+    // separated in QBO reports.
+    if (hasCosOrExtras) {
+      await supabase
+        .from("invoice_line_items")
+        .update({ class: "Extras" })
+        .eq("invoice_id", invoiceId);
+    }
+
     await supabase
       .from("invoices")
       .update({
