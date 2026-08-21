@@ -64,7 +64,7 @@ export interface BillInstructionsData {
 const ghostField =
   "w-full border-b border-transparent bg-transparent px-0 py-1 text-sm text-slate-800 hover:border-slate-200 focus:border-blue-500 focus:outline-none disabled:text-slate-500";
 const ghostLabel = "block text-[10px] font-semibold uppercase tracking-wide text-slate-400";
-const LINE_ITEM_COLS = "grid-cols-[1.1fr_1.4fr_1.1fr_0.9fr_80px_110px_52px_24px]";
+const LINE_ITEM_COLS = "grid-cols-[1fr_1.3fr_1.5fr_0.9fr_90px_110px_52px_24px]";
 
 // ApprovalMax-style "Bill" panel, styled as a document: every data item is
 // editable in place and maps to QBO on sync (vendor/bill number/dates/
@@ -569,9 +569,9 @@ export function BillPanel({
           <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">
             Category details
           </div>
-          <div className="mt-2 overflow-x-auto">
+          <div className="mt-2 overflow-x-auto overflow-y-visible">
             <div
-              className={`grid ${LINE_ITEM_COLS} min-w-[720px] gap-x-3 border-b border-slate-200 pb-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-400`}
+              className={`grid ${LINE_ITEM_COLS} min-w-[780px] gap-x-3 border-b border-slate-200 pb-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-400`}
             >
               <span>Category</span>
               <span>Description</span>
