@@ -674,7 +674,7 @@ export function BillPanel({
                 href={`/api/invoices/${invoice.id}/audit-trail`}
                 className="flex-none text-xs font-medium text-blue-600 hover:underline"
               >
-                Download PDF
+                Download Audit Report
               </a>
             </div>
             {auditTimeline.length === 0 ? (

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 // A collapsible (vertical accordion) panel. Client component with explicit
 // state so toggling is guaranteed to work (native <details> + React's `open`
@@ -18,9 +18,17 @@ export function CollapsibleSection({
   defaultOpen?: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // Expanding a section that was below the fold otherwise leaves its new
+  // content off-screen with no visual confirmation it opened — scroll it
+  // into view once the content has actually mounted.
+  useEffect(() => {
+    if (open) containerRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }, [open]);
 
   return (
-    <div className="border-b border-slate-200">
+    <div ref={containerRef} className="border-b border-slate-200">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}

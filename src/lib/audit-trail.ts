@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/types";
-import { buildPdf, textWidth, type PdfLine } from "@/lib/pdf";
+import { buildPdf, textWidth, wrapLine, type PdfColor, type PdfLine } from "@/lib/pdf";
 import { buildAuditTimeline } from "@/lib/audit-timeline";
 import {
   effectiveApproversForStep,
@@ -32,6 +32,29 @@ const STATUS_LABELS: Record<string, string> = {
   rejected: "REJECTED",
   on_hold: "ON HOLD",
 };
+
+// Mirrors InvoiceStatusBadge's Tailwind palette (bg-*-100 / text-*-800) so
+// the PDF's status pill matches what the same status looks like in the
+// app. Light tint fills only — this report is designed to print cheaply,
+// never a solid/dark background.
+const STATUS_COLORS: Record<string, { bg: PdfColor; text: PdfColor }> = {
+  on_review: { bg: { r: 0.929, g: 0.914, b: 0.996 }, text: { r: 0.357, g: 0.129, b: 0.714 } },
+  on_approval: { bg: { r: 0.996, g: 0.953, b: 0.78 }, text: { r: 0.573, g: 0.251, b: 0.055 } },
+  approved: { bg: { r: 0.82, g: 0.98, b: 0.898 }, text: { r: 0.024, g: 0.373, b: 0.275 } },
+  cancelled: { bg: { r: 0.945, g: 0.961, b: 0.976 }, text: { r: 0.392, g: 0.455, b: 0.545 } },
+  rejected: { bg: { r: 0.996, g: 0.886, b: 0.886 }, text: { r: 0.6, g: 0.106, b: 0.106 } },
+  on_hold: { bg: { r: 1, g: 0.929, b: 0.835 }, text: { r: 0.604, g: 0.204, b: 0.071 } },
+};
+const DEFAULT_STATUS_COLOR = STATUS_COLORS.cancelled;
+
+const LIGHT_GRAY: PdfColor = { r: 0.965, g: 0.968, b: 0.973 };
+const AMBER_FILL: PdfColor = { r: 0.996, g: 0.961, b: 0.867 };
+const AMBER_ACCENT: PdfColor = { r: 0.706, g: 0.325, b: 0.035 };
+const RED_FILL: PdfColor = { r: 0.996, g: 0.929, b: 0.929 };
+const RED_ACCENT: PdfColor = { r: 0.6, g: 0.106, b: 0.106 };
+const EMERALD_TEXT: PdfColor = { r: 0.024, g: 0.373, b: 0.275 };
+const RED_TEXT: PdfColor = { r: 0.6, g: 0.106, b: 0.106 };
+const TIMELINE_DOT: PdfColor = { r: 0.373, g: 0.404, b: 0.949 }; // indigo-500-ish
 
 export async function buildInvoiceAuditDocument(
   supabase: SupabaseClient<Database>,
@@ -183,22 +206,52 @@ export async function buildInvoiceAuditDocument(
   });
 
   const statusLabel = STATUS_LABELS[invoice.status] ?? invoice.status.toUpperCase();
-  const badgeW = textWidth(statusLabel, 9, true) + 20;
-  lines.push(
-    { text: "Organization", gray: 0.5, size: 9, spaceBefore: 16 },
-    {
+  const statusColor = STATUS_COLORS[invoice.status] ?? DEFAULT_STATUS_COLOR;
+  const badgeW = textWidth(statusLabel, 8.5, true) + 20;
+  lines.push({
+    spaceBefore: 10,
+    cells: [{ text: statusLabel, x: CONTENT_W - badgeW + 10, size: 8.5, bold: true, color: statusColor.text }],
+    box: { x: CONTENT_W - badgeW, width: badgeW, height: 16, fill: statusColor.bg },
+  });
+
+  // A single light-tint card holding what used to be two separate blocks
+  // (header metadata + the "Invoice" section further down) — a cheap way
+  // to get the reference's two-card look out of this engine's sequential
+  // row layout: one shared fill box behind label/value rows zipped into
+  // two columns.
+  const metaRows: [{ label: string; value: string }, { label: string; value: string }][] = [
+    [
+      { label: "Organization", value: org?.name ?? "Unknown" },
+      { label: "Invoice number", value: invoice.invoice_number ?? "—" },
+    ],
+    [
+      { label: "Submitted by", value: nameOf(invoice.submitted_by) },
+      { label: "Bill date", value: invoice.bill_date ?? "—" },
+    ],
+    [
+      { label: "Generated", value: new Date().toLocaleDateString() },
+      { label: "Due date", value: invoice.due_date ?? "—" },
+    ],
+  ];
+  const gridH = metaRows.length * 36 + 14;
+  metaRows.forEach((row, i) => {
+    lines.push({
+      spaceBefore: i === 0 ? 14 : 12,
       cells: [
-        { text: org?.name ?? "Unknown", x: 0, size: 10 },
-        { text: statusLabel, x: CONTENT_W - 10, align: "right", bold: true, size: 9, gray: 0.25 },
+        { text: row[0].label.toUpperCase(), x: 14, gray: 0.55, size: 7.5, bold: true },
+        { text: row[1].label.toUpperCase(), x: 270, gray: 0.55, size: 7.5, bold: true },
       ],
-      box: { x: CONTENT_W - badgeW, width: badgeW, height: 18, borderGray: 0.6 },
-    },
-    { text: "Generated", gray: 0.5, size: 9, spaceBefore: 8 },
-    { text: new Date().toLocaleString(), size: 10 },
-    { text: "Submitted by", gray: 0.5, size: 9, spaceBefore: 8 },
-    { text: nameOf(invoice.submitted_by), size: 10 },
-    rule(16)
-  );
+      box: i === 0 ? { x: 0, width: CONTENT_W, height: gridH, fill: LIGHT_GRAY } : undefined,
+    });
+    lines.push({
+      spaceBefore: 2,
+      cells: [
+        { text: row[0].value, x: 14, size: 10.5, bold: true, maxWidth: 230 },
+        { text: row[1].value, x: 270, size: 10.5, bold: true, maxWidth: 230 },
+      ],
+    });
+  });
+  lines.push(rule(20));
 
   // --- Approval log -------------------------------------------------
   lines.push(sectionHeader("Approval log"));
@@ -234,6 +287,8 @@ export async function buildInvoiceAuditDocument(
       for (const approverId of rowApproverIds) {
         const decision = decisionsForStep.find((d) => d.approver_id === approverId);
         const state = isOpen ? "Awaiting" : decision ? decision.decision : "Not decided";
+        const stateColor =
+          state === "approved" ? EMERALD_TEXT : state === "rejected" ? RED_TEXT : undefined;
         lines.push({
           cells: [
             {
@@ -244,7 +299,13 @@ export async function buildInvoiceAuditDocument(
               maxWidth: 210,
             },
             { text: step.name || `Step ${step.step_order}`, x: 220, size: 10 },
-            { text: state.charAt(0).toUpperCase() + state.slice(1), x: 340, size: 10 },
+            {
+              text: state.charAt(0).toUpperCase() + state.slice(1),
+              x: 340,
+              size: 10,
+              bold: !!stateColor,
+              color: stateColor,
+            },
             {
               text: decision ? new Date(decision.decided_at).toLocaleDateString() : "-",
               x: 420,
@@ -260,27 +321,6 @@ export async function buildInvoiceAuditDocument(
     }
   }
   lines.push(rule(14));
-
-  // --- Invoice fields -------------------------------------------------
-  lines.push(
-    sectionHeader("Invoice"),
-    {
-      cells: [
-        { text: "Number", x: 0, gray: 0.5, size: 9 },
-        { text: "Date", x: 170, gray: 0.5, size: 9 },
-        { text: "Due date", x: 340, gray: 0.5, size: 9 },
-      ],
-      spaceBefore: 8,
-    },
-    {
-      cells: [
-        { text: invoice.invoice_number ?? "—", x: 0, size: 10 },
-        { text: invoice.bill_date ?? "—", x: 170, size: 10 },
-        { text: invoice.due_date ?? "—", x: 340, size: 10 },
-      ],
-    },
-    rule(14)
-  );
 
   // --- Line items -------------------------------------------------
   lines.push(sectionHeader(`Line items (${lineItems.length})`));
@@ -336,23 +376,45 @@ export async function buildInvoiceAuditDocument(
   );
 
   // --- Instructions for accounting -------------------------------------------------
-  lines.push(
-    rule(16),
-    sectionHeader("Instructions for accounting"),
-    invoice.accounting_instructions
-      ? { text: invoice.accounting_instructions, size: 10, spaceBefore: 8 }
-      : { text: "None.", size: 10, gray: 0.5, spaceBefore: 8 }
-  );
+  lines.push(rule(16), sectionHeader("Instructions for accounting"));
+  if (invoice.accounting_instructions) {
+    const size = 10;
+    const indent = 16;
+    const lineH = Math.round(size * 1.35);
+    const wrapped = wrapLine(invoice.accounting_instructions, size);
+    const boxH = wrapped.length * lineH + 16;
+    wrapped.forEach((text, i) => {
+      lines.push({
+        text,
+        size,
+        indent,
+        spaceBefore: i === 0 ? 10 : 0,
+        box: i === 0 ? { x: -indent, width: CONTENT_W, height: boxH, fill: AMBER_FILL } : undefined,
+        vline: i === 0 ? { x: -indent, length: boxH - 2, color: AMBER_ACCENT, width: 3 } : undefined,
+      });
+    });
+  } else {
+    lines.push({ text: "None.", size: 10, gray: 0.5, spaceBefore: 8 });
+  }
 
   // --- Timeline (audit log + discussion, merged & chronological) -------------------------------------------------
   lines.push(rule(16), sectionHeader("Timeline"));
   if (timeline.length === 0) {
     lines.push({ text: "No activity recorded.", size: 10, spaceBefore: 8 });
   } else {
-    for (const entry of timeline) {
+    const dotR = 3;
+    const dotX = 2;
+    timeline.forEach((entry, i) => {
       const actorW = Math.min(textWidth(entry.actorName, 9.5, true), 140);
       const summaryX = actorW + 15;
+      const hasDetail = !!entry.detail;
+      // Each entry's rail segment reaches down to where the NEXT entry's
+      // dot sits, so consecutive segments chain into one continuous line
+      // without needing cross-entry pixel knowledge. The last entry omits
+      // the trailing segment (nothing to connect to).
+      const segmentLength = i < timeline.length - 1 ? (hasDetail ? 13 + 24 : 13) + 9 : 0;
       lines.push({
+        indent: 16,
         cells: [
           { text: entry.actorName, x: 0, bold: true, size: 9.5, maxWidth: 135 },
           {
@@ -361,26 +423,38 @@ export async function buildInvoiceAuditDocument(
             size: 9.5,
             maxWidth: CONTENT_W - 110 - summaryX,
           },
-          { text: fmtDate(entry.at), x: CONTENT_W, align: "right", size: 8, gray: 0.5 },
+          { text: fmtDate(entry.at), x: CONTENT_W - 16, align: "right", size: 8, gray: 0.5 },
         ],
         spaceBefore: 9,
+        dot: { x: -dotX - 13, radius: dotR, color: TIMELINE_DOT },
+        vline: segmentLength > 0 ? { x: -dotX - 13, length: segmentLength, color: TIMELINE_DOT, width: 1.5 } : undefined,
       });
       if (entry.detail) {
-        lines.push({ text: entry.detail, size: 9, gray: 0.45, indent: 8 });
+        lines.push({ text: entry.detail, size: 9, gray: 0.45, indent: 24 });
       }
-    }
+    });
   }
 
-  lines.push(
-    rule(18),
-    { text: invoice.file_name, size: 9, gray: 0.5 },
-    {
-      text: "This document accompanies the approval of this invoice. Together with the original invoice, it is attached to the corresponding bill in QuickBooks.",
-      size: 8,
-      gray: 0.55,
-      spaceBefore: 6,
-    }
-  );
+  // --- Conditional note when the status was manually overridden ---------
+  if (auditEntries.some((e) => e.action === "invoice.admin_override_status")) {
+    const noteText =
+      "Note for reviewers: This invoice's status was changed manually by an admin, outside the normal approval flow. Please review the timeline above before relying on the approval log alone.";
+    const size = 9.5;
+    const indent = 16;
+    const lineH = Math.round(size * 1.35);
+    const wrapped = wrapLine(noteText, size);
+    const boxH = wrapped.length * lineH + 16;
+    wrapped.forEach((text, i) => {
+      lines.push({
+        text,
+        size,
+        indent,
+        spaceBefore: i === 0 ? 20 : 0,
+        box: i === 0 ? { x: -indent, width: CONTENT_W, height: boxH, fill: RED_FILL } : undefined,
+        vline: i === 0 ? { x: -indent, length: boxH - 2, color: RED_ACCENT, width: 3 } : undefined,
+      });
+    });
+  }
 
   const base = (invoice.vendor_name ?? invoice.file_name ?? "invoice")
     .toLowerCase()

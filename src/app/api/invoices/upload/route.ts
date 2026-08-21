@@ -21,6 +21,12 @@ export async function POST(request: Request) {
   if (!org) {
     return NextResponse.json({ error: "No organization" }, { status: 400 });
   }
+  if (org.role === "auditor") {
+    return NextResponse.json(
+      { error: "Auditors are read-only and can't add invoices." },
+      { status: 403 }
+    );
+  }
 
   const formData = await request.formData();
   const file = formData.get("file");

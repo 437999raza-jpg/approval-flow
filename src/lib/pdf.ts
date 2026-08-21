@@ -6,12 +6,22 @@
 // small: no font embedding, Latin-1 text only — anything outside that
 // range renders as "?". Authored by Araza.
 
+// RGB, each channel 0 (none) .. 1 (full) — lets report styling reuse the
+// app's own status-badge palette (see STATUS_COLORS in audit-trail.ts)
+// instead of the grayscale-only look this engine started with.
+export interface PdfColor {
+  r: number;
+  g: number;
+  b: number;
+}
+
 export interface PdfCell {
   text: string;
   x: number; // offset from the line's left edge (MARGIN + indent), points
   bold?: boolean;
   size?: number; // defaults to the line's size
   gray?: number; // defaults to the line's gray
+  color?: PdfColor; // overrides gray when set
   align?: "left" | "right"; // right-aligns text so it ENDS at x
   maxWidth?: number; // truncate with "..." if the text would exceed this width
 }
@@ -22,12 +32,43 @@ export interface PdfLine {
   size?: number; // defaults to FONT_SIZE
   indent?: number; // points, added to MARGIN
   gray?: number; // 0 (black) .. 1 (white), defaults to 0
+  color?: PdfColor; // overrides gray when set
   spaceBefore?: number; // extra vertical gap before this line, in points
   rule?: boolean; // draw a horizontal divider instead of text
   cells?: PdfCell[]; // multi-column row; if present, `text` is ignored
-  // Bordered rect drawn behind this row. `x`/`width`/`height` are all in
-  // points, offset from the line's left edge like a cell.
-  box?: { x: number; width: number; height: number; borderGray?: number };
+  // Rect drawn behind this row. `x`/`width`/`height` are in points, offset
+  // from the line's left edge like a cell. `fill` paints a flat tint
+  // (light colors only — this report is designed to stay ink-cheap to
+  // print, never a solid dark background); `borderColor`/`borderGray`
+  // stroke an outline. Either, both, or neither.
+  box?: {
+    x: number;
+    width: number;
+    height: number;
+    fill?: PdfColor;
+    borderGray?: number;
+    borderColor?: PdfColor;
+  };
+  // Same as `box`, but more than one — e.g. two side-by-side cards sharing
+  // one row band (each needs its own fill/border, but a row only has one
+  // `box`). `box` and `boxes` are both drawn if both are set.
+  boxes?: {
+    x: number;
+    width: number;
+    height: number;
+    fill?: PdfColor;
+    borderGray?: number;
+    borderColor?: PdfColor;
+  }[];
+  // Small filled circle — a timeline marker. Vertically centered on this
+  // row's text baseline.
+  dot?: { x: number; radius: number; color: PdfColor };
+  // Vertical line starting at this row and running DOWN `length` points —
+  // the timeline's connecting rail. Each entry draws its own segment down
+  // to where the next entry's dot lands, so consecutive entries chain
+  // into one continuous line without the engine needing cross-entry
+  // knowledge of exact pixel positions.
+  vline?: { x: number; length: number; color: PdfColor; width?: number };
 }
 
 const PAGE_W = 612; // Letter, points
@@ -110,7 +151,7 @@ function truncateToWidth(text: string, maxWidthRaw: number, size: number, bold: 
   return cut.length > 0 ? `${cut}${ellipsis}` : ellipsis;
 }
 
-function wrapLine(text: string, size: number): string[] {
+export function wrapLine(text: string, size: number): string[] {
   const maxChars = Math.max(20, Math.floor(1000 / size));
   if (text.length <= maxChars) return [text];
   const words = text.split(/\s+/);
@@ -128,47 +169,136 @@ function wrapLine(text: string, size: number): string[] {
   return lines;
 }
 
+// Like wrapLine, but measures actual glyph widths against a point width
+// instead of guessing a character count — needed for anything narrower
+// than a full-width paragraph (card fields, side-by-side timeline
+// columns), where wrapLine's fixed chars-per-size estimate wraps far too
+// late or too early.
+export function wrapToWidth(text: string, maxWidth: number, size: number, bold = false): string[] {
+  const words = text.split(/\s+/).filter(Boolean);
+  const lines: string[] = [];
+  let cur = "";
+  for (const word of words) {
+    const candidate = cur ? `${cur} ${word}` : word;
+    if (cur && textWidth(candidate, size, bold) > maxWidth) {
+      lines.push(cur);
+      cur = word;
+    } else {
+      cur = candidate;
+    }
+  }
+  if (cur) lines.push(cur);
+  return lines.length > 0 ? lines : [""];
+}
+
+// A gray shade and an RGB color are both just "a fill/stroke color" to the
+// PDF content stream — this union plus the two helpers below are how every
+// primitive (text, rules, boxes, dots, vlines) shares one color model
+// without every call site juggling two separate fields.
+type Shade = number | PdfColor;
+const isColor = (s: Shade): s is PdfColor => typeof s === "object";
+function strokeOp(s: Shade): string {
+  return isColor(s) ? `${s.r} ${s.g} ${s.b} RG` : `${s} G`;
+}
+function fillOp(s: Shade): string {
+  return isColor(s) ? `${s.r} ${s.g} ${s.b} rg` : `${s} g`;
+}
+function shadeKey(s: Shade): string {
+  return isColor(s) ? `c${s.r},${s.g},${s.b}` : `g${s}`;
+}
+
 interface PhysicalGlyphRun {
   x: number;
   text: string;
   bold: boolean;
   size: number;
-  gray: number;
+  shade: Shade;
 }
 interface PhysicalRule {
   x: number;
   y: number;
-  gray: number;
+  shade: Shade;
 }
 interface PhysicalBox {
   x: number;
   y: number;
   width: number;
   height: number;
-  gray: number;
+  fill?: PdfColor;
+  borderShade?: Shade;
+}
+interface PhysicalDot {
+  x: number;
+  y: number;
+  radius: number;
+  color: PdfColor;
+}
+interface PhysicalVLine {
+  x: number;
+  yTop: number;
+  yBottom: number;
+  shade: Shade;
+  width: number;
 }
 interface PhysicalRow {
   y: number;
   runs: PhysicalGlyphRun[];
 }
+interface PhysicalPage {
+  rows: PhysicalRow[];
+  rules: PhysicalRule[];
+  boxes: PhysicalBox[];
+  dots: PhysicalDot[];
+  vlines: PhysicalVLine[];
+}
+
+const emptyPage = (): PhysicalPage => ({ rows: [], rules: [], boxes: [], dots: [], vlines: [] });
 
 // Expands logical PdfLines (wrapping long text, applying spacing, laying
 // out multi-cell rows) into physical positioned content, split into pages
 // by actual vertical space.
-function layoutPages(allLines: PdfLine[]): {
-  rows: PhysicalRow[];
-  rules: PhysicalRule[];
-  boxes: PhysicalBox[];
-}[] {
-  const pages: { rows: PhysicalRow[]; rules: PhysicalRule[]; boxes: PhysicalBox[] }[] = [
-    { rows: [], rules: [], boxes: [] },
-  ];
+function layoutPages(allLines: PdfLine[]): PhysicalPage[] {
+  const pages: PhysicalPage[] = [emptyPage()];
   let y = PAGE_H - MARGIN;
 
   const ensureSpace = (needed: number) => {
     if (y - needed < MARGIN) {
-      pages.push({ rows: [], rules: [], boxes: [] });
+      pages.push(emptyPage());
       y = PAGE_H - MARGIN;
+    }
+  };
+
+  // dot/vline/box are all "decorate this row" extras shared by both the
+  // cells and plain-text branches below.
+  const addRowExtras = (line: PdfLine, x0: number, rowY: number, lineH: number) => {
+    const page = pages[pages.length - 1];
+    for (const box of line.box ? [line.box, ...(line.boxes ?? [])] : line.boxes ?? []) {
+      page.boxes.push({
+        x: x0 + box.x,
+        y: rowY - box.height + lineH * 0.75,
+        width: box.width,
+        height: box.height,
+        fill: box.fill,
+        borderShade: box.borderColor ?? (box.borderGray !== undefined ? box.borderGray : undefined),
+      });
+    }
+    if (line.dot) {
+      page.dots.push({
+        x: x0 + line.dot.x,
+        y: rowY + lineH * 0.28,
+        radius: line.dot.radius,
+        color: line.dot.color,
+      });
+    }
+    if (line.vline) {
+      const width = line.vline.width ?? 1.5;
+      page.vlines.push({
+        x: x0 + line.vline.x,
+        yTop: rowY + lineH * 0.28,
+        yBottom: rowY + lineH * 0.28 - line.vline.length,
+        shade: line.vline.color,
+        width,
+      });
     }
   };
 
@@ -177,33 +307,26 @@ function layoutPages(allLines: PdfLine[]): {
     const lineH = Math.round(size * 1.35);
     const gap = line.spaceBefore ?? 0;
     const x0 = MARGIN + (line.indent ?? 0);
+    const maxBoxHeight = Math.max(0, line.box?.height ?? 0, ...(line.boxes ?? []).map((b) => b.height));
 
     if (line.rule) {
       ensureSpace(gap + 10);
       y -= gap;
-      pages[pages.length - 1].rules.push({ x: x0, y, gray: line.gray ?? 0.75 });
+      pages[pages.length - 1].rules.push({ x: x0, y, shade: line.color ?? line.gray ?? 0.75 });
       y -= 12;
       continue;
     }
 
     if (line.cells) {
-      ensureSpace(gap + lineH + (line.box?.height ?? 0));
+      ensureSpace(gap + lineH + maxBoxHeight);
       y -= gap;
       const page = pages[pages.length - 1];
-      if (line.box) {
-        page.boxes.push({
-          x: x0 + line.box.x,
-          y: y - line.box.height + lineH * 0.75,
-          width: line.box.width,
-          height: line.box.height,
-          gray: line.box.borderGray ?? 0.7,
-        });
-      }
+      addRowExtras(line, x0, y, lineH);
       page.rows.push({
         y,
         runs: line.cells.map((cell) => {
           const cellSize = cell.size ?? size;
-          const cellGray = cell.gray ?? line.gray ?? 0;
+          const cellShade: Shade = cell.color ?? cell.gray ?? line.color ?? line.gray ?? 0;
           const cellBold = !!cell.bold;
           const text = cell.maxWidth
             ? truncateToWidth(cell.text, cell.maxWidth, cellSize, cellBold)
@@ -214,7 +337,7 @@ function layoutPages(allLines: PdfLine[]): {
             text,
             bold: cellBold,
             size: cellSize,
-            gray: cellGray,
+            shade: cellShade,
           };
         }),
       });
@@ -225,11 +348,12 @@ function layoutPages(allLines: PdfLine[]): {
     const wrapped = wrapLine(line.text ?? "", size);
     wrapped.forEach((text, i) => {
       const extra = i === 0 ? gap : 0;
-      ensureSpace(lineH + extra);
+      ensureSpace(lineH + extra + (i === 0 ? maxBoxHeight : 0));
       y -= extra;
+      if (i === 0) addRowExtras(line, x0, y, lineH);
       pages[pages.length - 1].rows.push({
         y,
-        runs: [{ x: x0, text, bold: !!line.bold, size, gray: line.gray ?? 0 }],
+        runs: [{ x: x0, text, bold: !!line.bold, size, shade: line.color ?? line.gray ?? 0 }],
       });
       y -= lineH;
     });
@@ -237,18 +361,51 @@ function layoutPages(allLines: PdfLine[]): {
   return pages;
 }
 
-function buildContent(page: { rows: PhysicalRow[]; rules: PhysicalRule[]; boxes: PhysicalBox[] }): string {
+// Four cubic Beziers approximate a circle closely enough at report scale
+// (dot radii of 3-4pt) — PDF content streams have no native circle op.
+const BEZIER_KAPPA = 0.5523;
+function circlePathOps(cx: number, cy: number, r: number): string[] {
+  const k = r * BEZIER_KAPPA;
+  return [
+    `${cx + r} ${cy} m`,
+    `${cx + r} ${cy + k} ${cx + k} ${cy + r} ${cx} ${cy + r} c`,
+    `${cx - k} ${cy + r} ${cx - r} ${cy + k} ${cx - r} ${cy} c`,
+    `${cx - r} ${cy - k} ${cx - k} ${cy - r} ${cx} ${cy - r} c`,
+    `${cx + k} ${cy - r} ${cx + r} ${cy - k} ${cx + r} ${cy} c`,
+    "f",
+  ];
+}
+
+function buildContent(page: PhysicalPage): string {
   const graphicOps: string[] = [];
   for (const rule of page.rules) {
-    graphicOps.push(`${rule.gray} G`, "1 w", `${rule.x} ${rule.y} m`, `${PAGE_W - MARGIN} ${rule.y} l`, "S");
+    graphicOps.push(strokeOp(rule.shade), "1 w", `${rule.x} ${rule.y} m`, `${PAGE_W - MARGIN} ${rule.y} l`, "S");
   }
   for (const box of page.boxes) {
-    graphicOps.push(`${box.gray} G`, "1 w", `${box.x} ${box.y} ${box.width} ${box.height} re`, "S");
+    if (box.fill) {
+      graphicOps.push(fillOp(box.fill), `${box.x} ${box.y} ${box.width} ${box.height} re`, "f");
+    }
+    if (box.borderShade !== undefined) {
+      graphicOps.push(strokeOp(box.borderShade), "0.75 w", `${box.x} ${box.y} ${box.width} ${box.height} re`, "S");
+    }
+  }
+  for (const vline of page.vlines) {
+    if (vline.yBottom >= vline.yTop) continue;
+    graphicOps.push(
+      strokeOp(vline.shade),
+      `${vline.width} w`,
+      `${vline.x} ${vline.yTop} m`,
+      `${vline.x} ${vline.yBottom} l`,
+      "S"
+    );
+  }
+  for (const dot of page.dots) {
+    graphicOps.push(fillOp(dot.color), ...circlePathOps(dot.x, dot.y, dot.radius));
   }
 
   const textParts: string[] = ["BT"];
   let currentFontKey = "";
-  let currentGray = -1;
+  let currentShadeKey = "";
   for (const row of page.rows) {
     for (const run of row.runs) {
       const fontKey = `${run.bold ? "F2" : "F1"}-${run.size}`;
@@ -256,9 +413,10 @@ function buildContent(page: { rows: PhysicalRow[]; rules: PhysicalRule[]; boxes:
         textParts.push(`/${run.bold ? "F2" : "F1"} ${run.size} Tf`);
         currentFontKey = fontKey;
       }
-      if (run.gray !== currentGray) {
-        textParts.push(`${run.gray} g`);
-        currentGray = run.gray;
+      const key = shadeKey(run.shade);
+      if (key !== currentShadeKey) {
+        textParts.push(fillOp(run.shade));
+        currentShadeKey = key;
       }
       textParts.push(`1 0 0 1 ${run.x} ${row.y} Tm`);
       textParts.push(`(${escapePdfText(run.text)}) Tj`);
@@ -272,7 +430,7 @@ function buildContent(page: { rows: PhysicalRow[]; rules: PhysicalRule[]; boxes:
 // Flattens all lines into pages and serializes a complete PDF document.
 export function buildPdf(allLines: PdfLine[]): Buffer {
   const pages = layoutPages(allLines);
-  if (pages.length === 0) pages.push({ rows: [], rules: [], boxes: [] });
+  if (pages.length === 0) pages.push(emptyPage());
 
   // Object references: 1 catalog, 2 pages, 3/4 fonts, then per page:
   // page object + content stream object.
