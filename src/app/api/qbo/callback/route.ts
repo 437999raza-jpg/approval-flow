@@ -12,6 +12,9 @@ export async function GET(request: Request) {
   const code = url.searchParams.get("code");
   const state = url.searchParams.get("state");
   const error = url.searchParams.get("error");
+  // Intuit includes the QBO company id (realmId) in the callback URL —
+  // use it as the source of truth (fall back to the token response).
+  const urlRealmId = url.searchParams.get("realmId");
 
   const supabase = createClient();
   const {
@@ -35,9 +38,9 @@ export async function GET(request: Request) {
 
   try {
     const tokens = await exchangeCodeForTokens(code);
-    if (!tokens.realmId) {
-      // Without the company id every API call fails with 3100 — surface it
-      // instead of storing a broken connection.
+    const realmId = urlRealmId ?? tokens.realmId;
+    if (!realmId) {
+      console.error("QBO callback: no realmId in callback URL or token response");
       return NextResponse.redirect(new URL("/settings?qbo=error", url.origin));
     }
     const admin = createAdminClient();
@@ -46,7 +49,7 @@ export async function GET(request: Request) {
       .upsert(
         {
           organization_id: org.id,
-          realm_id: tokens.realmId,
+          realm_id: realmId,
           access_token: tokens.accessToken,
           refresh_token: tokens.refreshToken,
           expires_at: new Date(
@@ -59,7 +62,8 @@ export async function GET(request: Request) {
     return NextResponse.redirect(
       new URL("/settings?qbo=connected", url.origin)
     );
-  } catch {
+  } catch (e) {
+    console.error("QBO callback failed:", e instanceof Error ? e.message : e);
     return NextResponse.redirect(
       new URL("/settings?qbo=error", url.origin)
     );
