@@ -246,6 +246,24 @@ function parseExtraction(content: string): ExtractedInvoiceData | null {
   };
 }
 
+// The invoice's real total: the sum of the line items we actually picked
+// up, plus tax — not whatever number the document prints as "Total". A
+// document's printed total can be wrong (bad OCR, a math error on the
+// document itself, or a tampered/faked total that doesn't match its own
+// line items) while the line items are what the Bill panel and the
+// approver actually review. Falls back to the extracted total only when
+// no line item amounts were found to sum.
+export function computeInvoiceTotal(
+  extracted: ExtractedInvoiceData
+): number | null {
+  const lineItemAmounts = extracted.line_items
+    .map((li) => li.amount)
+    .filter((a): a is number => a != null);
+  if (lineItemAmounts.length === 0) return extracted.total_amount ?? null;
+  const subtotal = lineItemAmounts.reduce((sum, a) => sum + a, 0);
+  return subtotal + (extracted.tax_amount ?? 0);
+}
+
 // Map the extraction onto the invoices row columns (shared by ingestion
 // and re-extraction). Note: source_email (the email sender) is intentionally
 // not touched — vendor_email lives inside the extraction jsonb.
@@ -257,7 +275,7 @@ export function mapExtractionToInvoice(
     invoice_number: extracted.invoice_number ?? null,
     bill_date: extracted.bill_date ?? null,
     due_date: extracted.due_date ?? null,
-    amount: extracted.total_amount ?? null,
+    amount: computeInvoiceTotal(extracted),
     currency: extracted.currency ?? "USD",
     tax_amount: extracted.tax_amount ?? null,
     extraction: extracted,

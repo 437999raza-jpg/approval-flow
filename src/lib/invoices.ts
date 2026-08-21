@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database, InvoiceSource } from "@/lib/supabase/types";
-import { extractInvoiceFields } from "@/lib/extract-invoice";
+import { extractInvoiceFields, computeInvoiceTotal } from "@/lib/extract-invoice";
 import { selectWorkflowForInvoice } from "@/lib/workflow-routing";
 
 const INVOICE_BUCKET = "invoices";
@@ -92,6 +92,10 @@ export async function createInvoiceFromFile({
     throw new InvoiceIngestError(`Upload failed: ${uploadError.message}`);
   }
 
+  // The real total: the sum of the line items we picked up (plus tax),
+  // not the document's own printed total — see computeInvoiceTotal.
+  const computedAmount = extracted ? computeInvoiceTotal(extracted) : null;
+
   // Route the invoice to the first workflow whose items all match; fall
   // back to the org's default workflow.
   const { data: submitterProfile } = submittedBy
@@ -102,7 +106,7 @@ export async function createInvoiceFromFile({
         .maybeSingle()
     : { data: null };
   const workflowId = await selectWorkflowForInvoice(supabase, organizationId, {
-    amount: extracted?.total_amount ?? null,
+    amount: computedAmount,
     vendorName: extracted?.vendor_name ?? null,
     submittedBy: submittedBy ?? null,
     submitterName: submitterProfile?.full_name ?? null,
@@ -138,7 +142,7 @@ export async function createInvoiceFromFile({
       file_name: file.name,
       vendor_name: extracted?.vendor_name ?? null,
       invoice_number: extracted?.invoice_number ?? null,
-      amount: extracted?.total_amount ?? null,
+      amount: computedAmount,
       currency: supplierDefaults?.currency ?? extracted?.currency ?? "USD",
       bill_date: billDate,
       due_date: dueDate,
@@ -177,7 +181,7 @@ export async function createInvoiceFromFile({
             {
               invoice_id: invoice.id,
               description: null,
-              amount: extracted?.total_amount ?? null,
+              amount: computedAmount,
               tax_rate: supplierDefaults.tax_rate,
               category: supplierDefaults.category,
               class: supplierDefaults.class,
