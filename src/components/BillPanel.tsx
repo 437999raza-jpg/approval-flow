@@ -83,7 +83,6 @@ export function BillPanel({
   instructions,
   syncToQbo,
   qboConnected,
-  qboCompanyName,
   qboRealmId,
   alerts,
   onOpenDocument,
@@ -116,7 +115,6 @@ export function BillPanel({
   instructions: BillInstructionsData;
   syncToQbo: () => Promise<void>;
   qboConnected: boolean;
-  qboCompanyName: string | null;
   qboRealmId: string | null;
   // Server-rendered banners (decision errors, possible-duplicate warnings)
   // slotted in above everything else.
@@ -664,30 +662,19 @@ export function BillPanel({
             ) : (
               <p className="text-slate-400">Not synced to QuickBooks yet.</p>
             )}
-            {!readOnly && (
-              <div className="flex flex-wrap items-center gap-2">
-                {qboConnected ? (
-                  <form action={syncToQbo}>
-                    <button className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">
-                      {invoice.qbo_sync_status === "synced"
-                        ? "Sync again"
-                        : "Sync to QuickBooks"}
-                    </button>
-                  </form>
-                ) : (
-                  <a
-                    href="/api/qbo/auth"
-                    className="rounded-md border border-slate-300 px-3 py-1.5 font-medium text-slate-600 hover:bg-slate-50"
-                  >
-                    Connect QuickBooks
-                  </a>
-                )}
-                {qboConnected && qboCompanyName && (
-                  <span className="text-slate-400">
-                    Connected to {qboCompanyName}
-                  </span>
-                )}
-              </div>
+            {!readOnly && qboConnected && (
+              <form action={syncToQbo}>
+                <button className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">
+                  {invoice.qbo_sync_status === "synced"
+                    ? "Sync again"
+                    : "Sync to QuickBooks"}
+                </button>
+              </form>
+            )}
+            {!readOnly && !qboConnected && (
+              <p className="text-slate-400">
+                Connect QuickBooks in Settings to enable sync.
+              </p>
             )}
           </div>
         </div>

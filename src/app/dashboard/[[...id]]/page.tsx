@@ -1063,7 +1063,6 @@ export default async function DashboardPage({
                   reExtract: reExtract.bind(null, selected.id),
                   syncToQbo: syncToQbo.bind(null, selected.id),
                   qboConnected: !!qboConnection,
-                  qboCompanyName: qboConnection?.company_name ?? null,
                   qboRealmId: qboConnection?.realm_id ?? null,
                   backToReview: backToReview.bind(null, selected.id),
                   canReview: canReviewNow,

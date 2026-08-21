@@ -398,9 +398,13 @@ export default async function SettingsPage({
             </div>
           </section>
 
-          {/* QuickBooks Online */}
+          {/* Integrations */}
           <section className="mt-8">
-            <h2 className="text-lg font-semibold">QuickBooks Online</h2>
+            <h2 className="text-lg font-semibold">Integrations</h2>
+            <p className="mt-1 text-sm text-slate-500">
+              Connect external apps here — connection details stay out of the
+              Bill panel, which only shows sync status and links.
+            </p>
             {searchParams.qbo === "connected" && (
               <div className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
                 Connected to QuickBooks successfully.
@@ -413,6 +417,10 @@ export default async function SettingsPage({
               </div>
             )}
             <div className="mt-3 rounded-lg border border-slate-200 bg-white p-4 text-sm">
+              <div className="text-xs font-bold uppercase tracking-wide text-slate-400">
+                QuickBooks Online
+              </div>
+              <div className="mt-2">
               {qboConnection ? (
                 <div className="flex flex-wrap items-center gap-3">
                   <span className="text-slate-700">
@@ -461,6 +469,7 @@ export default async function SettingsPage({
                   QuickBooks sync is managed by the org admin.
                 </p>
               )}
+              </div>
             </div>
           </section>
 

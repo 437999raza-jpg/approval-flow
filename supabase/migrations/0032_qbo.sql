@@ -23,6 +23,7 @@ create table if not exists qbo_connections (
 
 alter table qbo_connections enable row level security;
 
+drop policy if exists "qbo_connections: admins only" on qbo_connections;
 create policy "qbo_connections: admins only" on qbo_connections
   for all
   using (is_org_admin(organization_id))
