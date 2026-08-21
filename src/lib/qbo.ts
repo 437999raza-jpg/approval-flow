@@ -254,6 +254,53 @@ export function matchSupplier(
   return null;
 }
 
+// READ-ONLY: pull the company's PROJECTS. In QuickBooks, projects live on
+// the Customer entity with IsProject=true (they're tracked for project
+// profitability). Regular customers (IsProject=false) are NOT imported —
+// Flow needs projects, not customers. Nothing is ever written to QBO.
+export interface QboProject {
+  qboCustomerId: string;
+  name: string;
+  active: boolean;
+}
+
+export async function listProjects(
+  conn: QboConnection,
+  limit = 2000
+): Promise<QboProject[]> {
+  // QBO caps query results at 1000 per call, so page through.
+  const all: QboProject[] = [];
+  let startPosition = 1;
+  while (all.length < limit) {
+    const pageSize = Math.min(1000, limit - all.length);
+    const q = `select Id, DisplayName, IsProject, Active from Customer where IsProject = true order by DisplayName startposition ${startPosition} maxresults ${pageSize}`;
+    const res = await qboFetch(conn, `/query?query=${encodeURIComponent(q)}`);
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(
+        `QBO: project query failed (HTTP ${res.status}): ${body.slice(0, 300)}`
+      );
+    }
+    const json = (await res.json()) as {
+      QueryResponse?: {
+        Customer?: { Id: string; DisplayName?: string; Active?: boolean }[];
+      };
+    };
+    const rows = json.QueryResponse?.Customer ?? [];
+    if (rows.length === 0) break;
+    for (const c of rows) {
+      all.push({
+        qboCustomerId: c.Id,
+        name: c.DisplayName ?? "",
+        active: c.Active ?? true,
+      });
+    }
+    if (rows.length < pageSize) break;
+    startPosition += rows.length;
+  }
+  return all;
+}
+
 // READ-ONLY: pull the company's Chart of Accounts (categories). This is the
 // only QBO interaction that should happen for now — nothing is ever written
 // to QuickBooks from the categories flow, and no vendor data is fetched.

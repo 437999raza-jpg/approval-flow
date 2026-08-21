@@ -5,7 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentOrg } from "@/lib/current-org";
 import { SignOutButton } from "@/components/SignOutButton";
-import { disconnectQbo, refreshQboData, syncQboTaxes, syncQboClasses, syncQboCategories, syncQboSuppliers } from "@/lib/dashboard-actions";
+import { disconnectQbo, refreshQboData, syncQboTaxes, syncQboClasses, syncQboCategories, syncQboSuppliers, syncQboProjects } from "@/lib/dashboard-actions";
 import { qboEnv } from "@/lib/qbo";
 import { Avatar } from "@/components/Avatar";
 import { AvatarUploadForm } from "@/components/AvatarUploadForm";
@@ -316,6 +316,15 @@ export default async function SettingsPage({
     .order("name", { ascending: true })
     .limit(500);
 
+  // Projects imported from QBO (customers with IsProject=true).
+  const { data: qboProjects } = await supabase
+    .from("projects")
+    .select("id, name, qbo_id, source, active")
+    .eq("organization_id", org.id)
+    .eq("source", "qbo")
+    .order("name", { ascending: true })
+    .limit(500);
+
   // Billing & usage: this month's invoice counts (org-wide, admin view).
   const monthStart = new Date();
   monthStart.setUTCDate(1);
@@ -485,6 +494,11 @@ export default async function SettingsPage({
                 Synced {searchParams.count ?? 0} suppliers from QuickBooks (read-only).
               </div>
             )}
+            {searchParams.qbo === "projects_synced" && (
+              <div className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+                Synced {searchParams.count ?? 0} projects from QuickBooks (read-only).
+              </div>
+            )}
             {searchParams.qbo === "error" && (
               <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
                 The QuickBooks connection failed. If you cancelled the
@@ -634,6 +648,45 @@ export default async function SettingsPage({
                   ) : (
                     <p className="mt-1 text-sm text-slate-400">
                       No classes synced yet.
+                    </p>
+                  )}
+                </div>
+
+                {/* Projects */}
+                <div className="mt-3 border-t border-slate-100 pt-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-sm font-semibold text-slate-800">
+                      Projects
+                    </span>
+                    {isAdmin && (
+                      <form action={syncQboProjects}>
+                        <button className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">
+                          Sync projects from QuickBooks
+                        </button>
+                      </form>
+                    )}
+                  </div>
+                  <p className="mt-1 text-xs text-slate-500">
+                    Read-only from QuickBooks — these are the QBO projects
+                    (customers with IsProject=true). Regular customers are
+                    not imported.
+                  </p>
+                  {qboProjects && qboProjects.length > 0 ? (
+                    <div className="mt-1">
+                      <div className="text-xs text-slate-400">
+                        {qboProjects.length} project{Number(qboProjects.length) === 1 ? "" : "s"} on file:
+                      </div>
+                      <ul className="mt-1 flex max-h-48 flex-wrap gap-x-4 gap-y-0.5 overflow-y-auto">
+                        {qboProjects.map((p) => (
+                          <li key={p.id} className="w-72 truncate text-sm text-slate-700">
+                            {p.name}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : (
+                    <p className="mt-1 text-sm text-slate-400">
+                      No projects synced yet.
                     </p>
                   )}
                 </div>

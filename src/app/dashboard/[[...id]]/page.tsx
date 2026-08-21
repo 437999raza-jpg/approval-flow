@@ -158,6 +158,8 @@ export default async function DashboardPage({
     { data: invoices },
     { data: workflows },
     { data: projects },
+    { data: qboCategoryRows },
+    { data: qboSupplierRows },
     pendingSplitsRes,
     unreadNotificationsRes,
   ] = await Promise.all([
@@ -173,6 +175,18 @@ export default async function DashboardPage({
     supabase
       .from("projects")
       .select("id, name")
+      .eq("organization_id", org.id)
+      .eq("active", true)
+      .order("name", { ascending: true }),
+    supabase
+      .from("qbo_categories")
+      .select("name")
+      .eq("organization_id", org.id)
+      .eq("active", true)
+      .order("name", { ascending: true }),
+    supabase
+      .from("qbo_suppliers")
+      .select("name")
       .eq("organization_id", org.id)
       .eq("active", true)
       .order("name", { ascending: true }),
@@ -296,6 +310,14 @@ export default async function DashboardPage({
     id: p.id,
     label: p.name,
   }));
+
+  // QBO mirrors for the Bill panel dropdowns (read-only — never written to QBO).
+  const qboCategoryNames: string[] = [
+    ...new Set((qboCategoryRows ?? []).map((c) => c.name)),
+  ].sort((a, b) => a.localeCompare(b));
+  const qboSupplierNames: string[] = [
+    ...new Set((qboSupplierRows ?? []).map((s) => s.name)),
+  ].sort((a, b) => a.localeCompare(b));
 
   const classOptions: MultiSelectOption[] = [
     ...new Set((lineItemRows ?? []).map((r) => r.class).filter((c): c is string => !!c)),
@@ -1107,6 +1129,8 @@ export default async function DashboardPage({
                     id: p.id,
                     name: p.name,
                   })),
+                  qboCategories: qboCategoryNames,
+                  qboSuppliers: qboSupplierNames,
                   saveBill: saveBill.bind(null, selected.id),
                   saveLineItem: saveLineItem.bind(null, selected.id),
                   deleteLineItem: deleteLineItem.bind(null, selected.id),

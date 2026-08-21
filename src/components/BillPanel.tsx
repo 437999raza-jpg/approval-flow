@@ -73,6 +73,8 @@ export function BillPanel({
   documentCount,
   lineItems,
   projects,
+  qboCategories,
+  qboSuppliers,
   saveBill,
   saveLineItem,
   deleteLineItem,
@@ -101,6 +103,10 @@ export function BillPanel({
   documentCount: number;
   lineItems: LineItem[];
   projects: { id: string; name: string }[];
+  // QBO mirrors (read-only) for dropdowns: bill categories (Divisions 5&6)
+  // and suppliers. Flow never writes these to QuickBooks.
+  qboCategories?: string[];
+  qboSuppliers?: string[];
   saveBill: (formData: FormData) => Promise<void>;
   saveLineItem: (
     lineItemId: string,
@@ -521,10 +527,16 @@ export function BillPanel({
               <input
                 form="bill-form"
                 name="vendor_name"
+                list="qbo-suppliers"
                 defaultValue={invoice.vendor_name ?? ""}
                 className={`${ghostField} font-medium`}
                 {...billBlur}
               />
+              <datalist id="qbo-suppliers">
+                {(qboSuppliers ?? []).map((name) => (
+                  <option key={name} value={name} />
+                ))}
+              </datalist>
             </label>
             <label>
               <span className={ghostLabel}>Email</span>
@@ -573,6 +585,7 @@ export function BillPanel({
                   linked: item.linked,
                 }}
                 projects={projects}
+                qboCategories={qboCategories}
                 saveLineItem={saveLineItem}
                 deleteLineItem={deleteLineItem}
                 readOnly={readOnly}
@@ -591,6 +604,7 @@ export function BillPanel({
                   linked: false,
                 }}
                 projects={projects}
+                qboCategories={qboCategories}
                 saveLineItem={saveLineItem}
                 deleteLineItem={undefined}
                 readOnly={false}
@@ -779,6 +793,7 @@ function LineItemRow({
   itemId,
   defaults,
   projects,
+  qboCategories,
   saveLineItem,
   deleteLineItem,
   readOnly,
@@ -794,6 +809,7 @@ function LineItemRow({
     linked: boolean;
   };
   projects: { id: string; name: string }[];
+  qboCategories?: string[];
   saveLineItem: (
     lineItemId: string,
     formData: FormData
@@ -833,11 +849,17 @@ function LineItemRow({
       <input
         form={formId}
         name="category"
+        list="qbo-categories"
         defaultValue={defaults.category}
         placeholder={isNew ? "Category" : undefined}
         className={cellCls}
         {...blurSave}
       />
+      <datalist id="qbo-categories">
+        {(qboCategories ?? []).map((name) => (
+          <option key={name} value={name} />
+        ))}
+      </datalist>
       <input
         form={formId}
         name="description"

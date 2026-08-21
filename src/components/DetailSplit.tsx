@@ -30,6 +30,9 @@ export interface BillData {
   documentCount: number;
   lineItems: LineItem[];
   projects: { id: string; name: string }[];
+  // QBO mirrors (read-only) for dropdowns on the Bill panel.
+  qboCategories?: string[];
+  qboSuppliers?: string[];
   saveBill: (formData: FormData) => Promise<void>;
   saveLineItem: (
     lineItemId: string,
@@ -298,6 +301,8 @@ export function DetailSplit({
             documentCount={bill.documentCount}
             lineItems={bill.lineItems}
             projects={bill.projects}
+            qboCategories={bill.qboCategories}
+            qboSuppliers={bill.qboSuppliers}
             saveBill={bill.saveBill}
             saveLineItem={bill.saveLineItem}
             deleteLineItem={bill.deleteLineItem}

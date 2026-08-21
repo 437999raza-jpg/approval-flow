@@ -18,7 +18,7 @@ import {
   stepDecisionState,
 } from "@/lib/workflow-conditions";
 import type { Database, InvoiceStatus } from "@/lib/supabase/types";
-import { getQboConnection, listCategories, listTaxRates, listClasses, listSuppliers, matchSupplier, createBill, attachDocuments } from "@/lib/qbo";
+import { getQboConnection, listCategories, listTaxRates, listClasses, listSuppliers, listProjects, matchSupplier, createBill, attachDocuments } from "@/lib/qbo";
 import { buildQboAttachmentBundle } from "@/lib/qbo-attachments";
 
 // Server actions for the dashboard (moved out of the page component so
@@ -1434,6 +1434,56 @@ export async function syncQboSuppliers() {
 }
 
 
+// Pull QuickBooks PROJECTS into the app's projects table. READ-ONLY against
+// QBO — projects are QBO customers with IsProject=true (regular customers
+// are NOT imported). Admin only.
+export async function syncQboProjects() {
+  "use server";
+
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
+  const org = await getCurrentOrg(supabase);
+  if (!org || org.role !== "admin") {
+    redirect("/settings?qbo=error");
+  }
+
+  const conn = await getQboConnection(supabase, org.id);
+  if (!conn) {
+    redirect("/settings?qbo=error");
+  }
+
+  let projects: Awaited<ReturnType<typeof listProjects>> = [];
+  try {
+    projects = await listProjects(conn);
+    if (projects.length > 0) {
+      const { error } = await supabase.from("projects").upsert(
+        projects.map((p) => ({
+          organization_id: org.id,
+          qbo_id: p.qboCustomerId,
+          name: p.name,
+          source: "qbo",
+          active: p.active,
+        })),
+        { onConflict: "organization_id,name" }
+      );
+      if (error) throw error;
+    }
+  } catch (e) {
+    console.error("syncQboProjects failed:", e);
+    redirect("/settings?qbo=error");
+  }
+
+  // redirect() throws internally — keep it OUTSIDE the try/catch so a
+  // successful sync doesn't get mislabeled as a failure.
+  revalidatePath("/settings");
+  redirect(`/settings?qbo=projects_synced&count=${projects.length}`);
+}
+
+
 // One-click refresh: pulls tax rates, classes, categories (Divisions 5 & 6),
 // and suppliers from QuickBooks in a single action. READ-ONLY against QBO —
 // nothing is ever written to QuickBooks. Admin only.
@@ -1457,11 +1507,12 @@ export async function refreshQboData() {
   }
 
   try {
-    const [rates, classes, categories, suppliers] = await Promise.all([
+    const [rates, classes, categories, suppliers, projects] = await Promise.all([
       listTaxRates(conn),
       listClasses(conn),
       listCategories(conn, 500, { acctNumPrefixes: ["5", "6"] }),
       listSuppliers(conn),
+      listProjects(conn),
     ]);
 
     if (rates.length > 0) {
@@ -1524,8 +1575,22 @@ export async function refreshQboData() {
       if (error) throw error;
     }
 
+    if (projects.length > 0) {
+      const { error } = await supabase.from("projects").upsert(
+        projects.map((p) => ({
+          organization_id: org.id,
+          qbo_id: p.qboCustomerId,
+          name: p.name,
+          source: "qbo",
+          active: p.active,
+        })),
+        { onConflict: "organization_id,name" }
+      );
+      if (error) throw error;
+    }
+
     const total =
-      rates.length + suppliers.length + classes.length + categories.length;
+      rates.length + suppliers.length + classes.length + categories.length + projects.length;
     revalidatePath("/settings");
     redirect(`/settings?qbo=refresh_done&count=${total}`);
   } catch (e) {
