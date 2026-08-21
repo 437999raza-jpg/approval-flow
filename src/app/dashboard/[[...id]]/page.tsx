@@ -188,19 +188,22 @@ export default async function DashboardPage({
       .select("name, acct_num")
       .eq("organization_id", org.id)
       .eq("active", true)
-      .order("name", { ascending: true }),
+      .order("name", { ascending: true })
+      .limit(1000),
     supabase
       .from("qbo_suppliers")
       .select("name")
       .eq("organization_id", org.id)
       .eq("active", true)
-      .order("name", { ascending: true }),
+      .order("name", { ascending: true })
+      .limit(5000),
     supabase
       .from("qbo_classes")
       .select("name")
       .eq("organization_id", org.id)
       .eq("active", true)
-      .order("name", { ascending: true }),
+      .order("name", { ascending: true })
+      .limit(1000),
     supabase
       .from("qbo_tax_rates")
       .select("name, rate_value")

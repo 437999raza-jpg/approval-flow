@@ -562,7 +562,8 @@ export default async function WorkflowsPage() {
         .select("name")
         .eq("organization_id", org.id)
         .eq("active", true)
-        .order("name", { ascending: true }),
+        .order("name", { ascending: true })
+        .limit(5000),
     ]);
   const classOptions = (qboClassRows ?? []).map((c) => ({
     id: c.name,

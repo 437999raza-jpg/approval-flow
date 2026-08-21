@@ -95,7 +95,7 @@ export function Combobox({
       if (!q) return true;
       return matchStart ? label.startsWith(q) : label.includes(q);
     })
-    .slice(0, 20);
+    .slice(0, 30);
 
   // Keep the hidden value input in sync with the selected value.
   useEffect(() => {
