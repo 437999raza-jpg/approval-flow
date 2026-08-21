@@ -687,10 +687,11 @@ async function reassignApprover(invoiceId: string, formData: FormData) {
 
   const approverId = String(formData.get("approver_id") ?? "").trim() || null;
 
-  await supabase
+  const { error: updateError } = await supabase
     .from("invoices")
     .update({ step_override_approver_id: approverId, updated_at: new Date().toISOString() })
     .eq("id", invoiceId);
+  if (updateError) throw updateError;
 
   await supabase.from("audit_log").insert({
     organization_id: invoice.organization_id,
@@ -742,7 +743,11 @@ async function overrideStatus(invoiceId: string, formData: FormData) {
     await supabase.from("invoice_approvals").delete().eq("invoice_id", invoiceId);
   }
 
-  await supabase.from("invoices").update(update).eq("id", invoiceId);
+  const { error: updateError } = await supabase
+    .from("invoices")
+    .update(update)
+    .eq("id", invoiceId);
+  if (updateError) throw updateError;
 
   await supabase.from("audit_log").insert({
     organization_id: invoice.organization_id,
@@ -1778,6 +1783,7 @@ export default async function DashboardPage({
                               Reassign to
                             </label>
                             <InlineSelectSave
+                              key={`reassign-${selected.id}`}
                               name="approver_id"
                               defaultValue={holderOf(selected) ?? ""}
                               options={[
@@ -1796,6 +1802,7 @@ export default async function DashboardPage({
                             Override status
                           </label>
                           <InlineSelectSave
+                            key={`override-status-${selected.id}`}
                             name="status"
                             defaultValue={selected.status}
                             options={STATUS_OPTIONS.map((s) => ({
@@ -1839,6 +1846,7 @@ export default async function DashboardPage({
 
                   <CollapsibleSection title="Instructions for accounting">
                     <InstructionsBox
+                      key={`instructions-${selected.id}`}
                       initialValue={selected.accounting_instructions ?? ""}
                       readOnly={isAuditor}
                       saveInstructions={saveAccountingInstructions.bind(
