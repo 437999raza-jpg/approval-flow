@@ -14,6 +14,39 @@ const ALLOWED_TYPES = new Set([
 
 export class InvoiceIngestError extends Error {}
 
+interface SupplierDefaults {
+  category: string | null;
+  class: string | null;
+  project_id: string | null;
+  tax_rate: number | null;
+  payment_terms_days: number | null;
+  currency: string | null;
+}
+
+// Dext/ApprovalMax-style supplier rules, matched by normalized (trim+lower)
+// vendor name — there's no first-class Supplier entity yet, so this is a
+// pragmatic v1. Configured via the "Supplier rules" modal on the Bill panel.
+async function getSupplierDefaults(
+  supabase: SupabaseClient<Database>,
+  organizationId: string,
+  vendorName: string | null
+): Promise<SupplierDefaults | null> {
+  if (!vendorName?.trim()) return null;
+  const { data } = await supabase
+    .from("supplier_defaults")
+    .select("category, class, project_id, tax_rate, payment_terms_days, currency")
+    .eq("organization_id", organizationId)
+    .eq("vendor_name_normalized", vendorName.trim().toLowerCase())
+    .maybeSingle();
+  return data ?? null;
+}
+
+function addDays(dateStr: string, days: number): string {
+  const d = new Date(`${dateStr}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
 interface CreateInvoiceArgs {
   supabase: SupabaseClient<Database>;
   organizationId: string;
@@ -73,17 +106,30 @@ export async function createInvoiceFromFile({
     vendorName: extracted?.vendor_name ?? null,
     submittedBy: submittedBy ?? null,
     submitterName: submitterProfile?.full_name ?? null,
-    projectId: null, // project is assigned later in the Bill panel
-    projectName: null,
+    projects: [], // project is assigned per line item later in the Bill panel
     lineItems: [],
   });
+
+  // Dext/ApprovalMax-style: a saved supplier rule wins over whatever the
+  // extraction guessed for the fields it covers — it's a business rule a
+  // human configured on purpose, not a best-effort read of the document.
+  const supplierDefaults = await getSupplierDefaults(
+    supabase,
+    organizationId,
+    extracted?.vendor_name ?? null
+  );
+  const billDate = extracted?.bill_date ?? null;
+  const dueDate =
+    supplierDefaults?.payment_terms_days != null && billDate
+      ? addDays(billDate, supplierDefaults.payment_terms_days)
+      : (extracted?.due_date ?? null);
 
   const { data: invoice, error: insertError } = await supabase
     .from("invoices")
     .insert({
       organization_id: organizationId,
       workflow_id: workflowId,
-      status: "pending_review", // sits in the Pending Review queue until
+      status: "on_review", // sits in the Pending Review queue until
       // Review Done routes it into the approval workflow
       source,
       source_email: sourceEmail ?? null,
@@ -93,9 +139,9 @@ export async function createInvoiceFromFile({
       vendor_name: extracted?.vendor_name ?? null,
       invoice_number: extracted?.invoice_number ?? null,
       amount: extracted?.total_amount ?? null,
-      currency: extracted?.currency ?? "USD",
-      bill_date: extracted?.bill_date ?? null,
-      due_date: extracted?.due_date ?? null,
+      currency: supplierDefaults?.currency ?? extracted?.currency ?? "USD",
+      bill_date: billDate,
+      due_date: dueDate,
       tax_amount: extracted?.tax_amount ?? null,
       extraction: (extracted ?? null) as Record<string, unknown> | null,
     })
@@ -110,19 +156,39 @@ export async function createInvoiceFromFile({
   }
 
   // Populate the Bill panel's Category details from the extracted line
-  // items (best-effort).
-  if (extracted && extracted.line_items.length > 0) {
-    await supabase.from("invoice_line_items").insert(
-      extracted.line_items.map((li, i) => ({
-        invoice_id: invoice.id,
-        description: li.description,
-        amount: li.amount,
-        tax_rate: li.tax_rate,
-        category: li.category,
-        class: li.class,
-        line_order: i + 1,
-      }))
-    );
+  // items (best-effort), with any saved supplier rule overriding
+  // Category/Class/Project/Tax rate on every line. If extraction found no
+  // line items but a supplier rule exists, create one line item from the
+  // invoice total so the rule still has somewhere to apply.
+  const lineItemsToInsert =
+    extracted && extracted.line_items.length > 0
+      ? extracted.line_items.map((li, i) => ({
+          invoice_id: invoice.id,
+          description: li.description,
+          amount: li.amount,
+          tax_rate: supplierDefaults?.tax_rate ?? li.tax_rate,
+          category: supplierDefaults?.category ?? li.category,
+          class: supplierDefaults?.class ?? li.class,
+          project_id: supplierDefaults?.project_id ?? null,
+          line_order: i + 1,
+        }))
+      : supplierDefaults
+        ? [
+            {
+              invoice_id: invoice.id,
+              description: null,
+              amount: extracted?.total_amount ?? null,
+              tax_rate: supplierDefaults.tax_rate,
+              category: supplierDefaults.category,
+              class: supplierDefaults.class,
+              project_id: supplierDefaults.project_id,
+              line_order: 1,
+            },
+          ]
+        : [];
+
+  if (lineItemsToInsert.length > 0) {
+    await supabase.from("invoice_line_items").insert(lineItemsToInsert);
   }
 
   await supabase.from("audit_log").insert({

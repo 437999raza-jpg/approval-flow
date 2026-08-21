@@ -237,13 +237,12 @@ export default async function ReportsPage({
                 <span className={labelCls}>Status</span>
                 <select name="f_status" defaultValue="" className={`${inputCls} w-full`}>
                   <option value="">Any</option>
-                  <option value="pending_review">Pending review</option>
-                  <option value="pending">Pending</option>
-                  <option value="in_review">In review</option>
-                  <option value="held">On hold</option>
+                  <option value="on_review">On review</option>
+                  <option value="on_approval">On approval</option>
                   <option value="approved">Approved</option>
+                  <option value="cancelled">Cancelled</option>
                   <option value="rejected">Rejected</option>
-                  <option value="paid">Paid</option>
+                  <option value="on_hold">On hold</option>
                 </select>
               </div>
               <div>

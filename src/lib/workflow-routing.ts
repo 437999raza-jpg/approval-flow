@@ -18,8 +18,10 @@ export interface RoutingContext {
   vendorName: string | null;
   submittedBy: string | null;
   submitterName: string | null;
-  projectId: string | null;
-  projectName: string | null;
+  // A bill can split across multiple projects (one per line item) — a
+  // "customer" rule matches if ANY of them match, not just a single
+  // invoice-level project.
+  projects: { id: string | null; name: string | null }[];
   lineItems: {
     category: string | null;
     description: string | null;
@@ -79,7 +81,11 @@ function ruleMatches(rule: Rule, ctx: RoutingContext): boolean {
     case "supplier":
       return textAny(rule.operator, [ctx.vendorName], v);
     case "customer":
-      return textAny(rule.operator, [ctx.projectId, ctx.projectName], v);
+      return textAny(
+        rule.operator,
+        ctx.projects.flatMap((p) => [p.id, p.name]),
+        v
+      );
     case "category":
       return lineAny(rule.operator, ctx.lineItems.map((l) => l.category), v);
     case "product_service":

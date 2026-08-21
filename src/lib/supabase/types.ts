@@ -2,14 +2,16 @@
 // Once the project is linked, regenerate with:
 //   supabase gen types typescript --linked > src/lib/supabase/types.ts
 
+// ApprovalMax's status set: On review -> On approval -> Approved/Rejected,
+// with On hold and Cancelled as side branches. Collapses what used to be
+// pending_review/pending/in_review/held/paid (migration 0017).
 export type InvoiceStatus =
-  | "pending_review"
-  | "pending"
-  | "in_review"
-  | "held"
+  | "on_review"
+  | "on_approval"
   | "approved"
+  | "cancelled"
   | "rejected"
-  | "paid";
+  | "on_hold";
 
 export type InvoiceSource = "manual" | "email";
 
@@ -181,6 +183,7 @@ export interface Database {
           submitted_by: string | null;
           current_step_order: number;
           accounting_instructions: string | null;
+          step_override_approver_id: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -256,6 +259,7 @@ export interface Database {
           description: string | null;
           tax_rate: number | null;
           class: string | null;
+          project_id: string | null;
           amount: number | null;
           linked: boolean;
           line_order: number;
@@ -300,6 +304,29 @@ export interface Database {
         > & { organization_id: string; name: string };
         Update: Partial<
           Database["public"]["Tables"]["saved_reports"]["Row"]
+        >;
+        Relationships: [];
+      };
+      supplier_defaults: {
+        Row: {
+          id: string;
+          organization_id: string;
+          vendor_name: string;
+          vendor_name_normalized: string;
+          category: string | null;
+          class: string | null;
+          project_id: string | null;
+          tax_rate: number | null;
+          payment_terms_days: number | null;
+          currency: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: Partial<
+          Database["public"]["Tables"]["supplier_defaults"]["Row"]
+        > & { organization_id: string; vendor_name: string };
+        Update: Partial<
+          Database["public"]["Tables"]["supplier_defaults"]["Row"]
         >;
         Relationships: [];
       };

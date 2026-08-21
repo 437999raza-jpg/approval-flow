@@ -124,7 +124,8 @@ export async function buildInvoiceAuditDocument(
       const isOpen =
         step.step_order === invoice.current_step_order &&
         invoice.status !== "approved" &&
-        invoice.status !== "rejected";
+        invoice.status !== "rejected" &&
+        invoice.status !== "cancelled";
       const state = isOpen
         ? "CURRENT STEP"
         : decision

@@ -3,6 +3,7 @@
 import { useRef, useState, type ReactNode } from "react";
 import { BillPanel } from "./BillPanel";
 import { ResizeHandle } from "./ResizeHandle";
+import type { SupplierDefaultsValues } from "./SupplierRulesModal";
 import type { Database } from "@/lib/supabase/types";
 
 type Invoice = Database["public"]["Tables"]["invoices"]["Row"];
@@ -31,6 +32,8 @@ export interface BillData {
   backToReview: () => Promise<void>;
   canReview: boolean;
   readOnly: boolean;
+  supplierDefaults: SupplierDefaultsValues;
+  saveSupplierDefaults: (formData: FormData) => Promise<void>;
 }
 
 interface DetailSplitProps {
@@ -298,6 +301,8 @@ export function DetailSplit({
             backToReview={bill.backToReview}
             canReview={bill.canReview}
             readOnly={bill.readOnly}
+            supplierDefaults={bill.supplierDefaults}
+            saveSupplierDefaults={bill.saveSupplierDefaults}
             onOpenDocument={openDocument}
             onCollapse={() => setBillOpen(false)}
           />

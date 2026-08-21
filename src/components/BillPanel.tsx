@@ -1,14 +1,23 @@
 import { useRef } from "react";
+import { SupplierRulesModal, type SupplierDefaultsValues } from "./SupplierRulesModal";
 import type { Database } from "@/lib/supabase/types";
 
 type Invoice = Database["public"]["Tables"]["invoices"]["Row"];
 type LineItem = Database["public"]["Tables"]["invoice_line_items"]["Row"];
 
-// ApprovalMax-style "Bill" panel — every data item is editable and maps to
-// QBO on sync: vendor/bill number/dates/amount/currency/tax on the bill,
-// category-details rows as line items, and the accounting instructions as
-// the memo. Pure presentational; collapse state lives in DetailSplit.
-// Authored by Araza.
+// Ghost fields: invisible border at rest, a line appears on hover/focus.
+// The point is to read like a finished invoice document, not a form full
+// of boxes — every value here is still fully editable in place.
+const ghostField =
+  "w-full border-b border-transparent bg-transparent px-0 py-1 text-sm text-slate-800 hover:border-slate-200 focus:border-blue-500 focus:outline-none disabled:text-slate-500";
+const ghostLabel = "block text-[10px] font-semibold uppercase tracking-wide text-slate-400";
+const LINE_ITEM_COLS = "grid-cols-[1.1fr_1.4fr_1.1fr_64px_0.9fr_110px_52px_24px]";
+
+// ApprovalMax-style "Bill" panel, styled as a document: every data item is
+// editable in place and maps to QBO on sync (vendor/bill number/dates/
+// amount/currency/tax on the bill, category-details rows as line items,
+// accounting instructions as the memo). Pure presentational; collapse
+// state lives in DetailSplit. Authored by Araza.
 export function BillPanel({
   invoice,
   documentCount,
@@ -21,6 +30,8 @@ export function BillPanel({
   backToReview,
   canReview,
   readOnly,
+  supplierDefaults,
+  saveSupplierDefaults,
   onOpenDocument,
   onCollapse,
 }: {
@@ -38,6 +49,8 @@ export function BillPanel({
   backToReview: () => Promise<void>;
   canReview: boolean;
   readOnly: boolean;
+  supplierDefaults: SupplierDefaultsValues;
+  saveSupplierDefaults: (formData: FormData) => Promise<void>;
   onOpenDocument: () => void;
   onCollapse: () => void;
 }) {
@@ -48,6 +61,7 @@ export function BillPanel({
           currency: invoice.currency,
         })
       : "—";
+  const num2 = (n: number | null) => (n != null ? n.toFixed(2) : "");
   const amount = invoice.amount;
   const tax = invoice.tax_amount;
   const subtotal =
@@ -63,14 +77,6 @@ export function BillPanel({
   const billBlur = readOnly
     ? { disabled: true as const }
     : { onBlur: () => billFormRef.current?.requestSubmit() };
-  const billChange = readOnly
-    ? { disabled: true as const }
-    : { onChange: () => billFormRef.current?.requestSubmit() };
-
-  const inputCls =
-    "mt-0.5 w-full rounded-md border border-slate-300 px-2 py-1 text-sm focus:border-blue-500 focus:outline-none";
-  const labelCls =
-    "block text-[10px] font-semibold uppercase tracking-wide text-slate-400";
 
   return (
     <div className="flex h-full w-full flex-col border-r border-slate-200 bg-white">
@@ -96,171 +102,136 @@ export function BillPanel({
           </svg>
         </button>
       </div>
+
       <div className="min-h-0 flex-1 overflow-y-auto">
-        {/* Back to Review — top of the bill (ApprovalMax-style) */}
-        {["pending", "in_review", "held", "rejected"].includes(
-          invoice.status
-        ) &&
-          canReview &&
-          !readOnly && (
-            <div className="flex flex-none items-center gap-2 border-b border-slate-200 px-4 py-2">
-              <form action={backToReview}>
-                <button className="rounded-md border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50">
+        {/* Document header: title + big total, like a real invoice */}
+        <div className="border-b border-slate-200 px-6 py-5">
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <h2 className="truncate text-lg font-semibold text-slate-900">
+                Bill {billNumber} from {vendor}
+              </h2>
+              {invoice.source_email && (
+                <p className="mt-0.5 truncate text-sm text-slate-400">
+                  {invoice.source_email}
+                </p>
+              )}
+              {!readOnly && invoice.vendor_name && (
+                <div className="mt-1.5">
+                  <SupplierRulesModal
+                    vendorName={invoice.vendor_name}
+                    initial={supplierDefaults}
+                    projects={projects}
+                    saveAction={saveSupplierDefaults}
+                  />
+                </div>
+              )}
+            </div>
+            <div className="flex-none text-right">
+              <div className="text-2xl font-bold tabular-nums text-slate-900">
+                {fmt(amount)}
+              </div>
+              <div className="text-xs font-medium text-slate-400">{invoice.currency}</div>
+            </div>
+          </div>
+
+          {["on_approval", "on_hold", "rejected"].includes(invoice.status) &&
+            canReview &&
+            !readOnly && (
+              <form action={backToReview} className="mt-3">
+                <button className="rounded-md border border-slate-300 px-3 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50">
                   Back to Review
                 </button>
               </form>
-            </div>
-          )}
+            )}
+        </div>
 
         {/* Editable bill fields — maps to the QBO bill on sync */}
-        <form
-          id="bill-form"
-          ref={billFormRef}
-          action={saveBill}
-          className="border-b border-slate-200 px-4 py-3"
-        >
-          {/* Summary (updates after save) */}
-          <div className="text-sm font-semibold text-slate-800">
-            Bill {billNumber} from {vendor}
-          </div>
-          <div className="mt-1 flex items-baseline gap-1.5">
-            <span className="text-lg font-bold text-slate-900">
-              {fmt(amount)}
-            </span>
-            <span className="text-xs font-medium text-slate-400">
-              {invoice.currency}
-            </span>
-          </div>
-
-          {/* Bill details */}
-          <div className="mt-3 text-[11px] font-bold uppercase tracking-wide text-slate-400">
-            Bill details
-          </div>
-          <div className="mt-1.5 grid grid-cols-2 gap-x-3 gap-y-2">
-            <label className="col-span-2">
-              <span className={labelCls}>Vendor name</span>
-              <input
-                name="vendor_name"
-                defaultValue={invoice.vendor_name ?? ""}
-                className={inputCls}
-                {...billBlur}
-              />
-            </label>
-            <label className="col-span-2">
-              <span className={labelCls}>Email</span>
-              <input
-                name="source_email"
-                defaultValue={invoice.source_email ?? ""}
-                className={inputCls}
-                {...billBlur}
-              />
-            </label>
+        <form id="bill-form" ref={billFormRef} action={saveBill} className="hidden" />
+        <div className="border-b border-slate-200 px-6 py-4">
+          <div className="grid grid-cols-4 gap-x-6 gap-y-3">
             <label>
-              <span className={labelCls}>Bill number</span>
+              <span className={ghostLabel}>Bill date</span>
               <input
-                name="bill_number"
-                defaultValue={invoice.invoice_number ?? ""}
-                className={inputCls}
-                {...billBlur}
-              />
-            </label>
-            <label>
-              <span className={labelCls}>Documents</span>
-              <input
-                value={`${documentCount} attached`}
-                readOnly
-                className={`${inputCls} bg-slate-50 text-slate-400`}
-              />
-            </label>
-            <label>
-              <span className={labelCls}>Bill date</span>
-              <input
+                form="bill-form"
                 type="date"
                 name="bill_date"
                 defaultValue={billDateDefault}
-                className={inputCls}
+                className={ghostField}
                 {...billBlur}
               />
             </label>
             <label>
-              <span className={labelCls}>Due date</span>
+              <span className={ghostLabel}>Due date</span>
               <input
+                form="bill-form"
                 type="date"
                 name="due_date"
                 defaultValue={invoice.due_date ?? ""}
-                className={inputCls}
-                {...billBlur}
-              />
-            </label>
-            <label className="col-span-2">
-              <span className={labelCls}>Project / customer</span>
-              <select
-                name="project_id"
-                defaultValue={invoice.project_id ?? ""}
-                className={inputCls}
-                {...billChange}
-              >
-                <option value="">— none —</option>
-                {projects.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-
-          {/* Totals */}
-          <div className="mt-3 text-[11px] font-bold uppercase tracking-wide text-slate-400">
-            Amounts are Tax Exclusive
-          </div>
-          <div className="mt-1.5 grid grid-cols-2 gap-x-3 gap-y-2">
-            <label>
-              <span className={labelCls}>Total amount</span>
-              <input
-                name="amount"
-                type="number"
-                step="0.01"
-                defaultValue={invoice.amount ?? ""}
-                className={inputCls}
+                className={ghostField}
                 {...billBlur}
               />
             </label>
             <label>
-              <span className={labelCls}>Currency</span>
+              <span className={ghostLabel}>Bill number</span>
               <input
-                name="currency"
-                defaultValue={invoice.currency}
-                className={inputCls}
-                {...billBlur}
-              />
-            </label>
-            <label>
-              <span className={labelCls}>Tax</span>
-              <input
-                name="tax_amount"
-                type="number"
-                step="0.01"
-                defaultValue={invoice.tax_amount ?? ""}
-                className={inputCls}
+                form="bill-form"
+                name="bill_number"
+                defaultValue={invoice.invoice_number ?? ""}
+                className={ghostField}
                 {...billBlur}
               />
             </label>
             <div>
-              <span className={labelCls}>Subtotal</span>
-              <div className="mt-1 text-sm font-medium text-slate-700">
-                {fmt(subtotal)}
-              </div>
+              <span className={ghostLabel}>Documents</span>
+              <div className={`${ghostField} text-slate-400`}>{documentCount} attached</div>
             </div>
           </div>
-        </form>
 
-        {/* Category details — editable line items */}
-        <div className="border-b border-slate-200 px-4 py-3">
+          <div className="mt-4 grid grid-cols-2 gap-x-6 gap-y-3">
+            <label>
+              <span className={ghostLabel}>Vendor name</span>
+              <input
+                form="bill-form"
+                name="vendor_name"
+                defaultValue={invoice.vendor_name ?? ""}
+                className={`${ghostField} font-medium`}
+                {...billBlur}
+              />
+            </label>
+            <label>
+              <span className={ghostLabel}>Email</span>
+              <input
+                form="bill-form"
+                name="source_email"
+                defaultValue={invoice.source_email ?? ""}
+                className={ghostField}
+                {...billBlur}
+              />
+            </label>
+          </div>
+        </div>
+
+        {/* Category details — editable line items, table-style. Project is
+            per-line (a bill can split across several projects) rather than
+            a single invoice-level field, so it lives here, not above. */}
+        <div className="border-b border-slate-200 px-6 py-4">
           <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">
             Category details
           </div>
-          <div className="mt-2 space-y-2">
+          <div className="mt-2 overflow-x-auto">
+            <div
+              className={`grid ${LINE_ITEM_COLS} min-w-[720px] gap-x-3 border-b border-slate-200 pb-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-400`}
+            >
+              <span>Category</span>
+              <span>Description</span>
+              <span>Project / customer</span>
+              <span className="text-right">Tax %</span>
+              <span>Class</span>
+              <span className="text-right">Amount</span>
+              <span className="text-center">Linked</span>
+              <span />
+            </div>
             {lineItems.map((item) => (
               <LineItemRow
                 key={item.id}
@@ -270,15 +241,16 @@ export function BillPanel({
                   description: item.description ?? "",
                   tax_rate: item.tax_rate ?? "",
                   class: item.class ?? "",
+                  project_id: item.project_id ?? "",
                   amount: item.amount ?? "",
                   linked: item.linked,
                 }}
+                projects={projects}
                 saveLineItem={saveLineItem}
                 deleteLineItem={deleteLineItem}
                 readOnly={readOnly}
               />
             ))}
-            {/* Add-line row (empty) */}
             {!readOnly && (
               <LineItemRow
                 itemId="new"
@@ -287,37 +259,81 @@ export function BillPanel({
                   description: "",
                   tax_rate: "",
                   class: "",
+                  project_id: "",
                   amount: "",
                   linked: false,
                 }}
+                projects={projects}
                 saveLineItem={saveLineItem}
                 deleteLineItem={undefined}
                 readOnly={false}
               />
             )}
           </div>
+
+          {/* Totals — Amount/Tax post through bill-form via the `form`
+              attribute even though they render down here, after the table. */}
+          <div className="mt-4 flex justify-end">
+            <div className="w-56 space-y-1.5">
+              <div className="flex items-center justify-between text-sm text-slate-500">
+                <span>Subtotal</span>
+                <span className="tabular-nums">{num2(subtotal)}</span>
+              </div>
+              <div className="flex items-center justify-between text-sm text-slate-500">
+                <span>Tax</span>
+                <input
+                  form="bill-form"
+                  name="tax_amount"
+                  type="text"
+                  inputMode="decimal"
+                  defaultValue={num2(invoice.tax_amount)}
+                  className="w-[6ch] border-b border-transparent bg-transparent text-right text-sm tabular-nums text-slate-700 hover:border-slate-200 focus:border-blue-500 focus:outline-none"
+                  {...billBlur}
+                />
+              </div>
+              <div className="flex items-center justify-between border-t border-slate-200 pt-1.5 text-base font-semibold text-slate-900">
+                <span>Total</span>
+                <input
+                  form="bill-form"
+                  name="amount"
+                  type="text"
+                  inputMode="decimal"
+                  defaultValue={num2(invoice.amount)}
+                  className="w-[8ch] border-b border-transparent bg-transparent text-right font-semibold tabular-nums hover:border-slate-200 focus:border-blue-500 focus:outline-none"
+                  {...billBlur}
+                />
+                {/* currency is shown once, in the header — not repeated
+                    here — but still submits with the form so autosaving
+                    other fields doesn't reset it. */}
+                <input
+                  form="bill-form"
+                  type="hidden"
+                  name="currency"
+                  value={invoice.currency}
+                  readOnly
+                />
+              </div>
+            </div>
+          </div>
         </div>
 
         {/* Links */}
-        <div className="border-b border-slate-200 px-4 py-3 text-xs">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-6 py-3 text-xs">
           <button
             type="button"
             onClick={onOpenDocument}
-            className="block py-0.5 text-left text-xs font-medium text-blue-600 hover:underline"
+            className="font-medium text-blue-600 hover:underline"
           >
             Open the original document
           </button>
-          <form action={reExtract}>
-            {!readOnly && (
-              <button className="block py-0.5 text-left text-xs font-medium text-slate-500 hover:text-slate-700 hover:underline">
+          {!readOnly && (
+            <form action={reExtract}>
+              <button className="font-medium text-slate-500 hover:text-slate-700 hover:underline">
                 Re-extract document fields
               </button>
-            )}
-          </form>
-          <span
-            className="block py-0.5 text-slate-400"
-            title="Available once QBO sync is enabled"
-          >
+            </form>
+          )}
+          <span className="text-slate-400" title="Available once QBO sync is enabled">
             Open in QuickBooks Online
           </span>
         </div>
@@ -329,6 +345,7 @@ export function BillPanel({
 function LineItemRow({
   itemId,
   defaults,
+  projects,
   saveLineItem,
   deleteLineItem,
   readOnly,
@@ -339,9 +356,11 @@ function LineItemRow({
     description: string;
     tax_rate: number | "";
     class: string;
+    project_id: string;
     amount: number | "";
     linked: boolean;
   };
+  projects: { id: string; name: string }[];
   saveLineItem: (
     lineItemId: string,
     formData: FormData
@@ -350,11 +369,9 @@ function LineItemRow({
   readOnly: boolean;
 }) {
   const isNew = itemId === "new";
+  const formId = `line-item-${itemId}`;
   const formRef = useRef<HTMLFormElement>(null);
-  const inputCls =
-    "mt-0.5 w-full rounded-md border border-slate-300 px-2 py-1 text-xs focus:border-blue-500 focus:outline-none";
-  const labelCls =
-    "block text-[10px] font-semibold uppercase tracking-wide text-slate-400";
+  const cellCls = "border-b border-transparent bg-transparent px-0 py-1.5 text-xs text-slate-800 hover:border-slate-200 focus:border-blue-500 focus:outline-none disabled:text-slate-400";
 
   // Existing rows save automatically when a field loses focus (no Save
   // button). The blank "add line" row keeps an explicit button. In
@@ -371,91 +388,105 @@ function LineItemRow({
       : { onChange: () => formRef.current?.requestSubmit() };
 
   return (
-    <div className="rounded-md border border-slate-200 p-2">
-      <form ref={formRef} action={saveLineItem.bind(null, itemId)}>
-        <div className="grid grid-cols-2 gap-x-2 gap-y-1.5">
-          <label>
-            <span className={labelCls}>Category</span>
-            <input
-              name="category"
-              defaultValue={defaults.category}
-              className={inputCls}
-              {...blurSave}
-            />
-          </label>
-          <label>
-            <span className={labelCls}>Description</span>
-            <input
-              name="description"
-              defaultValue={defaults.description}
-              className={inputCls}
-              {...blurSave}
-            />
-          </label>
-          <label>
-            <span className={labelCls}>Tax %</span>
-            <input
-              name="tax_rate"
-              type="number"
-              step="0.01"
-              defaultValue={defaults.tax_rate}
-              className={inputCls}
-              {...blurSave}
-            />
-          </label>
-          <label>
-            <span className={labelCls}>Class</span>
-            <input
-              name="class"
-              defaultValue={defaults.class}
-              className={inputCls}
-              {...blurSave}
-            />
-          </label>
-          <label>
-            <span className={labelCls}>Amount</span>
-            <input
-              name="amount"
-              type="number"
-              step="0.01"
-              defaultValue={defaults.amount}
-              className={inputCls}
-              {...blurSave}
-            />
-          </label>
-          <label className="flex items-end gap-1.5 pb-1">
-            <input
-              name="linked"
-              type="checkbox"
-              defaultChecked={defaults.linked}
-              className="h-4 w-4 rounded border-slate-300"
-              {...checkboxSave}
-            />
-            <span className={labelCls}>Linked</span>
-          </label>
-        </div>
-        {isNew && !readOnly && (
-          <div className="mt-2 flex justify-end">
-            <button className="rounded-md bg-slate-800 px-2.5 py-1 text-xs font-medium text-white hover:bg-slate-700">
-              Add line
-            </button>
-          </div>
-        )}
-      </form>
-      {!isNew && !readOnly && (
-        <p className="mt-1 text-right text-[10px] text-slate-400">
-          auto-saves on edit
-        </p>
-      )}
-      {!isNew && !readOnly && deleteLineItem && (
-        <form
-          action={deleteLineItem.bind(null, itemId)}
-          className="mt-1 text-right"
-        >
-          <button className="text-xs text-red-500 hover:underline">
-            Delete
+    <div
+      className={`group grid ${LINE_ITEM_COLS} items-center gap-x-3 border-b border-slate-100 py-0.5`}
+    >
+      <form
+        id={formId}
+        ref={formRef}
+        action={saveLineItem.bind(null, itemId)}
+        className="hidden"
+      />
+      <input
+        form={formId}
+        name="category"
+        defaultValue={defaults.category}
+        placeholder={isNew ? "Category" : undefined}
+        className={cellCls}
+        {...blurSave}
+      />
+      <input
+        form={formId}
+        name="description"
+        defaultValue={defaults.description}
+        placeholder={isNew ? "Description" : undefined}
+        className={cellCls}
+        {...blurSave}
+      />
+      <select
+        form={formId}
+        name="project_id"
+        defaultValue={defaults.project_id}
+        className={cellCls}
+        {...checkboxSave}
+      >
+        <option value="">— none —</option>
+        {projects.map((p) => (
+          <option key={p.id} value={p.id}>
+            {p.name}
+          </option>
+        ))}
+      </select>
+      <input
+        form={formId}
+        name="tax_rate"
+        type="number"
+        step="0.01"
+        defaultValue={defaults.tax_rate}
+        className={`${cellCls} text-right tabular-nums`}
+        {...blurSave}
+      />
+      <input
+        form={formId}
+        name="class"
+        defaultValue={defaults.class}
+        placeholder={isNew ? "Class" : undefined}
+        className={cellCls}
+        {...blurSave}
+      />
+      <input
+        form={formId}
+        name="amount"
+        type="number"
+        step="0.01"
+        defaultValue={defaults.amount}
+        className={`${cellCls} text-right tabular-nums`}
+        {...blurSave}
+      />
+      <div className="flex justify-center">
+        <input
+          form={formId}
+          name="linked"
+          type="checkbox"
+          defaultChecked={defaults.linked}
+          className="h-3.5 w-3.5 rounded border-slate-300"
+          {...checkboxSave}
+        />
+      </div>
+      {isNew ? (
+        !readOnly && (
+          <button
+            form={formId}
+            type="submit"
+            title="Add line"
+            className="justify-self-end text-sm font-medium text-blue-600 hover:underline"
+          >
+            +
           </button>
-        </form>
+        )
+      ) : (
+        !readOnly &&
+        deleteLineItem && (
+          <form action={deleteLineItem.bind(null, itemId)} className="justify-self-end">
+            <button
+              type="submit"
+              title="Delete line"
+              className="text-slate-300 opacity-0 hover:text-red-500 group-hover:opacity-100"
+            >
+              ×
+            </button>
+          </form>
+        )
       )}
     </div>
   );

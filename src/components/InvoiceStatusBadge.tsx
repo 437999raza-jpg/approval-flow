@@ -2,23 +2,21 @@ import { clsx } from "clsx";
 import type { InvoiceStatus } from "@/lib/supabase/types";
 
 const STYLES: Record<InvoiceStatus, string> = {
-  pending_review: "bg-violet-100 text-violet-800",
-  pending: "bg-slate-100 text-slate-700",
-  in_review: "bg-amber-100 text-amber-800",
-  held: "bg-orange-100 text-orange-800",
+  on_review: "bg-violet-100 text-violet-800",
+  on_approval: "bg-amber-100 text-amber-800",
   approved: "bg-emerald-100 text-emerald-800",
+  cancelled: "bg-slate-100 text-slate-500",
   rejected: "bg-red-100 text-red-800",
-  paid: "bg-blue-100 text-blue-800",
+  on_hold: "bg-orange-100 text-orange-800",
 };
 
 const LABELS: Record<InvoiceStatus, string> = {
-  pending_review: "Pending review",
-  pending: "Pending",
-  in_review: "In review",
-  held: "On hold",
+  on_review: "On review",
+  on_approval: "On approval",
   approved: "Approved",
+  cancelled: "Cancelled",
   rejected: "Rejected",
-  paid: "Paid",
+  on_hold: "On hold",
 };
 
 export function InvoiceStatusBadge({ status }: { status: InvoiceStatus }) {

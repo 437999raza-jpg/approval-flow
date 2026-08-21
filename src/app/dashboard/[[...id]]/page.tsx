@@ -16,7 +16,11 @@ import { InstructionsBox } from "@/components/InstructionsBox";
 import { CollapsiblePane } from "@/components/CollapsiblePane";
 import { DetailSplit, type DocumentRef } from "@/components/DetailSplit";
 import { Sidebar } from "@/components/Sidebar";
-import type { Database } from "@/lib/supabase/types";
+import { DocumentSearchModal, type DocumentSearchFilters } from "@/components/DocumentSearchModal";
+import { InlineSelectSave } from "@/components/InlineSelectSave";
+import type { SupplierDefaultsValues } from "@/components/SupplierRulesModal";
+import type { MultiSelectOption } from "@/components/MultiSelect";
+import type { Database, InvoiceStatus } from "@/lib/supabase/types";
 import {
   extractInvoiceFields,
   mapExtractionToInvoice,
@@ -27,6 +31,19 @@ type Invoice = Database["public"]["Tables"]["invoices"]["Row"];
 
 const VIEWS = ["all", "review", "mine", "created", "approved", "rejected"] as const;
 type View = (typeof VIEWS)[number];
+
+const STATUS_OPTIONS: MultiSelectOption[] = [
+  { id: "on_review", label: "On review" },
+  { id: "on_approval", label: "On approval" },
+  { id: "approved", label: "Approved" },
+  { id: "cancelled", label: "Cancelled" },
+  { id: "rejected", label: "Rejected" },
+  { id: "on_hold", label: "On hold" },
+];
+
+function csvParam(value: string | undefined): string[] {
+  return value ? value.split(",").filter(Boolean) : [];
+}
 
 const DECISION_ERRORS: Record<string, string> = {
   "not-your-step":
@@ -81,7 +98,7 @@ async function decide(
     redirect(`/dashboard/${invoiceId}?error=not-your-step`);
   }
 
-  if (invoice.status !== "pending" && invoice.status !== "in_review") {
+  if (invoice.status !== "on_approval") {
     redirect(`/dashboard/${invoiceId}?error=already-decided`);
   }
 
@@ -95,7 +112,11 @@ async function decide(
   const currentStep = orderedSteps.find(
     (s) => s.step_order === invoice.current_step_order
   );
-  if (!currentStep || currentStep.approver_user_id !== user.id) {
+  // An admin reassignment (step_override_approver_id) takes priority over
+  // the workflow's own step assignment, for this invoice only.
+  const effectiveApprover =
+    invoice.step_override_approver_id ?? currentStep?.approver_user_id;
+  if (!currentStep || effectiveApprover !== user.id) {
     redirect(`/dashboard/${invoiceId}?error=not-your-step`);
   }
 
@@ -138,7 +159,7 @@ async function decide(
   const isFinalStep = invoice.current_step_order >= lastStep;
 
   const nextStatus =
-    decision === "rejected" ? "rejected" : isFinalStep ? "approved" : "in_review";
+    decision === "rejected" ? "rejected" : isFinalStep ? "approved" : "on_approval";
 
   await supabase
     .from("invoices")
@@ -148,6 +169,9 @@ async function decide(
         decision === "approved" && !isFinalStep
           ? invoice.current_step_order + 1
           : invoice.current_step_order,
+      // The reassignment applied to the step just decided, not whatever
+      // comes next.
+      step_override_approver_id: null,
       updated_at: new Date().toISOString(),
     })
     .eq("id", invoiceId);
@@ -279,7 +303,6 @@ function parseBillForm(formData: FormData): Record<string, unknown> {
     amount: num("amount"),
     currency: text("currency")?.toUpperCase() || "USD",
     tax_amount: num("tax_amount"),
-    project_id: text("project_id"),
   };
 }
 
@@ -300,6 +323,111 @@ async function saveBill(invoiceId: string, formData: FormData) {
       updated_at: new Date().toISOString(),
     })
     .eq("id", invoiceId);
+
+  revalidatePath("/dashboard", "layout");
+}
+
+// Dext/ApprovalMax-style supplier rules: save (upsert, keyed by normalized
+// vendor name) and, if requested, retroactively apply Category/Class/
+// Project/Tax rate to every line item — and Currency/due date (from
+// Payment terms) to the invoice itself — of every other invoice from this
+// same supplier still sitting in the review queue. Future invoices from
+// this vendor pick up the rule automatically at ingestion (invoices.ts).
+async function saveSupplierDefaults(
+  invoiceId: string,
+  vendorName: string,
+  formData: FormData
+) {
+  "use server";
+
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
+  const org = await getCurrentOrg(supabase);
+  if (!org) return;
+
+  const text = (key: string) => String(formData.get(key) ?? "").trim() || null;
+  const num = (key: string) => {
+    const raw = String(formData.get(key) ?? "").trim();
+    if (!raw) return null;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : null;
+  };
+  const int = (key: string) => {
+    const raw = String(formData.get(key) ?? "").trim();
+    if (!raw) return null;
+    const n = parseInt(raw, 10);
+    return Number.isFinite(n) ? n : null;
+  };
+
+  const values = {
+    category: text("category"),
+    class: text("class"),
+    project_id: text("project_id"),
+    tax_rate: num("tax_rate"),
+    payment_terms_days: int("payment_terms_days"),
+    currency: text("currency")?.toUpperCase() ?? null,
+  };
+
+  await supabase.from("supplier_defaults").upsert(
+    {
+      organization_id: org.id,
+      vendor_name: vendorName,
+      ...values,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "organization_id,vendor_name_normalized" }
+  );
+
+  if (formData.get("apply_to_inbox") === "on") {
+    const normalized = vendorName.trim().toLowerCase();
+    const { data: candidates } = await supabase
+      .from("invoices")
+      .select("id, bill_date, vendor_name")
+      .eq("organization_id", org.id)
+      .eq("status", "on_review");
+
+    const matches = (candidates ?? []).filter(
+      (i) => i.vendor_name?.trim().toLowerCase() === normalized
+    );
+
+    for (const inv of matches) {
+      const invoiceUpdate: Database["public"]["Tables"]["invoices"]["Update"] = {};
+      if (values.currency) invoiceUpdate.currency = values.currency;
+      if (values.payment_terms_days != null && inv.bill_date) {
+        const d = new Date(`${inv.bill_date}T00:00:00Z`);
+        d.setUTCDate(d.getUTCDate() + values.payment_terms_days);
+        invoiceUpdate.due_date = d.toISOString().slice(0, 10);
+      }
+      if (Object.keys(invoiceUpdate).length > 0) {
+        await supabase.from("invoices").update(invoiceUpdate).eq("id", inv.id);
+      }
+
+      const lineItemUpdate: Database["public"]["Tables"]["invoice_line_items"]["Update"] =
+        {};
+      if (values.category) lineItemUpdate.category = values.category;
+      if (values.class) lineItemUpdate.class = values.class;
+      if (values.project_id) lineItemUpdate.project_id = values.project_id;
+      if (values.tax_rate != null) lineItemUpdate.tax_rate = values.tax_rate;
+      if (Object.keys(lineItemUpdate).length > 0) {
+        await supabase
+          .from("invoice_line_items")
+          .update(lineItemUpdate)
+          .eq("invoice_id", inv.id);
+      }
+    }
+  }
+
+  await supabase.from("audit_log").insert({
+    organization_id: org.id,
+    invoice_id: invoiceId,
+    actor_id: user.id,
+    action: "supplier_defaults.saved",
+    metadata: { vendor_name: vendorName },
+  });
 
   revalidatePath("/dashboard", "layout");
 }
@@ -332,29 +460,37 @@ async function reviewComplete(invoiceId: string) {
     )
     .eq("id", invoiceId)
     .single();
-  if (!inv || inv.status !== "pending_review") return;
+  if (!inv || inv.status !== "on_review") return;
 
-  const [{ data: project }, { data: profile }, { data: lineItems }] =
-    await Promise.all([
-      inv.project_id
-        ? supabase
-            .from("projects")
-            .select("name")
-            .eq("id", inv.project_id)
-            .maybeSingle()
-        : Promise.resolve({ data: null }),
-      inv.submitted_by
-        ? supabase
-            .from("profiles")
-            .select("full_name")
-            .eq("id", inv.submitted_by)
-            .maybeSingle()
-        : Promise.resolve({ data: null }),
-      supabase
-        .from("invoice_line_items")
-        .select("category, description, class, amount")
-        .eq("invoice_id", invoiceId),
-    ]);
+  const [{ data: profile }, { data: lineItems }] = await Promise.all([
+    inv.submitted_by
+      ? supabase
+          .from("profiles")
+          .select("full_name")
+          .eq("id", inv.submitted_by)
+          .maybeSingle()
+      : Promise.resolve({ data: null }),
+    supabase
+      .from("invoice_line_items")
+      .select("category, description, class, amount, project_id")
+      .eq("invoice_id", invoiceId),
+  ]);
+
+  // A bill can split across multiple projects (one per line item); the
+  // invoice-level project_id (older data / simple single-project bills)
+  // still counts too. "Customer" routing rules match on ANY of them.
+  const projectIds = [
+    ...new Set(
+      [inv.project_id, ...(lineItems ?? []).map((l) => l.project_id)].filter(
+        (id): id is string => !!id
+      )
+    ),
+  ];
+  const { data: projectRows } =
+    projectIds.length > 0
+      ? await supabase.from("projects").select("id, name").in("id", projectIds)
+      : { data: [] };
+  const projects = (projectRows ?? []).map((p) => ({ id: p.id, name: p.name }));
 
   const workflowId = await selectWorkflowForInvoice(
     supabase,
@@ -364,8 +500,7 @@ async function reviewComplete(invoiceId: string) {
       vendorName: inv.vendor_name,
       submittedBy: inv.submitted_by,
       submitterName: profile?.full_name ?? null,
-      projectId: inv.project_id,
-      projectName: project?.name ?? null,
+      projects,
       lineItems: lineItems ?? [],
     }
   );
@@ -374,7 +509,7 @@ async function reviewComplete(invoiceId: string) {
     .from("invoices")
     .update({
       workflow_id: workflowId,
-      status: "pending",
+      status: "on_approval",
       current_step_order: 1,
       updated_at: new Date().toISOString(),
     })
@@ -403,11 +538,13 @@ async function holdInvoice(invoiceId: string) {
 
   const { data: invoice } = await supabase
     .from("invoices")
-    .select("id, organization_id, status, workflow_id, current_step_order")
+    .select(
+      "id, organization_id, status, workflow_id, current_step_order, step_override_approver_id"
+    )
     .eq("id", invoiceId)
     .single();
   if (!invoice || !invoice.workflow_id) return;
-  if (invoice.status !== "pending" && invoice.status !== "in_review") return;
+  if (invoice.status !== "on_approval") return;
 
   const { data: currentStep } = await supabase
     .from("approval_workflow_steps")
@@ -415,11 +552,12 @@ async function holdInvoice(invoiceId: string) {
     .eq("workflow_id", invoice.workflow_id)
     .eq("step_order", invoice.current_step_order)
     .maybeSingle();
-  if (!currentStep || currentStep.approver_user_id !== user.id) return;
+  const effectiveApprover = invoice.step_override_approver_id ?? currentStep?.approver_user_id;
+  if (!currentStep || effectiveApprover !== user.id) return;
 
   await supabase
     .from("invoices")
-    .update({ status: "held", updated_at: new Date().toISOString() })
+    .update({ status: "on_hold", updated_at: new Date().toISOString() })
     .eq("id", invoiceId);
 
   await supabase.from("audit_log").insert({
@@ -455,7 +593,7 @@ async function backToReview(invoiceId: string) {
   await supabase
     .from("invoices")
     .update({
-      status: "pending_review",
+      status: "on_review",
       current_step_order: 1,
       updated_at: new Date().toISOString(),
     })
@@ -473,6 +611,145 @@ async function backToReview(invoiceId: string) {
     invoice_id: invoiceId,
     actor_id: user.id,
     action: "invoice.back_to_review",
+  });
+
+  revalidatePath("/dashboard", "layout");
+}
+
+// Cancel: the person who submitted the invoice, or an admin, withdraws it
+// before a decision is made. Terminal, like approved/rejected — nothing can
+// move a cancelled invoice back into the workflow.
+async function cancelInvoice(invoiceId: string) {
+  "use server";
+
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
+  const { data: invoice } = await supabase
+    .from("invoices")
+    .select("id, organization_id, status, submitted_by")
+    .eq("id", invoiceId)
+    .single();
+  if (!invoice) return;
+  if (
+    invoice.status !== "on_review" &&
+    invoice.status !== "on_approval" &&
+    invoice.status !== "on_hold"
+  ) {
+    return;
+  }
+
+  const isOwner = invoice.submitted_by === user.id;
+  const isAdmin = await canReview(supabase);
+  if (!isOwner && !isAdmin) return;
+
+  await supabase
+    .from("invoices")
+    .update({ status: "cancelled", updated_at: new Date().toISOString() })
+    .eq("id", invoiceId);
+
+  await supabase.from("audit_log").insert({
+    organization_id: invoice.organization_id,
+    invoice_id: invoiceId,
+    actor_id: user.id,
+    action: "invoice.cancelled",
+  });
+
+  revalidatePath("/dashboard", "layout");
+}
+
+// Admin-only: push this one invoice to a different approver for its current
+// step, without touching the shared approval_workflow_steps template (which
+// would silently reassign every other invoice on that workflow too). Only
+// meaningful while there's an active step; clears automatically once the
+// step is decided (see decide()) or the invoice leaves on_approval/on_hold
+// (see overrideStatus()). Empty selection clears the override.
+async function reassignApprover(invoiceId: string, formData: FormData) {
+  "use server";
+
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+  if (!(await canReview(supabase))) return;
+
+  const { data: invoice } = await supabase
+    .from("invoices")
+    .select("id, organization_id, status")
+    .eq("id", invoiceId)
+    .single();
+  if (!invoice) return;
+  if (invoice.status !== "on_approval" && invoice.status !== "on_hold") return;
+
+  const approverId = String(formData.get("approver_id") ?? "").trim() || null;
+
+  await supabase
+    .from("invoices")
+    .update({ step_override_approver_id: approverId, updated_at: new Date().toISOString() })
+    .eq("id", invoiceId);
+
+  await supabase.from("audit_log").insert({
+    organization_id: invoice.organization_id,
+    invoice_id: invoiceId,
+    actor_id: user.id,
+    action: "invoice.reassigned",
+    metadata: { approver_id: approverId },
+  });
+
+  revalidatePath("/dashboard", "layout");
+}
+
+// Admin-only: force the invoice to any status directly, bypassing the
+// normal step-by-step gate. Doesn't fabricate an invoice_approvals row for
+// whatever step got skipped — that would misrepresent who actually decided
+// it — the audit_log entry is the honest record of the override. Moving to
+// on_review resets the workflow from step 1 (mirrors backToReview); moving
+// away from on_approval/on_hold clears any per-invoice reassignment, since
+// it's no longer meaningful outside those two statuses.
+async function overrideStatus(invoiceId: string, formData: FormData) {
+  "use server";
+
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+  if (!(await canReview(supabase))) return;
+
+  const newStatus = String(formData.get("status") ?? "") as InvoiceStatus;
+  if (!STATUS_OPTIONS.some((s) => s.id === newStatus)) return;
+
+  const { data: invoice } = await supabase
+    .from("invoices")
+    .select("id, organization_id, status")
+    .eq("id", invoiceId)
+    .single();
+  if (!invoice || invoice.status === newStatus) return;
+
+  const update: Database["public"]["Tables"]["invoices"]["Update"] = {
+    status: newStatus,
+    updated_at: new Date().toISOString(),
+  };
+  if (newStatus !== "on_approval" && newStatus !== "on_hold") {
+    update.step_override_approver_id = null;
+  }
+  if (newStatus === "on_review") {
+    update.current_step_order = 1;
+    await supabase.from("invoice_approvals").delete().eq("invoice_id", invoiceId);
+  }
+
+  await supabase.from("invoices").update(update).eq("id", invoiceId);
+
+  await supabase.from("audit_log").insert({
+    organization_id: invoice.organization_id,
+    invoice_id: invoiceId,
+    actor_id: user.id,
+    action: "invoice.admin_override_status",
+    metadata: { from: invoice.status, to: newStatus },
   });
 
   revalidatePath("/dashboard", "layout");
@@ -506,6 +783,7 @@ async function saveLineItem(
     description: text("description"),
     tax_rate: num("tax_rate"),
     class: text("class"),
+    project_id: text("project_id"),
     amount: num("amount"),
     linked: formData.get("linked") === "on",
   };
@@ -634,7 +912,23 @@ export default async function DashboardPage({
   searchParams,
 }: {
   params: { id?: string[] };
-  searchParams: { view?: string; q?: string; error?: string };
+  searchParams: {
+    view?: string;
+    q?: string;
+    error?: string;
+    status?: string;
+    holder?: string;
+    requester?: string;
+    approvedBy?: string;
+    supplier?: string;
+    customer?: string;
+    class?: string;
+    number?: string;
+    dateFrom?: string;
+    dateTo?: string;
+    amountFrom?: string;
+    amountTo?: string;
+  };
 }) {
   const supabase = createClient();
 
@@ -701,27 +995,115 @@ export default async function DashboardPage({
     ]);
 
   const workflowIds = (workflows ?? []).map((w) => w.id);
-  const { data: allSteps } =
-    workflowIds.length > 0
-      ? await supabase
-          .from("approval_workflow_steps")
-          .select("*")
-          .in("workflow_id", workflowIds)
-          .order("step_order", { ascending: true })
+  const invoiceIds = (invoices ?? []).map((i) => i.id);
+
+  const [{ data: allSteps }, { data: memberRows }, { data: approvedRows }, { data: lineItemClassRows }] =
+    await Promise.all([
+      workflowIds.length > 0
+        ? supabase
+            .from("approval_workflow_steps")
+            .select("*")
+            .in("workflow_id", workflowIds)
+            .order("step_order", { ascending: true })
+        : Promise.resolve({ data: [] }),
+      supabase
+        .from("organization_members")
+        .select("user_id")
+        .eq("organization_id", org.id),
+      invoiceIds.length > 0
+        ? supabase
+            .from("invoice_approvals")
+            .select("invoice_id, approver_id")
+            .in("invoice_id", invoiceIds)
+            .eq("decision", "approved")
+        : Promise.resolve({ data: [] }),
+      invoiceIds.length > 0
+        ? supabase
+            .from("invoice_line_items")
+            .select("invoice_id, class")
+            .in("invoice_id", invoiceIds)
+            .not("class", "is", null)
+        : Promise.resolve({ data: [] }),
+    ]);
+
+  const memberUserIds = [...new Set((memberRows ?? []).map((m) => m.user_id))];
+  const { data: memberProfiles } =
+    memberUserIds.length > 0
+      ? await supabase.from("profiles").select("id, full_name").in("id", memberUserIds)
       : { data: [] };
+  const memberNameById = new Map(
+    (memberProfiles ?? []).map((p) => [p.id, p.full_name ?? "Team member"])
+  );
+  const memberOptions: MultiSelectOption[] = memberUserIds
+    .map((id) => ({ id, label: memberNameById.get(id) ?? "Team member" }))
+    .sort((a, b) => a.label.localeCompare(b.label));
+
+  const vendorOptions: MultiSelectOption[] = [
+    ...new Set((invoices ?? []).map((i) => i.vendor_name).filter((v): v is string => !!v)),
+  ]
+    .sort((a, b) => a.localeCompare(b))
+    .map((v) => ({ id: v, label: v }));
+
+  const projectOptions: MultiSelectOption[] = (projects ?? []).map((p) => ({
+    id: p.id,
+    label: p.name,
+  }));
+
+  const classOptions: MultiSelectOption[] = [
+    ...new Set((lineItemClassRows ?? []).map((r) => r.class).filter((c): c is string => !!c)),
+  ]
+    .sort((a, b) => a.localeCompare(b))
+    .map((c) => ({ id: c, label: c }));
+
+  // Class lives on line items, not the invoice itself — an invoice matches
+  // a Class filter if ANY of its line items carry that class.
+  const classesByInvoice = new Map<string, Set<string>>();
+  for (const row of lineItemClassRows ?? []) {
+    if (!row.class) continue;
+    const set = classesByInvoice.get(row.invoice_id) ?? new Set<string>();
+    set.add(row.class);
+    classesByInvoice.set(row.invoice_id, set);
+  }
+
+  const approvedByInvoice = new Map<string, Set<string>>();
+  for (const row of approvedRows ?? []) {
+    if (!row.approver_id) continue;
+    const set = approvedByInvoice.get(row.invoice_id) ?? new Set<string>();
+    set.add(row.approver_id);
+    approvedByInvoice.set(row.invoice_id, set);
+  }
 
   const stepApproverByKey = new Map(
     (allSteps ?? []).map((s) => [`${s.workflow_id}:${s.step_order}`, s.approver_user_id])
   );
 
+  // Who currently has this document, if anyone — the field ApprovalMax's
+  // own search screen doesn't offer (only "Requester" and "Approved by").
+  // An admin's reassignment (step_override_approver_id) wins over the
+  // workflow's own step assignment, but only for this one invoice — the
+  // workflow template itself is untouched.
+  const holderOf = (invoice: Invoice): string | null => {
+    if (
+      invoice.workflow_id === null ||
+      (invoice.status !== "on_approval" && invoice.status !== "on_hold")
+    ) {
+      return null;
+    }
+    return (
+      invoice.step_override_approver_id ??
+      stepApproverByKey.get(`${invoice.workflow_id}:${invoice.current_step_order}`) ??
+      null
+    );
+  };
+
   const requiresMyApproval = (invoice: Invoice) =>
-    (invoice.status === "pending" || invoice.status === "in_review") &&
+    invoice.status === "on_approval" &&
     invoice.workflow_id !== null &&
-    stepApproverByKey.get(`${invoice.workflow_id}:${invoice.current_step_order}`) === user.id;
+    holderOf(invoice) === user.id;
 
   const counts = {
     all: invoices?.length ?? 0,
-    review: invoices?.filter((i) => i.status === "pending_review").length ?? 0,
+    review: invoices?.filter((i) => i.status === "on_review").length ?? 0,
     mine: invoices?.filter(requiresMyApproval).length ?? 0,
     created: invoices?.filter((i) => i.submitted_by === user.id).length ?? 0,
     approved: invoices?.filter((i) => i.status === "approved").length ?? 0,
@@ -729,7 +1111,7 @@ export default async function DashboardPage({
   };
 
   let filtered = invoices ?? [];
-  if (view === "review") filtered = filtered.filter((i) => i.status === "pending_review");
+  if (view === "review") filtered = filtered.filter((i) => i.status === "on_review");
   else if (view === "mine") filtered = filtered.filter(requiresMyApproval);
   else if (view === "created") filtered = filtered.filter((i) => i.submitted_by === user.id);
   else if (view === "approved") filtered = filtered.filter((i) => i.status === "approved");
@@ -743,12 +1125,128 @@ export default async function DashboardPage({
     );
   }
 
+  // Advanced "Document search" filters — each multi-select field matches
+  // ANY of its selected values (vendor A OR vendor B); different fields
+  // combine with AND, layered on top of the sidebar view + quick search.
+  const advanced: DocumentSearchFilters = {
+    status: csvParam(searchParams.status),
+    holder: csvParam(searchParams.holder),
+    requester: csvParam(searchParams.requester),
+    approvedBy: csvParam(searchParams.approvedBy),
+    supplier: csvParam(searchParams.supplier),
+    customer: csvParam(searchParams.customer),
+    class: csvParam(searchParams.class),
+    number: searchParams.number ?? "",
+    dateFrom: searchParams.dateFrom ?? "",
+    dateTo: searchParams.dateTo ?? "",
+    amountFrom: searchParams.amountFrom ?? "",
+    amountTo: searchParams.amountTo ?? "",
+  };
+  const activeFilterCount =
+    [
+      advanced.status,
+      advanced.holder,
+      advanced.requester,
+      advanced.approvedBy,
+      advanced.supplier,
+      advanced.customer,
+      advanced.class,
+    ].filter((a) => a.length > 0).length +
+    [advanced.number, advanced.dateFrom, advanced.dateTo, advanced.amountFrom, advanced.amountTo]
+      .filter(Boolean).length;
+
+  if (advanced.status.length > 0) {
+    filtered = filtered.filter((i) => advanced.status.includes(i.status));
+  }
+  if (advanced.holder.length > 0) {
+    filtered = filtered.filter((i) => {
+      const h = holderOf(i);
+      return h !== null && advanced.holder.includes(h);
+    });
+  }
+  if (advanced.requester.length > 0) {
+    filtered = filtered.filter(
+      (i) => i.submitted_by !== null && advanced.requester.includes(i.submitted_by)
+    );
+  }
+  if (advanced.approvedBy.length > 0) {
+    filtered = filtered.filter((i) => {
+      const approvers = approvedByInvoice.get(i.id);
+      return approvers != null && advanced.approvedBy.some((a) => approvers.has(a));
+    });
+  }
+  if (advanced.supplier.length > 0) {
+    filtered = filtered.filter(
+      (i) => i.vendor_name !== null && advanced.supplier.includes(i.vendor_name)
+    );
+  }
+  if (advanced.customer.length > 0) {
+    filtered = filtered.filter(
+      (i) => i.project_id !== null && advanced.customer.includes(i.project_id)
+    );
+  }
+  if (advanced.class.length > 0) {
+    filtered = filtered.filter((i) => {
+      const invoiceClasses = classesByInvoice.get(i.id);
+      return invoiceClasses != null && advanced.class.some((c) => invoiceClasses.has(c));
+    });
+  }
+  if (advanced.number.trim()) {
+    const needle = advanced.number.trim().toLowerCase();
+    filtered = filtered.filter((i) => i.invoice_number?.toLowerCase().includes(needle));
+  }
+  if (advanced.dateFrom) {
+    filtered = filtered.filter((i) => i.bill_date !== null && i.bill_date >= advanced.dateFrom);
+  }
+  if (advanced.dateTo) {
+    filtered = filtered.filter((i) => i.bill_date !== null && i.bill_date <= advanced.dateTo);
+  }
+  if (advanced.amountFrom) {
+    const min = Number(advanced.amountFrom);
+    filtered = filtered.filter((i) => i.amount !== null && i.amount >= min);
+  }
+  if (advanced.amountTo) {
+    const max = Number(advanced.amountTo);
+    filtered = filtered.filter((i) => i.amount !== null && i.amount <= max);
+  }
+
   const selected = selectedId ? filtered.find((i) => i.id === selectedId) : filtered[0];
   if (selectedId && !selected) notFound();
+
+  // Possible duplicate: same supplier + invoice number already exists and
+  // isn't cancelled/rejected. Computed live (not stored) so it never goes
+  // stale if invoice_number/vendor_name get edited later in the Bill panel.
+  // Amount differing is flagged as a likely price-corrected resubmission,
+  // not treated as a stronger/weaker signal — a human still decides either
+  // way.
+  const possibleDuplicates: Invoice[] =
+    selected?.invoice_number && selected?.vendor_name
+      ? (invoices ?? []).filter(
+          (i) =>
+            i.id !== selected.id &&
+            i.status !== "cancelled" &&
+            i.status !== "rejected" &&
+            i.invoice_number === selected.invoice_number &&
+            i.vendor_name?.trim().toLowerCase() ===
+              selected.vendor_name!.trim().toLowerCase()
+        )
+      : [];
 
   const detailQuery = new URLSearchParams();
   if (view !== "all") detailQuery.set("view", view);
   if (q) detailQuery.set("q", q);
+  if (advanced.status.length) detailQuery.set("status", advanced.status.join(","));
+  if (advanced.holder.length) detailQuery.set("holder", advanced.holder.join(","));
+  if (advanced.requester.length) detailQuery.set("requester", advanced.requester.join(","));
+  if (advanced.approvedBy.length) detailQuery.set("approvedBy", advanced.approvedBy.join(","));
+  if (advanced.supplier.length) detailQuery.set("supplier", advanced.supplier.join(","));
+  if (advanced.customer.length) detailQuery.set("customer", advanced.customer.join(","));
+  if (advanced.class.length) detailQuery.set("class", advanced.class.join(","));
+  if (advanced.number) detailQuery.set("number", advanced.number);
+  if (advanced.dateFrom) detailQuery.set("dateFrom", advanced.dateFrom);
+  if (advanced.dateTo) detailQuery.set("dateTo", advanced.dateTo);
+  if (advanced.amountFrom) detailQuery.set("amountFrom", advanced.amountFrom);
+  if (advanced.amountTo) detailQuery.set("amountTo", advanced.amountTo);
   const qs = detailQuery.toString() ? `?${detailQuery.toString()}` : "";
 
   let signedFileUrl: string | null = null;
@@ -758,6 +1256,14 @@ export default async function DashboardPage({
   let documentsForSelected: DocumentRef[] = [];
   let lineItemsForSelected: Database["public"]["Tables"]["invoice_line_items"]["Row"][] = [];
   let authorNameById = new Map<string, string>();
+  let supplierDefaultsForSelected: SupplierDefaultsValues = {
+    category: "",
+    class: "",
+    project_id: "",
+    tax_rate: "",
+    payment_terms_days: "",
+    currency: "",
+  };
 
   if (selected) {
     const [signed, approvalsRes, commentsRes, docsRes, lineItemsRes] =
@@ -785,6 +1291,47 @@ export default async function DashboardPage({
     commentsForSelected = commentsRes.data ?? [];
     lineItemsForSelected = lineItemsRes.data ?? [];
     stepsForSelected = (allSteps ?? []).filter((s) => s.workflow_id === selected.workflow_id);
+
+    if (selected.vendor_name) {
+      const { data: sd } = await supabase
+        .from("supplier_defaults")
+        .select("*")
+        .eq("organization_id", org.id)
+        .eq("vendor_name_normalized", selected.vendor_name.trim().toLowerCase())
+        .maybeSingle();
+      if (sd) {
+        supplierDefaultsForSelected = {
+          category: sd.category ?? "",
+          class: sd.class ?? "",
+          project_id: sd.project_id ?? "",
+          tax_rate: sd.tax_rate?.toString() ?? "",
+          payment_terms_days: sd.payment_terms_days?.toString() ?? "",
+          currency: sd.currency ?? "",
+        };
+      } else {
+        // No saved rule yet — prefill from what's already on this invoice
+        // (its first line item + currency/dates) instead of a blank form,
+        // so confirming a new rule is a one-click "yes, remember this"
+        // rather than retyping everything a second time.
+        const firstLine = lineItemsForSelected[0];
+        const termsDays =
+          selected.bill_date && selected.due_date
+            ? Math.round(
+                (new Date(`${selected.due_date}T00:00:00Z`).getTime() -
+                  new Date(`${selected.bill_date}T00:00:00Z`).getTime()) /
+                  (1000 * 60 * 60 * 24)
+              )
+            : null;
+        supplierDefaultsForSelected = {
+          category: firstLine?.category ?? "",
+          class: firstLine?.class ?? "",
+          project_id: firstLine?.project_id ?? "",
+          tax_rate: firstLine?.tax_rate?.toString() ?? "",
+          payment_terms_days: termsDays != null && termsDays >= 0 ? termsDays.toString() : "",
+          currency: selected.currency ?? "",
+        };
+      }
+    }
 
     // Document list for the viewer: the primary file first, then any
     // additional pages (multi-document support, migration 0003).
@@ -837,19 +1384,23 @@ export default async function DashboardPage({
     );
   }
 
-  const currentStepApprover =
-    selected?.workflow_id != null
-      ? stepApproverByKey.get(
-          `${selected.workflow_id}:${selected.current_step_order}`
-        )
-      : undefined;
+  const currentStepApprover = selected ? holderOf(selected) : null;
   // Only the approver assigned to the current step sees the buttons; the
   // server action enforces the same rule regardless of what the UI shows.
   const canDecide =
     selected != null &&
-    (selected.status === "pending" || selected.status === "in_review") &&
+    selected.status === "on_approval" &&
     selected.workflow_id !== null &&
     currentStepApprover === user.id;
+
+  // The submitter can withdraw their own not-yet-decided invoice; an admin
+  // can cancel anyone's.
+  const canCancel =
+    selected != null &&
+    (selected.status === "on_review" ||
+      selected.status === "on_approval" ||
+      selected.status === "on_hold") &&
+    (selected.submitted_by === user.id || canReviewNow);
 
   const navItems: { key: View; label: string }[] = [
     { key: "all", label: "All invoices" },
@@ -968,6 +1519,15 @@ export default async function DashboardPage({
           <div className="w-80">
             <SearchInput defaultValue={q} />
           </div>
+          <DocumentSearchModal
+            statuses={STATUS_OPTIONS}
+            members={memberOptions}
+            vendors={vendorOptions}
+            projects={projectOptions}
+            classes={classOptions}
+            initial={advanced}
+            activeCount={activeFilterCount}
+          />
           <div className="flex-1" />
           <Link
             href="/invoices/new"
@@ -994,14 +1554,11 @@ export default async function DashboardPage({
                     selected?.id === invoice.id ? "bg-blue-50" : "hover:bg-slate-50"
                   )}
                 >
-                  <div className="flex items-center justify-between">
-                    <span className="truncate text-sm font-medium">
-                      {invoice.vendor_name ?? invoice.file_name}
-                    </span>
-                    <InvoiceStatusBadge status={invoice.status} />
+                  <div className="truncate text-sm font-medium">
+                    {invoice.vendor_name ?? invoice.file_name}
                   </div>
-                  <div className="mt-1 flex items-center justify-between text-xs text-slate-500">
-                    <span>
+                  <div className="mt-1 flex items-center justify-between">
+                    <span className="text-xs text-slate-500">
                       {invoice.amount != null
                         ? invoice.amount.toLocaleString(undefined, {
                             style: "currency",
@@ -1009,8 +1566,16 @@ export default async function DashboardPage({
                           })
                         : "No amount extracted"}
                     </span>
-                    <span>{new Date(invoice.created_at).toLocaleDateString()}</span>
+                    <InvoiceStatusBadge status={invoice.status} />
                   </div>
+                  {(() => {
+                    const holderId = holderOf(invoice);
+                    return holderId ? (
+                      <div className="mt-1 text-xs text-slate-400">
+                        With {memberNameById.get(holderId) ?? "Team member"}
+                      </div>
+                    ) : null;
+                  })()}
                 </Link>
               ))
             )}
@@ -1043,6 +1608,12 @@ export default async function DashboardPage({
                   backToReview: backToReview.bind(null, selected.id),
                   canReview: canReviewNow,
                   readOnly: !canEdit,
+                  supplierDefaults: supplierDefaultsForSelected,
+                  saveSupplierDefaults: saveSupplierDefaults.bind(
+                    null,
+                    selected.id,
+                    selected.vendor_name ?? selected.file_name
+                  ),
                 }}
               >
                 {/* Side panel content: header + collapsible sections */}
@@ -1081,7 +1652,48 @@ export default async function DashboardPage({
                     </div>
                   )}
 
+                  {possibleDuplicates.length > 0 && (
+                    <div className="mx-4 mt-4 rounded-md border border-orange-200 bg-orange-50 px-4 py-3 text-sm text-orange-800">
+                      <p className="font-medium">
+                        Possible duplicate — invoice #{selected!.invoice_number} from{" "}
+                        {selected!.vendor_name} already exists.
+                      </p>
+                      <ul className="mt-1.5 space-y-1">
+                        {possibleDuplicates.map((d) => (
+                          <li key={d.id}>
+                            <Link
+                              href={`/dashboard/${d.id}${qs}`}
+                              className="underline hover:no-underline"
+                            >
+                              {new Date(d.created_at).toLocaleDateString()} —{" "}
+                              {d.amount != null
+                                ? d.amount.toLocaleString(undefined, {
+                                    style: "currency",
+                                    currency: d.currency,
+                                  })
+                                : "no amount"}
+                            </Link>
+                            {d.amount !== selected!.amount && (
+                              <span className="ml-1 text-xs text-orange-700">
+                                (amount differs from this one — possible price-corrected
+                                resubmission, not necessarily a true duplicate)
+                              </span>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
                   <CollapsibleSection title="Status & approval">
+                    {selected && holderOf(selected) && (
+                      <p className="mt-2 text-sm text-slate-600">
+                        Currently with{" "}
+                        <span className="font-medium text-slate-800">
+                          {memberNameById.get(holderOf(selected)!) ?? "Team member"}
+                        </span>
+                      </p>
+                    )}
                     {stepsForSelected.length > 0 && (
                       <div className="mt-3">
                         <ApprovalStepper
@@ -1093,9 +1705,10 @@ export default async function DashboardPage({
                       </div>
                     )}
                     {selected.status !== "approved" &&
-                      selected.status !== "paid" && (
+                      selected.status !== "rejected" &&
+                      selected.status !== "cancelled" && (
                         <div className="mt-3 flex flex-wrap gap-2">
-                          {selected.status === "pending_review" &&
+                          {selected.status === "on_review" &&
                           canReviewNow ? (
                             <form
                               action={reviewComplete.bind(null, selected.id)}
@@ -1105,7 +1718,7 @@ export default async function DashboardPage({
                               </button>
                             </form>
                           ) : null}
-                          {selected.status === "pending_review" &&
+                          {selected.status === "on_review" &&
                           !canReviewNow ? (
                             <p className="text-sm text-slate-500">
                               Awaiting review — an admin must complete the
@@ -1130,14 +1743,21 @@ export default async function DashboardPage({
                               </form>
                             </>
                           ) : null}
-                          {selected.status === "held" && (
+                          {selected.status === "on_hold" && (
                             <p className="text-sm text-slate-500">
                               On hold — return it to review or approve/reject
                               once the decision is ready.
                             </p>
                           )}
-                          {selected.status !== "pending_review" &&
-                            selected.status !== "held" &&
+                          {canCancel && (
+                            <form action={cancelInvoice.bind(null, selected.id)}>
+                              <button className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50">
+                                Cancel
+                              </button>
+                            </form>
+                          )}
+                          {selected.status !== "on_review" &&
+                            selected.status !== "on_hold" &&
                             !canDecide && (
                               <p className="text-sm text-slate-500">
                                 Waiting on the approver for step{" "}
@@ -1146,6 +1766,47 @@ export default async function DashboardPage({
                             )}
                         </div>
                       )}
+                    {canReviewNow && (
+                      <div className="mt-4 space-y-2 border-t border-slate-100 pt-3">
+                        <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
+                          Admin
+                        </p>
+                        {(selected.status === "on_approval" ||
+                          selected.status === "on_hold") && (
+                          <div>
+                            <label className="mb-1 block text-xs text-slate-500">
+                              Reassign to
+                            </label>
+                            <InlineSelectSave
+                              name="approver_id"
+                              defaultValue={holderOf(selected) ?? ""}
+                              options={[
+                                { value: "", label: "— workflow default —" },
+                                ...memberOptions.map((m) => ({
+                                  value: m.id,
+                                  label: m.label,
+                                })),
+                              ]}
+                              action={reassignApprover.bind(null, selected.id)}
+                            />
+                          </div>
+                        )}
+                        <div>
+                          <label className="mb-1 block text-xs text-slate-500">
+                            Override status
+                          </label>
+                          <InlineSelectSave
+                            name="status"
+                            defaultValue={selected.status}
+                            options={STATUS_OPTIONS.map((s) => ({
+                              value: s.id,
+                              label: s.label,
+                            }))}
+                            action={overrideStatus.bind(null, selected.id)}
+                          />
+                        </div>
+                      </div>
+                    )}
                   </CollapsibleSection>
 
                   <CollapsibleSection title="Extracted fields">
