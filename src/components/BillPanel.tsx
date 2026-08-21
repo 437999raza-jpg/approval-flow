@@ -932,6 +932,7 @@ function LineItemRow({
         className={`${cellCls} text-right tabular-nums`}
         disabled={readOnly}
         showValue
+        minQueryLength={1}
         onCommit={() => {
           if (!isNew && !readOnly) formRef.current?.requestSubmit();
         }}

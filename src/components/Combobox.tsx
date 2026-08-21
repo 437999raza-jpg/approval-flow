@@ -42,6 +42,7 @@ export function Combobox({
   onCommit,
   matchStart = false,
   showValue = false,
+  minQueryLength = 2,
 }: {
   name: string;
   formId: string;
@@ -59,6 +60,9 @@ export function Combobox({
   // For { label, value } options: display the VALUE in the box (tax rates)
   // instead of the label (project names).
   showValue?: boolean;
+  // Minimum characters before searching starts. Tax codes are single
+  // letters (H, G, P), so the Tax field uses 1; big lists use 2.
+  minQueryLength?: number;
 }) {
   const hasPairs = options.length > 0 && isObjOption(options[0]);
   const pairForValue = (v: string) =>
@@ -91,8 +95,8 @@ export function Combobox({
   const q = query.trim().toLowerCase();
   // Search-as-you-type: with big lists (2,045 suppliers, 454 projects) a
   // wall of options on click is useless. Only surface matches once the user
-  // has typed something meaningful (2+ chars), then show up to 30.
-  const searching = q.length >= 2;
+  // has typed enough (minQueryLength), then show up to 30.
+  const searching = q.length >= minQueryLength;
   const filtered = searching
     ? options
         .filter((o) => {
@@ -171,7 +175,14 @@ export function Combobox({
           setOpen(true);
           setActive(-1);
         }}
-        onFocus={() => setOpen(true)}
+        onFocus={(e) => {
+          setOpen(true);
+          // Pre-filled fields (e.g. OCR'd vendor): select the existing text
+          // so the first keystroke replaces it instead of appending — which
+          // would make the search look for "oldname + newletters" and match
+          // nothing.
+          e.target.select();
+        }}
         onKeyDown={(e) => {
           if (e.key === "ArrowDown") {
             e.preventDefault();
@@ -220,7 +231,9 @@ export function Combobox({
       )}
       {open && !searching && (
         <div className="absolute left-0 top-full z-30 mt-0.5 w-full min-w-[180px] rounded-md border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-400 shadow-lg">
-          Type at least 2 characters to search…
+          {minQueryLength === 1
+            ? "Type to search…"
+            : `Type at least ${minQueryLength} characters to search…`}
         </div>
       )}
     </div>
