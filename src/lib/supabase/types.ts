@@ -81,21 +81,6 @@ export interface Database {
         Update: Partial<Database["public"]["Tables"]["projects"]["Row"]>;
         Relationships: [];
       };
-      approval_workflow_projects: {
-        Row: {
-          id: string;
-          workflow_id: string;
-          project_id: string;
-          created_at: string;
-        };
-        Insert: Partial<
-          Database["public"]["Tables"]["approval_workflow_projects"]["Row"]
-        > & { workflow_id: string; project_id: string };
-        Update: Partial<
-          Database["public"]["Tables"]["approval_workflow_projects"]["Row"]
-        >;
-        Relationships: [];
-      };
       approval_workflow_rules: {
         Row: {
           id: string;
@@ -150,7 +135,8 @@ export interface Database {
           id: string;
           workflow_id: string;
           step_order: number;
-          approver_user_id: string | null;
+          name: string;
+          approval_mode: "any" | "all";
           created_at: string;
         };
         Insert: Partial<
@@ -158,6 +144,40 @@ export interface Database {
         > & { workflow_id: string; step_order: number };
         Update: Partial<
           Database["public"]["Tables"]["approval_workflow_steps"]["Row"]
+        >;
+        Relationships: [];
+      };
+      approval_workflow_step_approvers: {
+        Row: {
+          id: string;
+          step_id: string;
+          approver_user_id: string;
+          is_default: boolean;
+          row_order: number;
+          created_at: string;
+        };
+        Insert: Partial<
+          Database["public"]["Tables"]["approval_workflow_step_approvers"]["Row"]
+        > & { step_id: string; approver_user_id: string };
+        Update: Partial<
+          Database["public"]["Tables"]["approval_workflow_step_approvers"]["Row"]
+        >;
+        Relationships: [];
+      };
+      approval_workflow_step_conditions: {
+        Row: {
+          id: string;
+          step_approver_id: string;
+          field: "class" | "customer" | "supplier" | "category";
+          operator: "matches" | "not_matches";
+          match_values: string[];
+          created_at: string;
+        };
+        Insert: Partial<
+          Database["public"]["Tables"]["approval_workflow_step_conditions"]["Row"]
+        > & { step_approver_id: string; field: "class" | "customer" | "supplier" | "category" };
+        Update: Partial<
+          Database["public"]["Tables"]["approval_workflow_step_conditions"]["Row"]
         >;
         Relationships: [];
       };

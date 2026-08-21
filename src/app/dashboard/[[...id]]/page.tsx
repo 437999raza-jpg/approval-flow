@@ -31,6 +31,12 @@ import {
 import { selectWorkflowForInvoice } from "@/lib/workflow-routing";
 import { computeLineItemTotals } from "@/lib/invoice-totals";
 import { buildAuditTimeline } from "@/lib/audit-timeline";
+import {
+  effectiveApproversForStep,
+  stepDecisionState,
+  type StepApprover,
+  type StepCondition,
+} from "@/lib/workflow-conditions";
 
 type Invoice = Database["public"]["Tables"]["invoices"]["Row"];
 
@@ -66,6 +72,57 @@ const DECISION_ERRORS: Record<string, string> = {
 // added in migration 0002 makes double-decisions impossible even under a
 // race.
 //
+// Who's actually required to decide the given step for this invoice — a
+// step can have several conditionally-matched approvers now (see
+// workflow-conditions.ts). An admin reassignment overrides everything to
+// just that one person. Shared by every server action that needs to
+// check "is this user allowed to act on this step right now".
+async function requiredApproversFor(
+  supabase: ReturnType<typeof createClient>,
+  step: Database["public"]["Tables"]["approval_workflow_steps"]["Row"],
+  invoice: {
+    id: string;
+    vendor_name: string | null;
+    project_id: string | null;
+    step_override_approver_id: string | null;
+  }
+): Promise<string[]> {
+  if (invoice.step_override_approver_id) return [invoice.step_override_approver_id];
+
+  const { data: approversRaw } = await supabase
+    .from("approval_workflow_step_approvers")
+    .select("*")
+    .eq("step_id", step.id);
+  const approverIds = (approversRaw ?? []).map((a) => a.id);
+  const { data: conditionsRaw } =
+    approverIds.length > 0
+      ? await supabase
+          .from("approval_workflow_step_conditions")
+          .select("*")
+          .in("step_approver_id", approverIds)
+      : { data: [] };
+  const { data: lineItems } = await supabase
+    .from("invoice_line_items")
+    .select("class, category, project_id")
+    .eq("invoice_id", invoice.id);
+
+  return effectiveApproversForStep(
+    (approversRaw ?? []).map((a) => ({
+      id: a.id,
+      approver_user_id: a.approver_user_id,
+      is_default: a.is_default,
+    })),
+    (conditionsRaw ?? []).map((c) => ({
+      step_approver_id: c.step_approver_id,
+      field: c.field,
+      operator: c.operator,
+      match_values: c.match_values,
+    })),
+    { vendor_name: invoice.vendor_name, project_id: invoice.project_id },
+    lineItems ?? []
+  );
+}
+
 // When the form carries an "instructions" field (the Approve button lives
 // in the Instructions for accounting section), it is saved as the bill
 // memo before the decision — so "type the note, press Approve" works in
@@ -117,7 +174,7 @@ async function decide(
 
   const { data: steps } = await supabase
     .from("approval_workflow_steps")
-    .select("step_order, approver_user_id")
+    .select("*")
     .eq("workflow_id", invoice.workflow_id)
     .order("step_order", { ascending: true });
   const orderedSteps = steps ?? [];
@@ -125,32 +182,25 @@ async function decide(
   const currentStep = orderedSteps.find(
     (s) => s.step_order === invoice.current_step_order
   );
-  // An admin reassignment (step_override_approver_id) takes priority over
-  // the workflow's own step assignment, for this invoice only.
-  const effectiveApprover =
-    invoice.step_override_approver_id ?? currentStep?.approver_user_id;
-  if (!currentStep || effectiveApprover !== user.id) {
+  if (!currentStep) {
     redirect(`/dashboard/${invoiceId}?error=not-your-step`);
   }
 
-  const { data: approvals } = await supabase
-    .from("invoice_approvals")
-    .select("step_order, decision")
-    .eq("invoice_id", invoiceId);
+  // Who's actually required to decide this step for THIS invoice.
+  const requiredApproverIds = await requiredApproversFor(supabase, currentStep, invoice);
 
-  const priorSteps = orderedSteps.filter(
-    (s) => s.step_order < invoice.current_step_order
-  );
-  const approvedPrior =
-    (approvals ?? []).filter(
-      (a) => a.step_order < invoice.current_step_order && a.decision === "approved"
-    ).length;
-  if (approvedPrior < priorSteps.length) {
-    redirect(`/dashboard/${invoiceId}?error=step-required`);
+  if (!requiredApproverIds.includes(user.id)) {
+    redirect(`/dashboard/${invoiceId}?error=not-your-step`);
   }
 
-  const alreadyDecided = (approvals ?? []).some(
-    (a) => a.step_order === invoice.current_step_order
+  const { data: existingDecisions } = await supabase
+    .from("invoice_approvals")
+    .select("approver_id, decision")
+    .eq("invoice_id", invoiceId)
+    .eq("step_order", invoice.current_step_order);
+
+  const alreadyDecided = (existingDecisions ?? []).some(
+    (a) => a.approver_id === user.id
   );
   if (alreadyDecided) {
     redirect(`/dashboard/${invoiceId}?error=already-decided`);
@@ -168,26 +218,45 @@ async function decide(
     redirect(`/dashboard/${invoiceId}?error=already-decided`);
   }
 
-  const lastStep = orderedSteps[orderedSteps.length - 1]?.step_order ?? 1;
-  const isFinalStep = invoice.current_step_order >= lastStep;
+  // Where this step's decision stands now that this vote is in. "all"
+  // mode steps might still be waiting on other required approvers — the
+  // invoice stays put at the same step until stepDecisionState resolves
+  // to approved/rejected. A single reject always resolves the step (and
+  // the whole invoice) immediately, regardless of mode.
+  const state = stepDecisionState(currentStep.approval_mode, requiredApproverIds, [
+    ...(existingDecisions ?? []),
+    { approver_id: user.id, decision },
+  ]);
 
-  const nextStatus =
-    decision === "rejected" ? "rejected" : isFinalStep ? "approved" : "on_approval";
-
-  await supabase
-    .from("invoices")
-    .update({
-      status: nextStatus,
-      current_step_order:
-        decision === "approved" && !isFinalStep
-          ? invoice.current_step_order + 1
-          : invoice.current_step_order,
-      // The reassignment applied to the step just decided, not whatever
-      // comes next.
-      step_override_approver_id: null,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", invoiceId);
+  if (state === "rejected") {
+    await supabase
+      .from("invoices")
+      .update({
+        status: "rejected",
+        step_override_approver_id: null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", invoiceId);
+  } else if (state === "approved") {
+    const lastStep = orderedSteps[orderedSteps.length - 1]?.step_order ?? 1;
+    const isFinalStep = invoice.current_step_order >= lastStep;
+    await supabase
+      .from("invoices")
+      .update({
+        status: isFinalStep ? "approved" : "on_approval",
+        current_step_order: isFinalStep
+          ? invoice.current_step_order
+          : invoice.current_step_order + 1,
+        // The reassignment applied to the step just decided, not
+        // whatever comes next.
+        step_override_approver_id: null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", invoiceId);
+  }
+  // else "pending" — an "all" mode step still waiting on other required
+  // approvers; this vote is recorded but the invoice stays on the same
+  // step until everyone required has weighed in.
 
   if (instructionsChanged) {
     await supabase.from("audit_log").insert({
@@ -707,7 +776,7 @@ async function holdInvoice(invoiceId: string) {
   const { data: invoice } = await supabase
     .from("invoices")
     .select(
-      "id, organization_id, status, workflow_id, current_step_order, step_override_approver_id"
+      "id, organization_id, status, workflow_id, current_step_order, step_override_approver_id, vendor_name, project_id"
     )
     .eq("id", invoiceId)
     .single();
@@ -716,12 +785,13 @@ async function holdInvoice(invoiceId: string) {
 
   const { data: currentStep } = await supabase
     .from("approval_workflow_steps")
-    .select("approver_user_id")
+    .select("*")
     .eq("workflow_id", invoice.workflow_id)
     .eq("step_order", invoice.current_step_order)
     .maybeSingle();
-  const effectiveApprover = invoice.step_override_approver_id ?? currentStep?.approver_user_id;
-  if (!currentStep || effectiveApprover !== user.id) return;
+  if (!currentStep) return;
+  const requiredApproverIds = await requiredApproversFor(supabase, currentStep, invoice);
+  if (!requiredApproverIds.includes(user.id)) return;
 
   await supabase
     .from("invoices")
@@ -1311,34 +1381,56 @@ export default async function DashboardPage({
     if (group.length > 1) group.forEach((inv) => duplicateInvoiceIds.add(inv.id));
   }
 
-  const [{ data: allSteps }, { data: memberRows }, { data: approvedRows }, { data: lineItemClassRows }] =
-    await Promise.all([
-      workflowIds.length > 0
-        ? supabase
-            .from("approval_workflow_steps")
-            .select("*")
-            .in("workflow_id", workflowIds)
-            .order("step_order", { ascending: true })
-        : Promise.resolve({ data: [] }),
-      supabase
-        .from("organization_members")
-        .select("user_id")
-        .eq("organization_id", org.id),
-      invoiceIds.length > 0
-        ? supabase
-            .from("invoice_approvals")
-            .select("invoice_id, approver_id")
-            .in("invoice_id", invoiceIds)
-            .eq("decision", "approved")
-        : Promise.resolve({ data: [] }),
-      invoiceIds.length > 0
-        ? supabase
-            .from("invoice_line_items")
-            .select("invoice_id, class")
-            .in("invoice_id", invoiceIds)
-            .not("class", "is", null)
-        : Promise.resolve({ data: [] }),
-    ]);
+  const { data: allSteps } =
+    workflowIds.length > 0
+      ? await supabase
+          .from("approval_workflow_steps")
+          .select("*")
+          .in("workflow_id", workflowIds)
+          .order("step_order", { ascending: true })
+      : { data: [] };
+  const stepIds = (allSteps ?? []).map((s) => s.id);
+
+  const [
+    { data: allStepApprovers },
+    { data: memberRows },
+    { data: approvedRows },
+    { data: lineItemRows },
+  ] = await Promise.all([
+    stepIds.length > 0
+      ? supabase
+          .from("approval_workflow_step_approvers")
+          .select("*")
+          .in("step_id", stepIds)
+          .order("row_order", { ascending: true })
+      : Promise.resolve({ data: [] }),
+    supabase
+      .from("organization_members")
+      .select("user_id")
+      .eq("organization_id", org.id),
+    invoiceIds.length > 0
+      ? supabase
+          .from("invoice_approvals")
+          .select("invoice_id, approver_id")
+          .in("invoice_id", invoiceIds)
+          .eq("decision", "approved")
+      : Promise.resolve({ data: [] }),
+    invoiceIds.length > 0
+      ? supabase
+          .from("invoice_line_items")
+          .select("invoice_id, class, category, project_id")
+          .in("invoice_id", invoiceIds)
+      : Promise.resolve({ data: [] }),
+  ]);
+
+  const stepApproverIds = (allStepApprovers ?? []).map((a) => a.id);
+  const { data: allStepConditions } =
+    stepApproverIds.length > 0
+      ? await supabase
+          .from("approval_workflow_step_conditions")
+          .select("*")
+          .in("step_approver_id", stepApproverIds)
+      : { data: [] };
 
   const memberUserIds = [...new Set((memberRows ?? []).map((m) => m.user_id))];
   const { data: memberProfiles } =
@@ -1364,7 +1456,7 @@ export default async function DashboardPage({
   }));
 
   const classOptions: MultiSelectOption[] = [
-    ...new Set((lineItemClassRows ?? []).map((r) => r.class).filter((c): c is string => !!c)),
+    ...new Set((lineItemRows ?? []).map((r) => r.class).filter((c): c is string => !!c)),
   ]
     .sort((a, b) => a.localeCompare(b))
     .map((c) => ({ id: c, label: c }));
@@ -1372,7 +1464,14 @@ export default async function DashboardPage({
   // Class lives on line items, not the invoice itself — an invoice matches
   // a Class filter if ANY of its line items carry that class.
   const classesByInvoice = new Map<string, Set<string>>();
-  for (const row of lineItemClassRows ?? []) {
+  const lineItemsByInvoiceForMatching = new Map<
+    string,
+    { class: string | null; category: string | null; project_id: string | null }[]
+  >();
+  for (const row of lineItemRows ?? []) {
+    const list = lineItemsByInvoiceForMatching.get(row.invoice_id) ?? [];
+    list.push({ class: row.class, category: row.category, project_id: row.project_id });
+    lineItemsByInvoiceForMatching.set(row.invoice_id, list);
     if (!row.class) continue;
     const set = classesByInvoice.get(row.invoice_id) ?? new Set<string>();
     set.add(row.class);
@@ -1387,33 +1486,67 @@ export default async function DashboardPage({
     approvedByInvoice.set(row.invoice_id, set);
   }
 
-  const stepApproverByKey = new Map(
-    (allSteps ?? []).map((s) => [`${s.workflow_id}:${s.step_order}`, s.approver_user_id])
+  // Per-step conditional routing: which approvers are actually "in play"
+  // for a given step depends on the specific invoice (its supplier/class/
+  // customer) — see workflow-conditions.ts for the matching rules this
+  // mirrors from is_eligible_approver() (migration 0027).
+  const stepApproversByStepId = new Map<string, StepApprover[]>();
+  for (const a of allStepApprovers ?? []) {
+    const list = stepApproversByStepId.get(a.step_id) ?? [];
+    list.push({ id: a.id, approver_user_id: a.approver_user_id, is_default: a.is_default });
+    stepApproversByStepId.set(a.step_id, list);
+  }
+  const conditionsByStepApproverId = new Map<string, StepCondition[]>();
+  for (const c of allStepConditions ?? []) {
+    const list = conditionsByStepApproverId.get(c.step_approver_id) ?? [];
+    list.push({
+      step_approver_id: c.step_approver_id,
+      field: c.field,
+      operator: c.operator,
+      match_values: c.match_values,
+    });
+    conditionsByStepApproverId.set(c.step_approver_id, list);
+  }
+  const stepByKey = new Map(
+    (allSteps ?? []).map((s) => [`${s.workflow_id}:${s.step_order}`, s])
   );
 
   // Who currently has this document, if anyone — the field ApprovalMax's
   // own search screen doesn't offer (only "Requester" and "Approved by").
-  // An admin's reassignment (step_override_approver_id) wins over the
-  // workflow's own step assignment, but only for this one invoice — the
-  // workflow template itself is untouched.
-  const holderOf = (invoice: Invoice): string | null => {
+  // A step can have several conditionally-matched approvers now, so this
+  // returns all of them (usually one, sometimes more when "all" mode
+  // requires everyone to sign off, or the invoice's data happens to match
+  // more than one approver's condition). An admin's reassignment
+  // (step_override_approver_id) wins over the workflow's own routing,
+  // but only for this one invoice — the workflow template is untouched.
+  const holderOf = (invoice: Invoice): string[] => {
     if (
       invoice.workflow_id === null ||
       (invoice.status !== "on_approval" && invoice.status !== "on_hold")
     ) {
-      return null;
+      return [];
     }
-    return (
-      invoice.step_override_approver_id ??
-      stepApproverByKey.get(`${invoice.workflow_id}:${invoice.current_step_order}`) ??
-      null
+    if (invoice.step_override_approver_id) {
+      return [invoice.step_override_approver_id];
+    }
+    const step = stepByKey.get(`${invoice.workflow_id}:${invoice.current_step_order}`);
+    if (!step) return [];
+    const approvers = stepApproversByStepId.get(step.id) ?? [];
+    const conditions = approvers.flatMap(
+      (a) => conditionsByStepApproverId.get(a.id) ?? []
+    );
+    return effectiveApproversForStep(
+      approvers,
+      conditions,
+      { vendor_name: invoice.vendor_name, project_id: invoice.project_id },
+      lineItemsByInvoiceForMatching.get(invoice.id) ?? []
     );
   };
 
   const requiresMyApproval = (invoice: Invoice) =>
     invoice.status === "on_approval" &&
     invoice.workflow_id !== null &&
-    holderOf(invoice) === user.id;
+    holderOf(invoice).includes(user.id);
 
   const counts = {
     all: invoices?.length ?? 0,
@@ -1473,10 +1606,9 @@ export default async function DashboardPage({
     filtered = filtered.filter((i) => advanced.status.includes(i.status));
   }
   if (advanced.holder.length > 0) {
-    filtered = filtered.filter((i) => {
-      const h = holderOf(i);
-      return h !== null && advanced.holder.includes(h);
-    });
+    filtered = filtered.filter((i) =>
+      holderOf(i).some((id) => advanced.holder.includes(id))
+    );
   }
   if (advanced.requester.length > 0) {
     filtered = filtered.filter(
@@ -1736,14 +1868,58 @@ export default async function DashboardPage({
     nameOf: (id) => (id ? authorNameById.get(id) ?? "Team member" : "System"),
   });
 
-  const currentStepApprover = selected ? holderOf(selected) : null;
-  // Only the approver assigned to the current step sees the buttons; the
-  // server action enforces the same rule regardless of what the UI shows.
+  const currentStepApprovers = selected ? holderOf(selected) : [];
+  // Only an approver actually required for the current step sees the
+  // buttons; the server action enforces the same rule regardless of what
+  // the UI shows.
   const canDecide =
     selected != null &&
     selected.status === "on_approval" &&
     selected.workflow_id !== null &&
-    currentStepApprover === user.id;
+    currentStepApprovers.includes(user.id);
+
+  // Per step_order, has that step's required approver(s) resolved it yet
+  // — for the ApprovalStepper display. Mirrors holderOf's own logic per
+  // step rather than just the current one.
+  const stepStatesForSelected = new Map<number, "pending" | "approved" | "rejected">();
+  if (selected) {
+    const decisionsByStep = new Map<
+      number,
+      { approver_id: string | null; decision: string }[]
+    >();
+    for (const a of approvalsForSelected) {
+      const list = decisionsByStep.get(a.step_order) ?? [];
+      list.push({ approver_id: a.approver_id, decision: a.decision });
+      decisionsByStep.set(a.step_order, list);
+    }
+    for (const step of stepsForSelected) {
+      const approvers = stepApproversByStepId.get(step.id) ?? [];
+      const conditions = approvers.flatMap(
+        (a) => conditionsByStepApproverId.get(a.id) ?? []
+      );
+      const required =
+        selected.step_override_approver_id && step.step_order === selected.current_step_order
+          ? [selected.step_override_approver_id]
+          : effectiveApproversForStep(
+              approvers,
+              conditions,
+              { vendor_name: selected.vendor_name, project_id: selected.project_id },
+              lineItemsForSelected.map((li) => ({
+                class: li.class,
+                category: li.category,
+                project_id: li.project_id,
+              }))
+            );
+      stepStatesForSelected.set(
+        step.step_order,
+        stepDecisionState(
+          step.approval_mode,
+          required,
+          decisionsByStep.get(step.step_order) ?? []
+        )
+      );
+    }
+  }
 
   // The submitter can withdraw their own not-yet-decided invoice; an admin
   // can cancel anyone's.
@@ -2005,10 +2181,13 @@ export default async function DashboardPage({
                       <InvoiceStatusBadge status={invoice.status} />
                     </div>
                     {(() => {
-                      const holderId = holderOf(invoice);
-                      return holderId ? (
+                      const holderIds = holderOf(invoice);
+                      return holderIds.length > 0 ? (
                         <div className="mt-1 text-xs text-slate-400">
-                          With {memberNameById.get(holderId) ?? "Team member"}
+                          With{" "}
+                          {holderIds
+                            .map((id) => memberNameById.get(id) ?? "Team member")
+                            .join(", ")}
                         </div>
                       ) : null;
                     })()}
@@ -2128,11 +2307,13 @@ export default async function DashboardPage({
                   )}
 
                   <CollapsibleSection title="Status & approval">
-                    {selected && holderOf(selected) && (
+                    {selected && currentStepApprovers.length > 0 && (
                       <p className="mt-2 text-sm text-slate-600">
                         Currently with{" "}
                         <span className="font-medium text-slate-800">
-                          {memberNameById.get(holderOf(selected)!) ?? "Team member"}
+                          {currentStepApprovers
+                            .map((id) => memberNameById.get(id) ?? "Team member")
+                            .join(", ")}
                         </span>
                       </p>
                     )}
@@ -2140,7 +2321,7 @@ export default async function DashboardPage({
                       <div className="mt-3">
                         <ApprovalStepper
                           steps={stepsForSelected}
-                          approvals={approvalsForSelected}
+                          stepStates={stepStatesForSelected}
                           currentStepOrder={selected.current_step_order}
                           invoiceStatus={selected.status}
                         />
@@ -2222,7 +2403,7 @@ export default async function DashboardPage({
                             <InlineSelectSave
                               key={`reassign-${selected.id}`}
                               name="approver_id"
-                              defaultValue={holderOf(selected) ?? ""}
+                              defaultValue={selected.step_override_approver_id ?? ""}
                               options={[
                                 { value: "", label: "— workflow default —" },
                                 ...memberOptions.map((m) => ({

@@ -6,6 +6,8 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentOrg } from "@/lib/current-org";
 import { SignOutButton } from "@/components/SignOutButton";
 import { WorkflowRuleRow } from "@/components/WorkflowRuleRow";
+import { StepApproversManager } from "@/components/StepApproversManager";
+import type { RowCondition as StepApproverCondition } from "@/components/StepApproverMatrixRow";
 import {
   RULE_TYPE_VALUES,
   RULE_OPERATOR_VALUES,
@@ -17,6 +19,23 @@ import {
 import type { Database } from "@/lib/supabase/types";
 
 type RuleRow = Database["public"]["Tables"]["approval_workflow_rules"]["Row"];
+
+// Parses the class/supplier/customer/category condition fields a
+// StepApproverMatrixRow form submits (see components/StepApproverMatrixRow.tsx
+// and TagInput.tsx, which emits one hidden input per chip under the same
+// name) into the condition rows to persist. Operator "any" (the UI
+// sentinel for "no condition") or an empty value list skips that field.
+function parseStepConditions(formData: FormData): StepApproverCondition[] {
+  const out: StepApproverCondition[] = [];
+  for (const field of ["class", "supplier", "customer", "category"] as const) {
+    const operator = String(formData.get(`${field}_operator`) ?? "any");
+    if (operator !== "matches" && operator !== "not_matches") continue;
+    const values = formData.getAll(`${field}_values`).map(String).filter(Boolean);
+    if (values.length === 0) continue;
+    out.push({ field, operator, match_values: values });
+  }
+  return out;
+}
 
 // ---------------------------------------------------------------------
 // Server actions (admin-only via RLS on the workflow tables).
@@ -106,8 +125,8 @@ async function addStep(workflowId: string, formData: FormData) {
   } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
-  const approver =
-    String(formData.get("approver_user_id") ?? "").trim() || null;
+  const name = String(formData.get("name") ?? "").trim();
+  const approvalMode = String(formData.get("approval_mode") ?? "all") === "any" ? "any" : "all";
 
   const { data: last } = await supabase
     .from("approval_workflow_steps")
@@ -117,7 +136,8 @@ async function addStep(workflowId: string, formData: FormData) {
     .limit(1);
   await supabase.from("approval_workflow_steps").insert({
     workflow_id: workflowId,
-    approver_user_id: approver,
+    name,
+    approval_mode: approvalMode,
     step_order: (last?.[0]?.step_order ?? 0) + 1,
   });
 
@@ -133,12 +153,87 @@ async function updateStep(stepId: string, formData: FormData) {
   } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
-  const approver =
-    String(formData.get("approver_user_id") ?? "").trim() || null;
+  const name = String(formData.get("name") ?? "").trim();
+  const approvalMode = String(formData.get("approval_mode") ?? "all") === "any" ? "any" : "all";
   await supabase
     .from("approval_workflow_steps")
-    .update({ approver_user_id: approver })
+    .update({ name, approval_mode: approvalMode })
     .eq("id", stepId);
+
+  revalidatePath("/workflows");
+}
+
+async function saveStepApprover(
+  stepId: string,
+  approverRowId: string,
+  formData: FormData
+) {
+  "use server";
+
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
+  const approverUserId = String(formData.get("approver_user_id") ?? "").trim();
+  if (!approverUserId) return;
+  const isDefault = formData.get("is_default") === "on";
+  const conditions = isDefault ? [] : parseStepConditions(formData);
+
+  let stepApproverId = approverRowId;
+  if (approverRowId === "new") {
+    const { data: last } = await supabase
+      .from("approval_workflow_step_approvers")
+      .select("row_order")
+      .eq("step_id", stepId)
+      .order("row_order", { ascending: false })
+      .limit(1);
+    const { data: inserted } = await supabase
+      .from("approval_workflow_step_approvers")
+      .insert({
+        step_id: stepId,
+        approver_user_id: approverUserId,
+        is_default: isDefault,
+        row_order: (last?.[0]?.row_order ?? 0) + 1,
+      })
+      .select("id")
+      .single();
+    if (!inserted) return;
+    stepApproverId = inserted.id;
+  } else {
+    await supabase
+      .from("approval_workflow_step_approvers")
+      .update({ approver_user_id: approverUserId, is_default: isDefault })
+      .eq("id", approverRowId);
+    await supabase
+      .from("approval_workflow_step_conditions")
+      .delete()
+      .eq("step_approver_id", approverRowId);
+  }
+
+  if (conditions.length > 0) {
+    await supabase.from("approval_workflow_step_conditions").insert(
+      conditions.map((c) => ({ ...c, step_approver_id: stepApproverId }))
+    );
+  }
+
+  revalidatePath("/workflows");
+}
+
+async function deleteStepApprover(approverRowId: string) {
+  "use server";
+
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
+  await supabase
+    .from("approval_workflow_step_approvers")
+    .delete()
+    .eq("id", approverRowId);
 
   revalidatePath("/workflows");
 }
@@ -313,6 +408,30 @@ export default async function WorkflowsPage() {
           .order("rule_order", { ascending: true })
       : { data: [] };
 
+  const stepIds = (steps ?? []).map((s) => s.id);
+  const { data: stepApprovers } =
+    stepIds.length > 0
+      ? await supabase
+          .from("approval_workflow_step_approvers")
+          .select("*")
+          .in("step_id", stepIds)
+          .order("row_order", { ascending: true })
+      : { data: [] };
+  const stepApproverIds = (stepApprovers ?? []).map((a) => a.id);
+  const { data: stepConditions } =
+    stepApproverIds.length > 0
+      ? await supabase
+          .from("approval_workflow_step_conditions")
+          .select("*")
+          .in("step_approver_id", stepApproverIds)
+      : { data: [] };
+  const { data: projects } = await supabase
+    .from("projects")
+    .select("id, name")
+    .eq("organization_id", org.id)
+    .order("name", { ascending: true });
+  const projectOptions = (projects ?? []).map((p) => ({ id: p.id, label: p.name }));
+
   // Org members for the approver selects (auditors can't be approvers).
   const { data: members } = await supabase
     .from("organization_members")
@@ -345,9 +464,6 @@ export default async function WorkflowsPage() {
         ? `${p.full_name}${emailById.get(p.id) ? ` (${emailById.get(p.id)})` : ""}`
         : emailById.get(p.id) ?? p.id.slice(0, 8),
     }));
-  const approverName = (id: string | null) =>
-    approverOptions.find((o) => o.id === id)?.label ?? "Unassigned";
-
   const stepsByWorkflow = new Map<string, typeof steps>();
   for (const s of steps ?? []) {
     const list = stepsByWorkflow.get(s.workflow_id) ?? [];
@@ -359,6 +475,18 @@ export default async function WorkflowsPage() {
     const list = rulesByWorkflow.get(r.workflow_id) ?? [];
     list.push(r);
     rulesByWorkflow.set(r.workflow_id, list);
+  }
+  const approversByStep = new Map<string, typeof stepApprovers>();
+  for (const a of stepApprovers ?? []) {
+    const list = approversByStep.get(a.step_id) ?? [];
+    list.push(a);
+    approversByStep.set(a.step_id, list);
+  }
+  const conditionsByApprover = new Map<string, StepApproverCondition[]>();
+  for (const c of stepConditions ?? []) {
+    const list = conditionsByApprover.get(c.step_approver_id) ?? [];
+    list.push({ field: c.field, operator: c.operator, match_values: c.match_values });
+    conditionsByApprover.set(c.step_approver_id, list);
   }
 
   const inputCls =
@@ -397,10 +525,14 @@ export default async function WorkflowsPage() {
         <div className="mx-auto max-w-4xl p-8">
           <h1 className="text-2xl font-semibold">Approval workflows</h1>
           <p className="mt-1 text-sm text-slate-500">
-            Each workflow has approval steps (who approves, in order) and
-            workflow items (routing rules). An invoice routes to the first
-            workflow whose items all match; approvers on it can see the
-            project&apos;s invoices.
+            Each workflow has ordered approval steps. A step can have several
+            approvers, each eligible only when an invoice&apos;s Class,
+            Category, Customer, or Supplier matches their conditions — plus an optional
+            default approver used when nobody&apos;s conditions match. One
+            workflow with conditional steps can cover every project, instead
+            of needing a separate workflow per project. Workflow items below
+            (routing rules) only decide which workflow an invoice uses, if
+            you have more than one.
           </p>
 
           {isAdmin && (
@@ -485,66 +617,95 @@ export default async function WorkflowsPage() {
                     <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">
                       Approval steps
                     </div>
-                    <ol className="mt-2 space-y-2">
-                      {wfSteps.map((s, i) => (
-                        <li
-                          key={s.id}
-                          className="flex flex-wrap items-center gap-2"
-                        >
-                          <span className="w-10 text-sm font-medium text-slate-500">
-                            Step {i + 1}
-                          </span>
-                          {isAdmin ? (
-                            <>
-                              <form
-                                action={updateStep.bind(null, s.id)}
-                                className="flex items-center gap-2"
-                              >
-                                <select
-                                  name="approver_user_id"
-                                  defaultValue={s.approver_user_id ?? ""}
-                                  className="rounded-md border border-slate-300 px-2 py-1 text-sm"
+                    <ol className="mt-2 space-y-3">
+                      {wfSteps.map((s, i) => {
+                        const stepApproverRows = approversByStep.get(s.id) ?? [];
+                        return (
+                          <li
+                            key={s.id}
+                            className="rounded-md border border-slate-200 p-3"
+                          >
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="w-14 text-sm font-medium text-slate-500">
+                                Step {i + 1}
+                              </span>
+                              {isAdmin ? (
+                                <form
+                                  action={updateStep.bind(null, s.id)}
+                                  className="flex flex-1 flex-wrap items-center gap-2"
                                 >
-                                  <option value="">— unassigned —</option>
-                                  {approverOptions.map((a) => (
-                                    <option key={a.id} value={a.id}>
-                                      {a.label}
-                                    </option>
-                                  ))}
-                                </select>
-                                <button className="rounded-md bg-slate-800 px-2 py-1 text-xs font-medium text-white hover:bg-slate-700">
-                                  Save
-                                </button>
-                              </form>
-                              <form action={moveStep.bind(null, s.id, "up")}>
-                                <button
-                                  disabled={i === 0}
-                                  className="rounded-md border border-slate-200 px-2 py-1 text-xs text-slate-500 hover:bg-slate-50 disabled:opacity-40"
-                                >
-                                  ↑
-                                </button>
-                              </form>
-                              <form action={moveStep.bind(null, s.id, "down")}>
-                                <button
-                                  disabled={i === wfSteps.length - 1}
-                                  className="rounded-md border border-slate-200 px-2 py-1 text-xs text-slate-500 hover:bg-slate-50 disabled:opacity-40"
-                                >
-                                  ↓
-                                </button>
-                              </form>
-                              <form action={deleteStep.bind(null, s.id)}>
-                                <button className="text-xs text-red-500 hover:underline">
-                                  Remove
-                                </button>
-                              </form>
-                            </>
-                          ) : (
-                            <span className="text-sm text-slate-700">
-                              {approverName(s.approver_user_id)}
-                            </span>
-                          )}
-                        </li>
-                      ))}
+                                  <input
+                                    name="name"
+                                    defaultValue={s.name}
+                                    placeholder={`Step ${i + 1} name`}
+                                    className="min-w-40 flex-1 rounded-md border border-slate-300 px-2 py-1 text-sm"
+                                  />
+                                  <select
+                                    name="approval_mode"
+                                    defaultValue={s.approval_mode}
+                                    className="rounded-md border border-slate-300 px-2 py-1 text-xs"
+                                  >
+                                    <option value="all">Require all matching approvers</option>
+                                    <option value="any">Require any one approver</option>
+                                  </select>
+                                  <button className="rounded-md bg-slate-800 px-2 py-1 text-xs font-medium text-white hover:bg-slate-700">
+                                    Save
+                                  </button>
+                                </form>
+                              ) : (
+                                <span className="text-sm font-medium text-slate-700">
+                                  {s.name || `Step ${i + 1}`} —{" "}
+                                  {s.approval_mode === "any"
+                                    ? "any one approver"
+                                    : "all matching approvers"}
+                                </span>
+                              )}
+                              {isAdmin && (
+                                <>
+                                  <form action={moveStep.bind(null, s.id, "up")}>
+                                    <button
+                                      disabled={i === 0}
+                                      className="rounded-md border border-slate-200 px-2 py-1 text-xs text-slate-500 hover:bg-slate-50 disabled:opacity-40"
+                                    >
+                                      ↑
+                                    </button>
+                                  </form>
+                                  <form action={moveStep.bind(null, s.id, "down")}>
+                                    <button
+                                      disabled={i === wfSteps.length - 1}
+                                      className="rounded-md border border-slate-200 px-2 py-1 text-xs text-slate-500 hover:bg-slate-50 disabled:opacity-40"
+                                    >
+                                      ↓
+                                    </button>
+                                  </form>
+                                  <form action={deleteStep.bind(null, s.id)}>
+                                    <button className="text-xs text-red-500 hover:underline">
+                                      Remove step
+                                    </button>
+                                  </form>
+                                </>
+                              )}
+                            </div>
+
+                            <div className="mt-2">
+                              <StepApproversManager
+                                stepName={s.name || `Step ${i + 1}`}
+                                approvers={stepApproverRows.map((a) => ({
+                                  id: a.id,
+                                  approver_user_id: a.approver_user_id,
+                                  is_default: a.is_default,
+                                  conditions: conditionsByApprover.get(a.id) ?? [],
+                                }))}
+                                approverOptions={approverOptions}
+                                projectOptions={projectOptions}
+                                saveApprover={isAdmin ? saveStepApprover.bind(null, s.id) : undefined}
+                                deleteApprover={isAdmin ? deleteStepApprover : undefined}
+                                readOnly={!isAdmin}
+                              />
+                            </div>
+                          </li>
+                        );
+                      })}
                       {wfSteps.length === 0 && (
                         <li className="text-sm text-slate-400">
                           No steps yet.
@@ -554,19 +715,20 @@ export default async function WorkflowsPage() {
                     {isAdmin && (
                       <form
                         action={addStep.bind(null, w.id)}
-                        className="mt-2 flex items-center gap-2"
+                        className="mt-3 flex flex-wrap items-center gap-2 rounded-md border border-dashed border-slate-300 p-2"
                       >
+                        <input
+                          name="name"
+                          placeholder={`Step ${wfSteps.length + 1} name, e.g. PM Approval`}
+                          className="min-w-48 flex-1 rounded-md border border-slate-300 px-2 py-1 text-sm"
+                        />
                         <select
-                          name="approver_user_id"
-                          defaultValue=""
-                          className="rounded-md border border-slate-300 px-2 py-1 text-sm"
+                          name="approval_mode"
+                          defaultValue="all"
+                          className="rounded-md border border-slate-300 px-2 py-1 text-xs"
                         >
-                          <option value="">— choose approver —</option>
-                          {approverOptions.map((a) => (
-                            <option key={a.id} value={a.id}>
-                              {a.label}
-                            </option>
-                          ))}
+                          <option value="all">Require all matching approvers</option>
+                          <option value="any">Require any one approver</option>
                         </select>
                         <button className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">
                           Add step

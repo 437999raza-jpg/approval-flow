@@ -2,29 +2,30 @@ import { clsx } from "clsx";
 import type { Database, InvoiceStatus } from "@/lib/supabase/types";
 
 type WorkflowStep = Database["public"]["Tables"]["approval_workflow_steps"]["Row"];
-type Approval = Database["public"]["Tables"]["invoice_approvals"]["Row"];
 
 interface ApprovalStepperProps {
   steps: WorkflowStep[];
-  approvals: Approval[];
+  // Per step_order, whether that step's required approvers (a step can
+  // have several, conditionally matched — see workflow-conditions.ts)
+  // have resolved it. Computed by the caller since "who's required" is
+  // per-invoice, not something this component can know on its own.
+  stepStates: Map<number, "pending" | "approved" | "rejected">;
   currentStepOrder: number;
   invoiceStatus: InvoiceStatus;
 }
 
 export function ApprovalStepper({
   steps,
-  approvals,
+  stepStates,
   currentStepOrder,
   invoiceStatus,
 }: ApprovalStepperProps) {
   if (steps.length === 0) return null;
 
-  const approvalByStep = new Map(approvals.map((a) => [a.step_order, a]));
-
   return (
     <div className="flex items-center">
       {steps.map((step, i) => {
-        const decision = approvalByStep.get(step.step_order)?.decision;
+        const decision = stepStates.get(step.step_order);
         const isCurrent = step.step_order === currentStepOrder && invoiceStatus !== "rejected";
 
         const state: "done" | "rejected" | "current" | "upcoming" =
@@ -51,7 +52,7 @@ export function ApprovalStepper({
                 {state === "done" ? "✓" : state === "rejected" ? "✕" : step.step_order}
               </div>
               <span className="whitespace-nowrap text-xs text-slate-500">
-                Step {step.step_order}
+                {step.name || `Step ${step.step_order}`}
               </span>
             </div>
             {i < steps.length - 1 && (

@@ -2,6 +2,11 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/types";
 import { buildPdf, textWidth, type PdfLine } from "@/lib/pdf";
 import { buildAuditTimeline } from "@/lib/audit-timeline";
+import {
+  effectiveApproversForStep,
+  type StepApprover,
+  type StepCondition,
+} from "@/lib/workflow-conditions";
 
 // Builds the audit PDF for one invoice: header with status badge, invoice
 // summary, approval log (table), line items (table) with totals,
@@ -81,9 +86,41 @@ export async function buildInvoiceAuditDocument(
       .eq("invoice_id", invoiceId)
       .order("line_order", { ascending: true })).data ?? [];
 
+  const stepIds = steps.map((s) => s.id);
+  const { data: stepApproversRaw } =
+    stepIds.length > 0
+      ? await supabase.from("approval_workflow_step_approvers").select("*").in("step_id", stepIds)
+      : { data: [] };
+  const approverRowIds = (stepApproversRaw ?? []).map((a) => a.id);
+  const { data: stepConditionsRaw } =
+    approverRowIds.length > 0
+      ? await supabase
+          .from("approval_workflow_step_conditions")
+          .select("*")
+          .in("step_approver_id", approverRowIds)
+      : { data: [] };
+
+  const approversByStepId = new Map<string, StepApprover[]>();
+  for (const a of stepApproversRaw ?? []) {
+    const list = approversByStepId.get(a.step_id) ?? [];
+    list.push({ id: a.id, approver_user_id: a.approver_user_id, is_default: a.is_default });
+    approversByStepId.set(a.step_id, list);
+  }
+  const conditionsByApproverId = new Map<string, StepCondition[]>();
+  for (const c of stepConditionsRaw ?? []) {
+    const list = conditionsByApproverId.get(c.step_approver_id) ?? [];
+    list.push({
+      step_approver_id: c.step_approver_id,
+      field: c.field,
+      operator: c.operator,
+      match_values: c.match_values,
+    });
+    conditionsByApproverId.set(c.step_approver_id, list);
+  }
+
   const profileIds = [
     invoice.submitted_by,
-    ...steps.map((s) => s.approver_user_id),
+    ...(stepApproversRaw ?? []).map((a) => a.approver_user_id),
     ...approvals.map((a) => a.approver_id),
     ...comments.map((c) => c.author_id),
     ...auditEntries.map((a) => a.actor_id),
@@ -176,29 +213,49 @@ export async function buildInvoiceAuditDocument(
   } else {
     lines.push(tableHeader(approvalCols));
     for (const step of steps) {
-      const decision = approvals.find((a) => a.step_order === step.step_order);
+      const stepApprovers = approversByStepId.get(step.id) ?? [];
+      const stepConditions = stepApprovers.flatMap(
+        (a) => conditionsByApproverId.get(a.id) ?? []
+      );
+      const requiredIds = effectiveApproversForStep(
+        stepApprovers,
+        stepConditions,
+        { vendor_name: invoice.vendor_name, project_id: invoice.project_id },
+        lineItems.map((li) => ({ class: li.class, category: li.category, project_id: li.project_id }))
+      );
+      const decisionsForStep = approvals.filter((a) => a.step_order === step.step_order);
       const isOpen =
         step.step_order === invoice.current_step_order &&
         invoice.status !== "approved" &&
         invoice.status !== "rejected" &&
         invoice.status !== "cancelled";
-      const state = isOpen ? "Awaiting" : decision ? decision.decision : "Not decided";
-      const approverId = step.approver_user_id;
-      lines.push({
-        cells: [
-          { text: nameOf(approverId), x: 0, bold: true, size: 10, maxWidth: 210 },
-          { text: `Step ${step.step_order}`, x: 220, size: 10 },
-          { text: state.charAt(0).toUpperCase() + state.slice(1), x: 340, size: 10 },
-          {
-            text: decision ? new Date(decision.decided_at).toLocaleDateString() : "-",
-            x: 420,
-            size: 10,
-          },
-        ],
-        spaceBefore: 10,
-      });
-      if (decision?.comment) {
-        lines.push({ text: `"${decision.comment}"`, size: 9, gray: 0.4, indent: 8 });
+
+      const rowApproverIds = requiredIds.length > 0 ? requiredIds : [null];
+      for (const approverId of rowApproverIds) {
+        const decision = decisionsForStep.find((d) => d.approver_id === approverId);
+        const state = isOpen ? "Awaiting" : decision ? decision.decision : "Not decided";
+        lines.push({
+          cells: [
+            {
+              text: approverId ? nameOf(approverId) : "No approver assigned",
+              x: 0,
+              bold: true,
+              size: 10,
+              maxWidth: 210,
+            },
+            { text: step.name || `Step ${step.step_order}`, x: 220, size: 10 },
+            { text: state.charAt(0).toUpperCase() + state.slice(1), x: 340, size: 10 },
+            {
+              text: decision ? new Date(decision.decided_at).toLocaleDateString() : "-",
+              x: 420,
+              size: 10,
+            },
+          ],
+          spaceBefore: 10,
+        });
+        if (decision?.comment) {
+          lines.push({ text: `"${decision.comment}"`, size: 9, gray: 0.4, indent: 8 });
+        }
       }
     }
   }
