@@ -292,12 +292,13 @@ export default async function SettingsPage({
     .order("name", { ascending: true })
     .limit(200);
 
-  // Tax rates pulled from QBO (read-only mirror).
-  const { data: qboTaxRates } = await supabase
-    .from("qbo_tax_rates")
-    .select("id, name, rate_value, synced_at")
+  // Tax codes with resolved rates pulled from QBO (read-only mirror) — the
+  // codes are what the bill's Tax field offers, exactly like Dext.
+  const { data: qboTaxCodes } = await supabase
+    .from("qbo_tax_codes")
+    .select("id, name, rate_value")
     .eq("organization_id", org.id)
-    .order("rate_value", { ascending: true })
+    .order("name", { ascending: true })
     .limit(50);
 
   // Classes pulled from QBO (read-only mirror).
@@ -589,11 +590,11 @@ export default async function SettingsPage({
                   QuickBooks from Flow.
                 </p>
 
-                {/* Tax rates */}
+                {/* Tax codes (what the bill's Tax field offers) */}
                 <div className="mt-3">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="text-sm font-semibold text-slate-800">
-                      Tax rates
+                      Tax
                     </span>
                     {isAdmin && (
                       <form action={syncQboTaxes}>
@@ -603,11 +604,16 @@ export default async function SettingsPage({
                       </form>
                     )}
                   </div>
-                  {qboTaxRates && qboTaxRates.length > 0 ? (
+                  <p className="mt-1 text-xs text-slate-500">
+                    These are the codes the bill&apos;s Tax field offers —
+                    type &quot;h&quot; for HST, like Dext. Only active QBO
+                    codes appear.
+                  </p>
+                  {qboTaxCodes && qboTaxCodes.length > 0 ? (
                     <ul className="mt-2 space-y-0.5">
-                      {(qboTaxRates ?? []).map((r) => (
-                        <li key={r.id} className="text-sm text-slate-700">
-                          {r.name} — {r.rate_value}%
+                      {(qboTaxCodes ?? []).map((c) => (
+                        <li key={c.id} className="text-sm text-slate-700">
+                          {c.name} ({c.rate_value}%)
                         </li>
                       ))}
                     </ul>

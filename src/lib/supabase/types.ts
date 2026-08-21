@@ -466,6 +466,7 @@ export interface Database {
           qbo_tax_code_id: string;
           name: string;
           description: string | null;
+          rate_value: number | null;
           synced_at: string;
         };
         Insert: Partial<

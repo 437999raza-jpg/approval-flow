@@ -18,7 +18,7 @@ import {
   stepDecisionState,
 } from "@/lib/workflow-conditions";
 import type { Database, InvoiceStatus } from "@/lib/supabase/types";
-import { getQboConnection, listCategories, listTaxRates, listClasses, listSuppliers, listProjects, matchSupplier, createBill, attachDocuments } from "@/lib/qbo";
+import { getQboConnection, listCategories, listTaxRates, listTaxCodes, listClasses, listSuppliers, listProjects, matchSupplier, createBill, attachDocuments } from "@/lib/qbo";
 import { buildQboAttachmentBundle } from "@/lib/qbo-attachments";
 
 // Server actions for the dashboard (moved out of the page component so
@@ -1247,8 +1247,12 @@ export async function syncQboTaxes() {
   }
 
   let rates: Awaited<ReturnType<typeof listTaxRates>> = [];
+  let codes: Awaited<ReturnType<typeof listTaxCodes>> = [];
   try {
-    rates = await listTaxRates(conn);
+    [rates, codes] = await Promise.all([
+      listTaxRates(conn),
+      listTaxCodes(conn),
+    ]);
 
     if (rates.length > 0) {
       const { error } = await supabase.from("qbo_tax_rates").upsert(
@@ -1263,6 +1267,22 @@ export async function syncQboTaxes() {
       );
       if (error) throw error;
     }
+
+    // Tax codes with their resolved rate — what the bill's Tax field offers
+    // ("H" → 13%), exactly like Dext/ApprovalMax.
+    if (codes.length > 0) {
+      const { error } = await supabase.from("qbo_tax_codes").upsert(
+        codes.map((c) => ({
+          organization_id: org.id,
+          qbo_tax_code_id: c.qboTaxCodeId,
+          name: c.name,
+          rate_value: c.rateValue,
+          synced_at: new Date().toISOString(),
+        })),
+        { onConflict: "organization_id,qbo_tax_code_id" }
+      );
+      if (error) throw error;
+    }
   } catch (e) {
     console.error("syncQboTaxes failed:", e);
     redirect("/settings?qbo=error");
@@ -1272,7 +1292,7 @@ export async function syncQboTaxes() {
   // above, or the catch swallows it and every sync shows the error banner
   // even when it succeeded.
   revalidatePath("/settings");
-  redirect(`/settings?qbo=tax_synced&count=${rates.length}`);
+  redirect(`/settings?qbo=tax_synced&count=${rates.length + codes.length}`);
 }
 
 
@@ -1512,8 +1532,9 @@ export async function refreshQboData() {
   }
 
   try {
-    const [rates, classes, categories, suppliers, projects] = await Promise.all([
+    const [rates, codes, classes, categories, suppliers, projects] = await Promise.all([
       listTaxRates(conn),
+      listTaxCodes(conn),
       listClasses(conn),
       listCategories(conn, 500, { acctNumPrefixes: ["2", "5", "6"] }),
       listSuppliers(conn),
@@ -1530,6 +1551,20 @@ export async function refreshQboData() {
           synced_at: new Date().toISOString(),
         })),
         { onConflict: "organization_id,qbo_tax_rate_id" }
+      );
+      if (error) throw error;
+    }
+
+    if (codes.length > 0) {
+      const { error } = await supabase.from("qbo_tax_codes").upsert(
+        codes.map((c) => ({
+          organization_id: org.id,
+          qbo_tax_code_id: c.qboTaxCodeId,
+          name: c.name,
+          rate_value: c.rateValue,
+          synced_at: new Date().toISOString(),
+        })),
+        { onConflict: "organization_id,qbo_tax_code_id" }
       );
       if (error) throw error;
     }

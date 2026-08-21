@@ -64,7 +64,7 @@ export interface BillInstructionsData {
 const ghostField =
   "w-full border-b border-transparent bg-transparent px-0 py-1 text-sm text-slate-800 hover:border-slate-200 focus:border-blue-500 focus:outline-none disabled:text-slate-500";
 const ghostLabel = "block text-[10px] font-semibold uppercase tracking-wide text-slate-400";
-const LINE_ITEM_COLS = "grid-cols-[1.1fr_1.4fr_1.1fr_64px_0.9fr_110px_52px_24px]";
+const LINE_ITEM_COLS = "grid-cols-[1.1fr_1.4fr_1.1fr_0.9fr_80px_110px_52px_24px]";
 
 // ApprovalMax-style "Bill" panel, styled as a document: every data item is
 // editable in place and maps to QBO on sync (vendor/bill number/dates/
@@ -568,8 +568,8 @@ export function BillPanel({
               <span>Category</span>
               <span>Description</span>
               <span>Project / customer</span>
-              <span className="text-right">Tax %</span>
               <span>Class</span>
+              <span className="text-right">Tax %</span>
               <span className="text-right">Amount</span>
               <span className="text-center">Linked</span>
               <span />
@@ -912,11 +912,11 @@ function LineItemRow({
       />
       <Combobox
         formId={formId}
-        name="tax_rate"
-        options={qboTaxRates ?? []}
-        defaultValue={defaults.tax_rate === "" ? "" : String(defaults.tax_rate)}
-        placeholder={isNew ? "Tax %" : undefined}
-        className={`${cellCls} text-right tabular-nums`}
+        name="class"
+        options={qboClasses ?? []}
+        defaultValue={defaults.class}
+        placeholder={isNew ? "Class" : undefined}
+        className={cellCls}
         disabled={readOnly}
         onCommit={() => {
           if (!isNew && !readOnly) formRef.current?.requestSubmit();
@@ -924,12 +924,13 @@ function LineItemRow({
       />
       <Combobox
         formId={formId}
-        name="class"
-        options={qboClasses ?? []}
-        defaultValue={defaults.class}
-        placeholder={isNew ? "Class" : undefined}
-        className={cellCls}
+        name="tax_rate"
+        options={qboTaxRates ?? []}
+        defaultValue={defaults.tax_rate === "" ? "" : String(defaults.tax_rate)}
+        placeholder={isNew ? "Tax %" : undefined}
+        className={`${cellCls} text-right tabular-nums`}
         disabled={readOnly}
+        showValue
         onCommit={() => {
           if (!isNew && !readOnly) formRef.current?.requestSubmit();
         }}

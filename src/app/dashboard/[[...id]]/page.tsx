@@ -164,6 +164,7 @@ export default async function DashboardPage({
     { data: qboSupplierRows },
     { data: qboClassRows },
     { data: qboTaxRateRows },
+    { data: qboTaxCodeRows },
     pendingSplitsRes,
     unreadNotificationsRes,
   ] = await Promise.all([
@@ -205,6 +206,11 @@ export default async function DashboardPage({
       .select("name, rate_value")
       .eq("organization_id", org.id)
       .order("rate_value", { ascending: true }),
+    supabase
+      .from("qbo_tax_codes")
+      .select("name, rate_value")
+      .eq("organization_id", org.id)
+      .order("name", { ascending: true }),
     supabase
       .from("pending_invoice_splits")
       .select("id", { count: "exact", head: true })
@@ -348,6 +354,18 @@ export default async function DashboardPage({
     value: String(r.rate_value),
     label: `${r.rate_value}% — ${r.name}`,
   }));
+
+  // Tax field offers the QBO codes with their resolved rates, exactly like
+  // Dext/ApprovalMax: type "h" → "H (13%)" → picks 13%. The value stored is
+  // the rate; the label shows the code.
+  const qboTaxCodeOptions: { value: string; label: string }[] = (
+    qboTaxCodeRows ?? []
+  )
+    .filter((c) => c.rate_value != null)
+    .map((c) => ({
+      value: String(c.rate_value),
+      label: `${c.name} (${c.rate_value}%)`,
+    }));
 
   const classOptions: MultiSelectOption[] = [
     ...new Set((lineItemRows ?? []).map((r) => r.class).filter((c): c is string => !!c)),
@@ -1165,7 +1183,7 @@ export default async function DashboardPage({
                   qboCategories: qboCategoryNames,
                   qboSuppliers: qboSupplierNames,
                   qboClasses: qboClassNames,
-                  qboTaxRates: qboTaxRateOptions,
+                  qboTaxRates: qboTaxCodeOptions.length > 0 ? qboTaxCodeOptions : qboTaxRateOptions,
                   saveBill: saveBill.bind(null, selected.id),
                   saveLineItem: saveLineItem.bind(null, selected.id),
                   deleteLineItem: deleteLineItem.bind(null, selected.id),

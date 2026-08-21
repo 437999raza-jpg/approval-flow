@@ -6,8 +6,15 @@ import { useEffect, useRef, useState } from "react";
 // to pick. Submits the field's value through the hidden form like the plain
 // inputs it replaces (autosave on pick or on blur when changed).
 //
-// Options may be plain strings (value === label) or { label, value } pairs
-// (e.g. project: value is the id, label is the display name).
+// Options may be:
+//   - plain strings (value === label) — category, vendor, class
+//   - { label, value } pairs — project (value = id, label = name), tax
+//     (value = rate, label = "H (13%)")
+//
+// For pairs the box tracks the submitted VALUE separately from what's
+// displayed: project shows the NAME but submits the id; tax shows the rate
+// (showValue=true) and lists "H (13%)" in the dropdown — so typing "h"
+// surfaces HST and picking stores 13, exactly like QBO/ApprovalMax.
 // Authored by Araza.
 
 export type ComboboxOption =
@@ -20,6 +27,9 @@ function labelOf(o: ComboboxOption): string {
 function valueOf(o: ComboboxOption): string {
   return typeof o === "string" ? o : o.value;
 }
+function isObjOption(o: ComboboxOption): boolean {
+  return typeof o !== "string";
+}
 
 export function Combobox({
   name,
@@ -31,6 +41,7 @@ export function Combobox({
   disabled,
   onCommit,
   matchStart = false,
+  showValue = false,
 }: {
   name: string;
   formId: string;
@@ -40,16 +51,41 @@ export function Combobox({
   placeholder?: string;
   disabled?: boolean;
   // Called when the value should be saved (option picked, or blur after a
-  // change). Receives the final value.
+  // change). Receives the final submitted value.
   onCommit: (value: string) => void;
-  // Match from the start of the option ("hvac" → "5-15450 - HVAC" still
-  // matches via substring; set true to require prefix match like "2022-58").
+  // Match from the start of the option (e.g. "2022-58" prefix-matches the
+  // project "2022-58 (Midway Nissan)").
   matchStart?: boolean;
+  // For { label, value } options: display the VALUE in the box (tax rates)
+  // instead of the label (project names).
+  showValue?: boolean;
 }) {
-  const [query, setQuery] = useState(defaultValue);
+  const hasPairs = options.length > 0 && isObjOption(options[0]);
+  const pairForValue = (v: string) =>
+    hasPairs
+      ? (options.find((o) => valueOf(o) === v) as { label: string; value: string } | undefined)
+      : undefined;
+  const pairForLabel = (l: string) =>
+    hasPairs
+      ? (options.find((o) => labelOf(o).toLowerCase() === l.toLowerCase()) as
+          | { label: string; value: string }
+          | undefined)
+      : undefined;
+
+  // displayOf: what the box shows for a given submitted value.
+  const displayOf = (v: string) => {
+    if (!hasPairs) return v;
+    const match = pairForValue(v);
+    if (!match) return v;
+    return showValue ? valueOf(match) : labelOf(match);
+  };
+
+  const [selected, setSelected] = useState(defaultValue); // submitted value
+  const [query, setQuery] = useState(displayOf(defaultValue)); // shown text
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(-1);
   const boxRef = useRef<HTMLDivElement>(null);
+  const hiddenRef = useRef<HTMLInputElement>(null);
   const committedRef = useRef(defaultValue);
 
   const q = query.trim().toLowerCase();
@@ -61,37 +97,69 @@ export function Combobox({
     })
     .slice(0, 20);
 
+  // Keep the hidden value input in sync with the selected value.
+  useEffect(() => {
+    if (hiddenRef.current) hiddenRef.current.value = selected;
+  }, [selected]);
+
   useEffect(() => {
     function onDocMouseDown(e: MouseEvent) {
       if (boxRef.current && !boxRef.current.contains(e.target as Node)) {
         setOpen(false);
-        commit(query);
+        commitCurrent();
       }
     }
     document.addEventListener("mousedown", onDocMouseDown);
     return () => document.removeEventListener("mousedown", onDocMouseDown);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query]);
+  }, [query, selected]);
 
-  function commit(value: string) {
+  function commitCurrent() {
+    let value = selected;
+    // For pairs: if the typed text exactly names an option, submit that
+    // option's value (e.g. typed "H" → 13). Otherwise keep the picked value.
+    if (hasPairs) {
+      const byLabel = pairForLabel(query);
+      if (byLabel) value = byLabel.value;
+      else {
+        const byValue = pairForValue(query);
+        if (byValue) value = byValue.value;
+      }
+    } else {
+      value = query;
+    }
     if (value !== committedRef.current) {
       committedRef.current = value;
+      setSelected(value);
       onCommit(value);
     }
   }
 
   function pick(o: ComboboxOption) {
     const v = valueOf(o);
-    setQuery(v);
+    setSelected(v);
+    setQuery(showValue && hasPairs ? v : labelOf(o));
     setOpen(false);
-    commit(v);
+    if (v !== committedRef.current) {
+      committedRef.current = v;
+      onCommit(v);
+    }
   }
 
   return (
     <div ref={boxRef} className="relative">
+      {hasPairs && (
+        <input
+          ref={hiddenRef}
+          type="hidden"
+          form={formId}
+          name={name}
+          value={selected}
+        />
+      )}
       <input
-        form={formId}
-        name={name}
+        form={hasPairs ? undefined : formId}
+        name={hasPairs ? undefined : name}
         value={query}
         onChange={(e) => {
           setQuery(e.target.value);
@@ -113,7 +181,7 @@ export function Combobox({
               pick(filtered[active]);
             } else {
               setOpen(false);
-              commit(query);
+              commitCurrent();
             }
           } else if (e.key === "Escape") {
             setOpen(false);

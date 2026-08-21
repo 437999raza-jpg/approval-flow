@@ -441,6 +441,91 @@ export async function listTaxRates(conn: QboConnection): Promise<QboTaxRate[]> {
   return [...byValue.values()].sort((a, b) => a.rateValue - b.rateValue);
 }
 
+export interface QboTaxCode {
+  qboTaxCodeId: string;
+  name: string; // e.g. "H", "M&E (ON)", "Out of Scope"
+  rateValue: number; // resolved purchase-side %, e.g. 13
+  active: boolean;
+}
+
+// READ-ONLY: pull the company's tax CODES with their resolved purchase
+// rate. QBO links each code to its rates via PurchaseTaxRateList →
+// TaxRateDetail → TaxRateRef; the code's rate is the sum of the referenced
+// ACTIVE rates (e.g. M&E (ON) = 6.5 + 6.5 = 13%). Codes that reference no
+// active rate (like G → an inactive GST rate) are skipped — which is why
+// Dext/ApprovalMax only shows the usable ones. Nothing is written to QBO.
+export async function listTaxCodes(
+  conn: QboConnection
+): Promise<QboTaxCode[]> {
+  const codesRes = await qboFetch(
+    conn,
+    `/query?query=${encodeURIComponent("select * from TaxCode")}`
+  );
+  if (!codesRes.ok) {
+    const body = await codesRes.text();
+    throw new Error(
+      `QBO: tax code query failed (HTTP ${codesRes.status}): ${body.slice(0, 300)}`
+    );
+  }
+  const codesJson = (await codesRes.json()) as {
+    QueryResponse?: {
+      TaxCode?: {
+        Id: string;
+        Name?: string;
+        Active?: boolean;
+        PurchaseTaxRateList?: {
+          TaxRateDetail?: {
+            TaxRateRef?: { value?: string };
+            TaxTypeApplicable?: string;
+          }[];
+        };
+      }[];
+    };
+  };
+  const codes = codesJson.QueryResponse?.TaxCode ?? [];
+
+  const ratesRes = await qboFetch(
+    conn,
+    `/query?query=${encodeURIComponent("select * from TaxRate")}`
+  );
+  if (!ratesRes.ok) {
+    const body = await ratesRes.text();
+    throw new Error(
+      `QBO: tax rate query failed (HTTP ${ratesRes.status}): ${body.slice(0, 300)}`
+    );
+  }
+  const ratesJson = (await ratesRes.json()) as {
+    QueryResponse?: { TaxRate?: { Id: string; RateValue?: number | string; Active?: boolean }[] };
+  };
+  const rateById = new Map<string, { value: number; active: boolean }>();
+  for (const r of ratesJson.QueryResponse?.TaxRate ?? []) {
+    const v = Number(r.RateValue);
+    if (Number.isFinite(v)) {
+      rateById.set(r.Id, { value: v, active: r.Active !== false });
+    }
+  }
+
+  const result: QboTaxCode[] = [];
+  for (const c of codes) {
+    if (c.Active === false) continue;
+    const details = c.PurchaseTaxRateList?.TaxRateDetail ?? [];
+    if (details.length === 0) continue;
+    // Only rates that are active on the purchase side count.
+    const usable = details
+      .map((d) => (d.TaxRateRef?.value ? rateById.get(d.TaxRateRef.value) : undefined))
+      .filter((r): r is { value: number; active: boolean } => !!r && r.active);
+    if (usable.length === 0) continue;
+    const rateValue = usable.reduce((sum, r) => sum + r.value, 0);
+    result.push({
+      qboTaxCodeId: c.Id,
+      name: c.Name ?? "",
+      rateValue,
+      active: true,
+    });
+  }
+  return result.sort((a, b) => a.name.localeCompare(b.name));
+}
+
 export interface QboClass {
   qboClassId: string;
   name: string;
