@@ -92,6 +92,19 @@ export function Combobox({
   const hiddenRef = useRef<HTMLInputElement>(null);
   const committedRef = useRef(defaultValue);
 
+  // After a save the page re-renders with the SAME key, so React reuses
+  // this instance and the internal state would keep showing the OLD value
+  // (e.g. a project reverting to the previous one). Sync from the prop
+  // whenever it changes — but only if the user isn't mid-edit.
+  const editingRef = useRef(false);
+  useEffect(() => {
+    if (editingRef.current) return;
+    setSelected(defaultValue);
+    setQuery(displayOf(defaultValue));
+    committedRef.current = defaultValue;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [defaultValue]);
+
   const q = query.trim().toLowerCase();
   // Search-as-you-type: with big lists (2,045 suppliers, 454 projects) a
   // wall of options on click is useless. Only surface matches once the user
@@ -191,11 +204,13 @@ export function Combobox({
         name={hasPairs ? undefined : name}
         value={query}
         onChange={(e) => {
+          editingRef.current = true;
           setQuery(e.target.value);
           setOpen(true);
           setActive(-1);
         }}
         onFocus={(e) => {
+          editingRef.current = true;
           setOpen(true);
           // Pre-filled fields (e.g. OCR'd vendor): select the existing text
           // so the first keystroke replaces it instead of appending — which

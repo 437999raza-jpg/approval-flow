@@ -1176,25 +1176,61 @@ export async function saveLineItem(
       line_order: (last?.[0]?.line_order ?? 0) + 1,
     });
   } else {
+    // Load the current values so the audit records EXACTLY what changed
+    // (from → to) instead of a generic "line edited".
+    const { data: before } = await supabase
+      .from("invoice_line_items")
+      .select("description, category, class, project_id, tax_rate, amount")
+      .eq("id", lineItemId)
+      .single();
+
     await supabase
       .from("invoice_line_items")
       .update(values)
       .eq("id", lineItemId);
+
+    if (before) {
+      const changes: Record<string, { from: unknown; to: unknown }> = {};
+      const fields = [
+        "description",
+        "category",
+        "class",
+        "project_id",
+        "tax_rate",
+        "amount",
+      ] as const;
+      for (const f of fields) {
+        const from = before[f] ?? null;
+        const to = values[f] ?? null;
+        if (String(from) !== String(to)) changes[f] = { from, to };
+      }
+      if (Object.keys(changes).length > 0) {
+        await supabase.from("audit_log").insert({
+          organization_id: invoice.organization_id,
+          invoice_id: invoiceId,
+          actor_id: user.id,
+          action: "invoice.line_item_edited",
+          metadata: { changes },
+        });
+      }
+    }
   }
 
   await recomputeInvoiceTotals(supabase, invoiceId);
 
-  await supabase.from("audit_log").insert({
-    organization_id: invoice.organization_id,
-    invoice_id: invoiceId,
-    actor_id: user.id,
-    action: isNew ? "invoice.line_item_added" : "invoice.line_item_edited",
-    metadata: {
-      description: values.description,
-      category: values.category,
-      amount: values.amount,
-    },
-  });
+  if (isNew) {
+    await supabase.from("audit_log").insert({
+      organization_id: invoice.organization_id,
+      invoice_id: invoiceId,
+      actor_id: user.id,
+      action: "invoice.line_item_added",
+      metadata: {
+        description: values.description,
+        category: values.category,
+        amount: values.amount,
+      },
+    });
+  }
 
   revalidatePath("/dashboard", "layout");
 }
