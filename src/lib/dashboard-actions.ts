@@ -1251,6 +1251,19 @@ export async function reExtract(invoiceId: string) {
     .eq("id", invoiceId);
 
   // Replace the extracted line items (Category details in the Bill panel).
+  // PROJECT is a human decision: it may have been auto-filled from the PO
+  // number at ingest, but once the user changes it, re-extraction must
+  // NEVER revert it. Preserve each existing line's project_id by line
+  // order onto the freshly-extracted lines.
+  const { data: existingLines } = await supabase
+    .from("invoice_line_items")
+    .select("line_order, project_id")
+    .eq("invoice_id", invoiceId)
+    .order("line_order", { ascending: true });
+  const projectByOrder = new Map(
+    (existingLines ?? []).map((l) => [l.line_order, l.project_id])
+  );
+
   await supabase
     .from("invoice_line_items")
     .delete()
@@ -1264,6 +1277,7 @@ export async function reExtract(invoiceId: string) {
         tax_rate: li.tax_rate,
         category: li.category,
         class: li.class,
+        project_id: projectByOrder.get(i + 1) ?? null,
         line_order: i + 1,
       }))
     );
