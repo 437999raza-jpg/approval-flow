@@ -308,6 +308,14 @@ export default async function SettingsPage({
     .order("name", { ascending: true })
     .limit(200);
 
+  // Suppliers pulled from QBO (read-only mirror — Flow never creates these).
+  const { data: qboSuppliers } = await supabase
+    .from("qbo_suppliers")
+    .select("id, name, active")
+    .eq("organization_id", org.id)
+    .order("name", { ascending: true })
+    .limit(500);
+
   // Billing & usage: this month's invoice counts (org-wide, admin view).
   const monthStart = new Date();
   monthStart.setUTCDate(1);
@@ -556,9 +564,10 @@ export default async function SettingsPage({
                 </div>
                 <p className="mt-1 text-sm text-slate-500">
                   QuickBooks is the source of truth. These lists are pulled
-                  read-only — when you add or update tax rates, classes, or
-                  categories in QuickBooks, refresh to bring the changes into
-                  Flow. Nothing is ever written to QuickBooks from Flow.
+                  read-only — when you add or update tax rates, classes,
+                  categories, or suppliers in QuickBooks, refresh to bring
+                  the changes into Flow. Nothing is ever written to
+                  QuickBooks from Flow.
                 </p>
 
                 {/* Tax rates */}
@@ -620,6 +629,44 @@ export default async function SettingsPage({
                   ) : (
                     <p className="mt-1 text-sm text-slate-400">
                       No classes synced yet.
+                    </p>
+                  )}
+                </div>
+
+                {/* Suppliers */}
+                <div className="mt-3 border-t border-slate-100 pt-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-sm font-semibold text-slate-800">
+                      Suppliers
+                    </span>
+                    {isAdmin && (
+                      <form action={refreshQboData}>
+                        <button className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">
+                          Refresh suppliers
+                        </button>
+                      </form>
+                    )}
+                  </div>
+                  <p className="mt-1 text-xs text-slate-500">
+                    Read-only from QuickBooks — Flow never creates suppliers.
+                    OCR vendor names are matched against this list.
+                  </p>
+                  {qboSuppliers && qboSuppliers.length > 0 ? (
+                    <div className="mt-1">
+                      <div className="text-xs text-slate-400">
+                        {qboSuppliers.length} supplier{Number(qboSuppliers.length) === 1 ? "" : "s"} on file:
+                      </div>
+                      <ul className="mt-1 flex max-h-48 flex-wrap gap-x-4 gap-y-0.5 overflow-y-auto">
+                        {qboSuppliers.map((s) => (
+                          <li key={s.id} className="w-64 truncate text-sm text-slate-700">
+                            {s.name}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : (
+                    <p className="mt-1 text-sm text-slate-400">
+                      No suppliers synced yet.
                     </p>
                   )}
                 </div>

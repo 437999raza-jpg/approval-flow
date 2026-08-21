@@ -177,66 +177,81 @@ async function qboFetch(
   });
 }
 
-// Find (or create) the vendor by display name; returns the QBO vendor id.
-// Creation failures are reported with QBO's actual error, and if the create
-// is rejected (usually because a vendor already exists under a slightly
-// different spelling), a loose case/punctuation-insensitive lookup picks
-// up the existing vendor.
-export async function ensureVendor(
+// READ-ONLY: pull the company's suppliers (Vendor list). Flow NEVER creates
+// suppliers in QuickBooks — this mirror is what OCR matching runs against.
+export interface QboSupplier {
+  qboVendorId: string;
+  name: string; // QBO DisplayName
+  active: boolean;
+}
+
+export async function listSuppliers(
   conn: QboConnection,
-  name: string
-): Promise<string> {
-  const escaped = name.replace(/'/g, "''");
-
-  // 1) Exact display-name match first.
-  const q = `select Id from Vendor where DisplayName = '${escaped}' and Active = true`;
-  const res = await qboFetch(conn, `/query?query=${encodeURIComponent(q)}`);
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(
-      `QBO: vendor lookup failed (HTTP ${res.status}): ${body.slice(0, 300)}`
-    );
+  limit = 5000
+): Promise<QboSupplier[]> {
+  // QBO caps query results at 1000 per call, so page through.
+  const all: QboSupplier[] = [];
+  let startPosition = 1;
+  while (all.length < limit) {
+    const pageSize = Math.min(1000, limit - all.length);
+    const q = `select Id, DisplayName, Active from Vendor where Active = true order by DisplayName startposition ${startPosition} maxresults ${pageSize}`;
+    const res = await qboFetch(conn, `/query?query=${encodeURIComponent(q)}`);
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(
+        `QBO: supplier query failed (HTTP ${res.status}): ${body.slice(0, 300)}`
+      );
+    }
+    const json = (await res.json()) as {
+      QueryResponse?: {
+        Vendor?: { Id: string; DisplayName?: string; Active?: boolean }[];
+      };
+    };
+    const rows = json.QueryResponse?.Vendor ?? [];
+    if (rows.length === 0) break;
+    for (const v of rows) {
+      if (v.Active === false) continue;
+      all.push({
+        qboVendorId: v.Id,
+        name: v.DisplayName ?? "",
+        active: v.Active ?? true,
+      });
+    }
+    if (rows.length < pageSize) break;
+    startPosition += rows.length;
   }
-  const json = (await res.json()) as {
-    QueryResponse?: { Vendor?: { Id: string }[] };
-  };
-  const existing = json.QueryResponse?.Vendor?.[0];
-  if (existing) return existing.Id;
+  return all;
+}
 
-  // 2) Try to create it.
-  const create = await qboFetch(conn, "/vendor", {
-    method: "POST",
-    body: JSON.stringify({ DisplayName: name, CompanyName: name }),
-  });
-  const createText = await create.text();
-  let created: { Vendor?: { Id: string } } | null = null;
-  try {
-    created = JSON.parse(createText) as { Vendor?: { Id: string } };
-  } catch {
-    // not JSON — will fall through to the loose lookup
+// Match an OCR'd vendor name to the nearest supplier already in QBO
+// (case/punctuation-insensitive, like the duplicate-matching normalizer).
+// Returns null when nothing is close enough — the bill then can't sync
+// until the supplier exists in QBO. Flow never creates suppliers.
+export function matchSupplier(
+  suppliers: { name: string }[],
+  vendorName: string | null | undefined
+): string | null {
+  const needle = normalizeForMatching(vendorName);
+  if (!needle) return null;
+
+  // Exact normalized match first.
+  const exact = suppliers.find(
+    (s) => normalizeForMatching(s.name) === needle
+  );
+  if (exact) return exact.name;
+
+  // Then: every token of the needle present in the supplier name (in any
+  // order) — catches "TRI-AN ELECTRIC 2024 LTD" vs "TRI-AN ELECTRIC 2024
+  // LTD." and small OCR deviations, without fuzzy-matching random names.
+  const needleTokens = needle.split(" ").filter(Boolean);
+  if (needleTokens.length >= 2) {
+    const subset = suppliers.find((s) => {
+      const nameTokens = new Set(normalizeForMatching(s.name).split(" "));
+      return needleTokens.every((t) => nameTokens.has(t));
+    });
+    if (subset) return subset.name;
   }
-  const id = created?.Vendor?.Id;
-  if (id) return id;
-
-  // 3) Create failed — most likely the vendor already exists with a
-  //    different spelling/punctuation (e.g. "TRI-AN ELECTRIC 2024 LTD"
-  //    vs "TRI-AN ELECTRIC 2024 LTD."). Find it via a loose LIKE + the
-  //    same normalization used for duplicate/supplier matching.
-  const short = name.slice(0, 40).replace(/'/g, "''");
-  const loose = `select Id, DisplayName from Vendor where DisplayName like '%${short}%' and Active = true maxresults 25`;
-  const looseRes = await qboFetch(conn, `/query?query=${encodeURIComponent(loose)}`);
-  const looseJson = (await looseRes.json()) as {
-    QueryResponse?: { Vendor?: { Id: string; DisplayName?: string }[] };
-  };
-  const needle = normalizeForMatching(name);
-  const match = (looseJson.QueryResponse?.Vendor ?? []).find(
-    (v) => normalizeForMatching(v.DisplayName ?? "") === needle
-  );
-  if (match) return match.Id;
-
-  throw new Error(
-    `QBO: could not create vendor "${name}" (HTTP ${create.status}): ${createText.slice(0, 300)}`
-  );
+  return null;
 }
 
 // READ-ONLY: pull the company's Chart of Accounts (categories). This is the
@@ -441,7 +456,7 @@ export async function findExpenseAccount(
 }
 
 export interface QboBillInput {
-  vendorName: string;
+  vendorId: string; // resolved QBO Vendor id — Flow never creates suppliers
   billDate: string; // YYYY-MM-DD
   dueDate?: string;
   currency: string;
@@ -463,7 +478,7 @@ export async function createBill(
   conn: QboConnection,
   input: QboBillInput
 ): Promise<QboBillResult> {
-  const vendorId = await ensureVendor(conn, input.vendorName);
+  const vendorId = input.vendorId;
 
   const lines: Record<string, unknown>[] = [];
   let seq = 1;

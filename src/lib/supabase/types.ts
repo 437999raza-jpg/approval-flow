@@ -433,6 +433,29 @@ export interface Database {
         >;
         Relationships: [];
       };
+      qbo_suppliers: {
+        Row: {
+          id: string;
+          organization_id: string;
+          qbo_vendor_id: string;
+          name: string;
+          name_normalized: string;
+          active: boolean;
+          synced_at: string;
+        };
+        Insert: Partial<
+          Database["public"]["Tables"]["qbo_suppliers"]["Row"]
+        > & {
+          organization_id: string;
+          qbo_vendor_id: string;
+          name: string;
+          name_normalized: string;
+        };
+        Update: Partial<
+          Database["public"]["Tables"]["qbo_suppliers"]["Row"]
+        >;
+        Relationships: [];
+      };
       qbo_tax_codes: {
         Row: {
           id: string;

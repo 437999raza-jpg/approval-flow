@@ -18,7 +18,7 @@ import {
   stepDecisionState,
 } from "@/lib/workflow-conditions";
 import type { Database, InvoiceStatus } from "@/lib/supabase/types";
-import { getQboConnection, listCategories, listTaxRates, listClasses, createBill, attachDocuments } from "@/lib/qbo";
+import { getQboConnection, listCategories, listTaxRates, listClasses, listSuppliers, matchSupplier, createBill, attachDocuments } from "@/lib/qbo";
 import { buildQboAttachmentBundle } from "@/lib/qbo-attachments";
 
 // Server actions for the dashboard (moved out of the page component so
@@ -1380,9 +1380,9 @@ export async function syncQboCategories() {
 }
 
 
-// One-click refresh: pulls tax rates, classes, and categories
-// (Divisions 5 & 6) from QuickBooks in a single action. READ-ONLY against
-// QBO — nothing is ever written to QuickBooks. Admin only.
+// One-click refresh: pulls tax rates, classes, categories (Divisions 5 & 6),
+// and suppliers from QuickBooks in a single action. READ-ONLY against QBO —
+// nothing is ever written to QuickBooks. Admin only.
 export async function refreshQboData() {
   "use server";
 
@@ -1403,10 +1403,11 @@ export async function refreshQboData() {
   }
 
   try {
-    const [rates, classes, categories] = await Promise.all([
+    const [rates, classes, categories, suppliers] = await Promise.all([
       listTaxRates(conn),
       listClasses(conn),
       listCategories(conn, 500, { acctNumPrefixes: ["5", "6"] }),
+      listSuppliers(conn),
     ]);
 
     if (rates.length > 0) {
@@ -1419,6 +1420,21 @@ export async function refreshQboData() {
           synced_at: new Date().toISOString(),
         })),
         { onConflict: "organization_id,qbo_tax_rate_id" }
+      );
+      if (error) throw error;
+    }
+
+    if (suppliers.length > 0) {
+      const { error } = await supabase.from("qbo_suppliers").upsert(
+        suppliers.map((s) => ({
+          organization_id: org.id,
+          qbo_vendor_id: s.qboVendorId,
+          name: s.name,
+          name_normalized: s.name.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim(),
+          active: s.active,
+          synced_at: new Date().toISOString(),
+        })),
+        { onConflict: "organization_id,qbo_vendor_id" }
       );
       if (error) throw error;
     }
@@ -1454,7 +1470,8 @@ export async function refreshQboData() {
       if (error) throw error;
     }
 
-    const total = rates.length + classes.length + categories.length;
+    const total =
+      rates.length + suppliers.length + classes.length + categories.length;
     revalidatePath("/settings");
     redirect(`/settings?qbo=refresh_done&count=${total}`);
   } catch (e) {
@@ -1465,9 +1482,19 @@ export async function refreshQboData() {
 
 
 // Sync an invoice's bill to QuickBooks Online (admin only). Creates the
-// bill (vendor, line items, tax, memo/PrivateNote from the accounting
+// bill (line items, tax, memo/PrivateNote from the accounting
 // instructions) and attaches the audit-trail PDF plus every invoice
-// document. Errors are recorded on the invoice (qbo_sync_status='error').
+// document.
+//
+// HARD RULES (business invariants, enforced here and nowhere overridable):
+//   1. Approval gate — a bill is NEVER sent to QBO until the invoice has
+//      completed EVERY step of its approval workflow (status === "approved"
+//      only happens when the final step passes).
+//   2. No supplier creation — the vendor is matched to an existing QBO
+//      supplier from the read-only qbo_suppliers mirror. If there is no
+//      close match the sync fails with a clear message; Flow never creates
+//      a supplier in QuickBooks.
+// Errors are recorded on the invoice (qbo_sync_status='error').
 export async function syncToQbo(invoiceId: string) {
   "use server";
 
@@ -1481,7 +1508,7 @@ export async function syncToQbo(invoiceId: string) {
   const { data: inv } = await supabase
     .from("invoices")
     .select(
-      "id, organization_id, vendor_name, invoice_number, bill_date, due_date, currency, tax_amount, accounting_instructions, created_at"
+      "id, organization_id, vendor_name, invoice_number, bill_date, due_date, currency, tax_amount, status, created_at"
     )
     .eq("id", invoiceId)
     .single();
@@ -1505,6 +1532,16 @@ export async function syncToQbo(invoiceId: string) {
     });
   };
 
+  // RULE 1 — approval gate: only a fully-approved invoice may sync.
+  if (inv.status !== "approved") {
+    await fail(
+      "This bill cannot sync to QuickBooks yet — it must complete every step of the approval workflow first."
+    );
+    revalidatePath("/dashboard", "layout");
+    revalidatePath("/settings");
+    return;
+  }
+
   const conn = await getQboConnection(supabase, inv.organization_id);
   if (!conn) {
     await fail("QuickBooks is not connected — connect it in Settings.");
@@ -1514,6 +1551,35 @@ export async function syncToQbo(invoiceId: string) {
   }
 
   try {
+    // RULE 2 — resolve the supplier from the read-only QBO mirror; never
+    // create one. The mirror is refreshed via Settings → Refresh data.
+    const { data: suppliers } = await supabase
+      .from("qbo_suppliers")
+      .select("name")
+      .eq("organization_id", inv.organization_id)
+      .eq("active", true);
+    const matchedName = matchSupplier(suppliers ?? [], inv.vendor_name);
+    if (!matchedName) {
+      await fail(
+        `No matching supplier found in QuickBooks for "${inv.vendor_name}". Add the supplier in QuickBooks, then run Refresh data in Settings before syncing this bill.`
+      );
+      revalidatePath("/dashboard", "layout");
+      revalidatePath("/settings");
+      return;
+    }
+    const { data: matchedVendor } = await supabase
+      .from("qbo_suppliers")
+      .select("qbo_vendor_id")
+      .eq("organization_id", inv.organization_id)
+      .eq("name", matchedName)
+      .maybeSingle();
+    if (!matchedVendor) {
+      await fail(`Could not resolve the QBO supplier id for "${matchedName}".`);
+      revalidatePath("/dashboard", "layout");
+      revalidatePath("/settings");
+      return;
+    }
+
     const [{ data: lineItems }, { data: instrRows }] = await Promise.all([
       supabase
         .from("invoice_line_items")
@@ -1555,7 +1621,7 @@ export async function syncToQbo(invoiceId: string) {
         .join("\n") || undefined;
 
     const bill = await createBill(conn, {
-      vendorName: inv.vendor_name,
+      vendorId: matchedVendor.qbo_vendor_id,
       billDate: inv.bill_date ?? inv.created_at.slice(0, 10),
       dueDate: inv.due_date ?? undefined,
       currency: inv.currency,

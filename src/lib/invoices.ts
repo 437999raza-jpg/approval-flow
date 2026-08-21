@@ -3,6 +3,7 @@ import type { Database, InvoiceSource } from "@/lib/supabase/types";
 import { extractInvoiceFields } from "@/lib/extract-invoice";
 import { selectWorkflowForInvoice } from "@/lib/workflow-routing";
 import { normalizeForMatching } from "@/lib/matching";
+import { matchSupplier } from "@/lib/qbo";
 import { computeLineItemTotals } from "@/lib/invoice-totals";
 
 const INVOICE_BUCKET = "invoices";
@@ -94,13 +95,30 @@ export async function createInvoiceFromFile({
     throw new InvoiceIngestError(`Upload failed: ${uploadError.message}`);
   }
 
+  // RULE: Flow never creates suppliers in QuickBooks. Match the OCR'd
+  // vendor to the nearest supplier in the read-only QBO mirror so the
+  // invoice carries the canonical QBO supplier name (which is also what
+  // sync uses later). Unmatched vendors stay as OCR'd and simply can't
+  // sync to QBO until a matching supplier exists there.
+  let matchedVendorName: string | null = null;
+  if (extracted?.vendor_name) {
+    const { data: qboSuppliers } = await supabase
+      .from("qbo_suppliers")
+      .select("name")
+      .eq("organization_id", organizationId)
+      .eq("active", true)
+      .limit(1000);
+    matchedVendorName = matchSupplier(qboSuppliers ?? [], extracted.vendor_name);
+  }
+  const vendorName = matchedVendorName ?? extracted?.vendor_name ?? null;
+
   // Dext/ApprovalMax-style: a saved supplier rule wins over whatever the
   // extraction guessed for the fields it covers — it's a business rule a
   // human configured on purpose, not a best-effort read of the document.
   const supplierDefaults = await getSupplierDefaults(
     supabase,
     organizationId,
-    extracted?.vendor_name ?? null
+    vendorName
   );
 
   // Build the line items with any supplier-rule overrides applied first,
@@ -150,7 +168,7 @@ export async function createInvoiceFromFile({
     : { data: null };
   const workflowId = await selectWorkflowForInvoice(supabase, organizationId, {
     amount: computedAmount,
-    vendorName: extracted?.vendor_name ?? null,
+    vendorName,
     submittedBy: submittedBy ?? null,
     submitterName: submitterProfile?.full_name ?? null,
     projects: [], // project is assigned per line item later in the Bill panel
@@ -175,7 +193,7 @@ export async function createInvoiceFromFile({
       submitted_by: submittedBy ?? null,
       file_path: filePath,
       file_name: file.name,
-      vendor_name: extracted?.vendor_name ?? null,
+      vendor_name: vendorName,
       invoice_number: extracted?.invoice_number ?? null,
       amount: computedAmount,
       currency: supplierDefaults?.currency ?? extracted?.currency ?? "USD",
