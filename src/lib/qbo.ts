@@ -694,13 +694,21 @@ export async function createBill(
     PrivateNote: input.memo ?? undefined,
   };
 
+  const requestJson = JSON.stringify(body);
   const res = await qboFetch(conn, "/bill", {
     method: "POST",
-    body: JSON.stringify(body),
+    body: requestJson,
   });
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`QBO: create bill failed (${res.status}): ${text}`);
+    // Include exactly what we sent — QBO's "invalid or unsupported
+    // property" (2010) errors don't reliably name the actual offending
+    // property (the "Property Name:" text is often boilerplate, not a
+    // literal field name), so without the request body itself this class
+    // of error is unguessable from the response alone.
+    throw new Error(
+      `QBO: create bill failed (${res.status}): ${text} | Sent: ${requestJson.slice(0, 1500)}`
+    );
   }
   const json = (await res.json()) as {
     Bill?: { Id: string; DocNumber?: string };
