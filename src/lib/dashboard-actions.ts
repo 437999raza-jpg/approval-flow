@@ -1980,21 +1980,24 @@ export async function syncToQbo(invoiceId: string) {
     const instrName = new Map(
       (instrProfiles ?? []).map((p) => [p.id, p.full_name ?? "Team member"])
     );
-    // Consecutive messages from the same author only name them once (like
-    // a chat thread) instead of repeating "Name: " on every line.
-    const memoLines: string[] = [];
+    // Consecutive messages from the same author collapse onto one line,
+    // named once, with their bodies comma-separated — e.g.
+    // "Ali Raza: hello, Bill 5%, ok" instead of a separate "Name: " line
+    // per message.
+    const memoGroups: { name: string; bodies: string[] }[] = [];
     let lastAuthorKey: string | null = null;
     for (const r of instrRows ?? []) {
       const name = r.author_id ? (instrName.get(r.author_id) ?? "Team member") : "System";
       const key = r.author_id ?? "system";
       if (key === lastAuthorKey) {
-        memoLines.push(r.body);
+        memoGroups[memoGroups.length - 1].bodies.push(r.body);
       } else {
-        memoLines.push(`${name}: ${r.body}`);
+        memoGroups.push({ name, bodies: [r.body] });
         lastAuthorKey = key;
       }
     }
-    const memo = memoLines.join("\n") || undefined;
+    const memo =
+      memoGroups.map((g) => `${g.name}: ${g.bodies.join(", ")}`).join("\n") || undefined;
 
     // Resolve every line's category to a QBO account id BEFORE building
     // the bill — never inside createBill, and never via a live QBO query
@@ -2061,9 +2064,18 @@ export async function syncToQbo(invoiceId: string) {
       lines: resolvedLines,
     });
 
+    // The Bill itself already exists in QBO at this point — an attachment
+    // failure here must not fail the whole sync (that would mark it as
+    // "error" and offer Retry, which would create a SECOND bill). Instead
+    // it's recorded as a warning alongside the otherwise-successful sync.
+    let attachmentWarning: string | null = null;
     const attachments = await buildQboAttachmentBundle(supabase, invoiceId);
     if (attachments) {
-      await attachDocuments(conn, bill.billId, attachments);
+      try {
+        await attachDocuments(conn, bill.billId, attachments);
+      } catch (e) {
+        attachmentWarning = e instanceof Error ? e.message : String(e);
+      }
     }
 
     await supabase
@@ -2073,7 +2085,7 @@ export async function syncToQbo(invoiceId: string) {
         qbo_bill_id: bill.billId,
         qbo_sync_status: "synced",
         qbo_synced_at: new Date().toISOString(),
-        qbo_error: null,
+        qbo_error: attachmentWarning,
         updated_at: new Date().toISOString(),
       })
       .eq("id", invoiceId);
@@ -2083,7 +2095,7 @@ export async function syncToQbo(invoiceId: string) {
       invoice_id: invoiceId,
       actor_id: user.id,
       action: "invoice.qbo_synced",
-      metadata: { qbo_bill_id: bill.billId },
+      metadata: { qbo_bill_id: bill.billId, attachment_warning: attachmentWarning },
     });
   } catch (e) {
     await fail(e instanceof Error ? e.message : String(e));

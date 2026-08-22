@@ -1058,15 +1058,22 @@ export async function attachDocuments(
   const form = new FormData();
   attachments.forEach((a, i) => {
     const idx = String(i + 1).padStart(2, "0");
+    // Must be a Blob typed application/json, not a bare string — a plain
+    // string part defaults to text/plain, which QBO's multipart parser
+    // silently fails to read as the file's metadata: the request still
+    // returns 200, but nothing actually gets attached to the bill.
     form.append(
       `file_metadata_${idx}`,
-      JSON.stringify({
-        FileName: a.name,
-        ContentType: a.mimeType,
-        AttachableRef: [
-          { EntityRef: { type: "Bill", value: billId } },
+      new Blob(
+        [
+          JSON.stringify({
+            FileName: a.name,
+            ContentType: a.mimeType,
+            AttachableRef: [{ EntityRef: { type: "Bill", value: billId } }],
+          }),
         ],
-      })
+        { type: "application/json" }
+      )
     );
     form.append(`file_content_${idx}`, new Blob([a.data as BlobPart], { type: a.mimeType }), a.name);
   });
@@ -1076,9 +1083,25 @@ export async function attachDocuments(
     headers: { Authorization: `Bearer ${conn.accessToken}` },
     body: form,
   });
+  const text = await res.text();
   if (!res.ok) {
-    const text = await res.text();
     throw new Error(`QBO: upload failed (${res.status}): ${text}`);
+  }
+  // QBO's /upload can return 200 while still failing individual files —
+  // each entry in AttachableResponse carries its own Fault instead of the
+  // whole request erroring. Without checking this, a bad attachment (or
+  // the same metadata bug this just fixed) fails completely silently.
+  let json: { AttachableResponse?: { Fault?: { Error?: { Message?: string }[] } }[] };
+  try {
+    json = JSON.parse(text);
+  } catch {
+    return;
+  }
+  const failures = (json.AttachableResponse ?? [])
+    .map((r) => r.Fault?.Error?.[0]?.Message)
+    .filter((m): m is string => !!m);
+  if (failures.length > 0) {
+    throw new Error(`QBO: attachment upload partially failed: ${failures.join("; ")}`);
   }
 }
 

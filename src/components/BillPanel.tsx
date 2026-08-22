@@ -762,6 +762,11 @@ export function BillPanel({
                     </a>
                   )}
                 </p>
+                {invoice.qbo_error && (
+                  <p className="text-amber-700">
+                    Bill created, but attachments failed: {invoice.qbo_error}
+                  </p>
+                )}
                 {admin.visible && admin.clearQboSync && (
                   <div>
                     <form action={admin.clearQboSync}>
