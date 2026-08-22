@@ -679,11 +679,11 @@ export async function createBill(
     if (!line.amount) continue;
     const accountId = await findExpenseAccount(conn, line.account);
     lines.push({
-      DetailType: "AccountBasedExpenseDetail",
+      DetailType: "AccountBasedExpenseLineDetail",
       Amount: line.amount,
       LineNum: seq++,
       Description: line.description ?? undefined,
-      AccountBasedExpenseDetail: {
+      AccountBasedExpenseLineDetail: {
         AccountRef: { value: accountId },
       },
     });
@@ -691,11 +691,11 @@ export async function createBill(
   if (input.taxAmount > 0) {
     const taxAccount = await findExpenseAccount(conn, "Sales Tax Payable");
     lines.push({
-      DetailType: "AccountBasedExpenseDetail",
+      DetailType: "AccountBasedExpenseLineDetail",
       Amount: input.taxAmount,
       LineNum: seq++,
       Description: "Tax",
-      AccountBasedExpenseDetail: { AccountRef: { value: taxAccount } },
+      AccountBasedExpenseLineDetail: { AccountRef: { value: taxAccount } },
     });
   }
   if (lines.length === 0) throw new Error("QBO: bill has no line items");
