@@ -578,6 +578,11 @@ async function queryAccountId(
   return json.QueryResponse?.Account?.[0]?.Id ?? null;
 }
 
+// Resolves a bare name (no account number) to a QBO account — the tax
+// line ("Sales Tax Payable") and the "no category set on this line"
+// fallback. Name and AccountType ARE queryable fields (unlike AcctNum —
+// see resolveCategoryAccount below for why numbered categories never go
+// through a live query at all), so this stays a live QBO call.
 export async function findExpenseAccount(
   conn: QboConnection,
   name?: string | null
@@ -596,26 +601,6 @@ export async function findExpenseAccount(
     throw new Error("QBO: no active Expense account exists to fall back to, and this line has no category set.");
   }
 
-  // "5-15450 - HVAC" → account number "5-15450", looked up exactly. A
-  // category this specific failing to resolve is a real problem (wrong
-  // account silently used on a real bill) — surfaced loudly instead of
-  // silently falling back, which is what was happening before: every
-  // failed lookup landed on the same generic Expense account regardless
-  // of which category was actually picked.
-  const acctMatch = raw.match(/^([0-9]+(?:-[0-9]+)*)\s*[-–—]\s*/);
-  if (acctMatch) {
-    const acctNum = acctMatch[1];
-    const hit = await queryAccountId(
-      conn,
-      `select Id from Account where AcctNum = '${acctNum.replace(/'/g, "''")}' and Active = true`,
-      `account number "${acctNum}"`
-    );
-    if (hit) return hit;
-    throw new Error(
-      `QBO: category "${raw}" — no active account found with number "${acctNum}". Run Refresh data in Settings → Data from QuickBooks, or confirm this account still exists and is active in QuickBooks.`
-    );
-  }
-
   const hit = await queryAccountId(
     conn,
     `select Id from Account where Name = '${raw.replace(/'/g, "''")}' and Active = true`,
@@ -625,18 +610,147 @@ export async function findExpenseAccount(
   throw new Error(`QBO: no active account found named "${raw}".`);
 }
 
+// --- Numbered-category resolution (e.g. "5-15450 - HVAC") ----------------
+//
+// QBO's query language does not support filtering by AcctNum at all —
+// confirmed live: `where AcctNum = '5-15450'` returns QBO error 4001,
+// "QueryValidationError: property 'AcctNum' is not queryable". AcctNum can
+// only be SELECTed, never used in a WHERE clause. So numbered categories
+// are resolved against the already-synced qbo_categories mirror (built by
+// syncQboCategories in Settings, one row per Chart-of-Accounts account,
+// scoped by organization_id — which is scoped to exactly one QBO
+// connection/realm, so two orgs can never cross-resolve each other's
+// accounts) instead of ever querying QBO live for this.
+
+export interface QboCategoryRow {
+  qboAccountId: string;
+  name: string;
+  acctNum: string | null;
+}
+
+// Pure — no I/O, easy to unit-test in isolation. Matches a line's category
+// string against an already-fetched local mirror. A category with an
+// explicit account-number prefix ("5-15450 - HVAC") is matched ONLY by
+// that number — never falls back to a name guess, since the number was a
+// specific, deliberate choice and a name-based guess risks silently
+// posting to the wrong account. A bare name matches by name. Returns null
+// on no match; callers decide what to do (resolveCategoryAccount below
+// refreshes the mirror once and retries before failing).
+export function matchCategoryAccount(
+  categories: QboCategoryRow[],
+  category: string | null | undefined
+): string | null {
+  const raw = category?.trim() ?? "";
+  if (!raw) return null;
+
+  const acctMatch = raw.match(/^([0-9]+(?:-[0-9]+)*)\s*[-–—]\s*/);
+  if (acctMatch) {
+    const acctNum = acctMatch[1].trim();
+    return (
+      categories.find((c) => (c.acctNum ?? "").trim() === acctNum)
+        ?.qboAccountId ?? null
+    );
+  }
+
+  const needle = raw.toLowerCase();
+  return (
+    categories.find((c) => c.name.trim().toLowerCase() === needle)
+      ?.qboAccountId ?? null
+  );
+}
+
+// Mutable, shared across every line in one bill so a miss only ever
+// triggers a single QBO refresh no matter how many lines miss (requirement:
+// "should not issue duplicate QBO account queries").
+export interface CategoryAccountCache {
+  categories: QboCategoryRow[];
+  refreshed: boolean;
+}
+
+export async function loadCategoryAccountCache(
+  supabase: SupabaseClient<Database>,
+  organizationId: string
+): Promise<CategoryAccountCache> {
+  const { data } = await supabase
+    .from("qbo_categories")
+    .select("qbo_account_id, name, acct_num")
+    .eq("organization_id", organizationId);
+  return {
+    categories: (data ?? []).map((c) => ({
+      qboAccountId: c.qbo_account_id,
+      name: c.name,
+      acctNum: c.acct_num,
+    })),
+    refreshed: false,
+  };
+}
+
+// Resolves ONE line's category against the cache, refreshing the mirror
+// from QBO at most once (on the first miss) before failing loudly. Never
+// substitutes a different account — a category that still can't be
+// resolved after a refresh is a hard failure naming the exact account and
+// company, not a guess.
+export async function resolveCategoryAccount(
+  supabase: SupabaseClient<Database>,
+  conn: QboConnection,
+  organizationId: string,
+  cache: CategoryAccountCache,
+  category: string | null | undefined
+): Promise<string> {
+  const raw = category?.trim() ?? "";
+  if (!raw) return findExpenseAccount(conn, null);
+
+  let hit = matchCategoryAccount(cache.categories, raw);
+  if (hit) return hit;
+
+  if (!cache.refreshed) {
+    cache.refreshed = true;
+    const fresh = await listCategories(conn, 500, {
+      acctNumPrefixes: ["2", "5", "6"],
+    });
+    if (fresh.length > 0) {
+      await supabase.from("qbo_categories").upsert(
+        fresh.map((c) => ({
+          organization_id: organizationId,
+          qbo_account_id: c.qboAccountId,
+          name: c.name,
+          acct_num: c.acctNum,
+          account_type: c.accountType,
+          account_sub_type: c.accountSubType,
+          active: c.active,
+          synced_at: new Date().toISOString(),
+        })),
+        { onConflict: "organization_id,qbo_account_id" }
+      );
+    }
+    cache.categories = (await loadCategoryAccountCache(supabase, organizationId)).categories;
+    hit = matchCategoryAccount(cache.categories, raw);
+    if (hit) return hit;
+  }
+
+  throw new Error(
+    `QBO account "${raw}" was not found in the connected company's Chart of Accounts${
+      conn.companyName ? ` (${conn.companyName})` : ` (realm ${conn.realmId})`
+    }. Run "Refresh data" in Settings → Data from QuickBooks, or confirm this account exists and is active in QuickBooks.`
+  );
+}
+
 export interface QboBillInput {
   vendorId: string; // resolved QBO Vendor id — Flow never creates suppliers
   billDate: string; // YYYY-MM-DD
   dueDate?: string;
   currency: string;
   memo?: string; // PrivateNote — not printed on the invoice
+  // Every line — including the tax line, if any — arrives with an
+  // ALREADY-RESOLVED QBO account id. createBill never resolves a category
+  // itself; the caller resolves every line up front (see
+  // resolveCategoryAccount) so this function is a pure bill-builder with
+  // no QBO account-lookup calls of its own besides the final POST.
   lines: {
     description?: string | null;
     amount: number;
-    account?: string | null;
+    accountId: string;
   }[];
-  taxAmount: number;
 }
 
 export interface QboBillResult {
@@ -677,25 +791,14 @@ export async function createBill(
   let seq = 1;
   for (const line of input.lines) {
     if (!line.amount) continue;
-    const accountId = await findExpenseAccount(conn, line.account);
     lines.push({
       DetailType: "AccountBasedExpenseLineDetail",
       Amount: line.amount,
       LineNum: seq++,
       Description: line.description ?? undefined,
       AccountBasedExpenseLineDetail: {
-        AccountRef: { value: accountId },
+        AccountRef: { value: line.accountId },
       },
-    });
-  }
-  if (input.taxAmount > 0) {
-    const taxAccount = await findExpenseAccount(conn, "Sales Tax Payable");
-    lines.push({
-      DetailType: "AccountBasedExpenseLineDetail",
-      Amount: input.taxAmount,
-      LineNum: seq++,
-      Description: "Tax",
-      AccountBasedExpenseLineDetail: { AccountRef: { value: taxAccount } },
     });
   }
   if (lines.length === 0) throw new Error("QBO: bill has no line items");

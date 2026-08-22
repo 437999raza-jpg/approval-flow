@@ -18,7 +18,7 @@ import {
   stepDecisionState,
 } from "@/lib/workflow-conditions";
 import type { Database, InvoiceStatus } from "@/lib/supabase/types";
-import { getQboConnection, listCategories, listTaxRates, listTaxCodes, listClasses, listSuppliers, listProjects, matchSupplier, createBill, attachDocuments } from "@/lib/qbo";
+import { getQboConnection, listCategories, listTaxRates, listTaxCodes, listClasses, listSuppliers, listProjects, matchSupplier, createBill, attachDocuments, findExpenseAccount, loadCategoryAccountCache, resolveCategoryAccount } from "@/lib/qbo";
 import { fetchAllQboSuppliers } from "@/lib/qbo-all";
 import { buildQboAttachmentBundle } from "@/lib/qbo-attachments";
 
@@ -1986,18 +1986,45 @@ export async function syncToQbo(invoiceId: string) {
         )
         .join("\n") || undefined;
 
+    // Resolve every line's category to a QBO account id BEFORE building
+    // the bill — never inside createBill, and never via a live QBO query
+    // for a numbered category (QBO's query language doesn't support
+    // filtering by AcctNum at all — see resolveCategoryAccount). One
+    // shared cache means at most one refresh-from-QBO for the whole bill,
+    // no matter how many lines miss.
+    const categoryCache = await loadCategoryAccountCache(supabase, inv.organization_id);
+    const resolvedLines = [];
+    for (const li of lineItems ?? []) {
+      const accountId = await resolveCategoryAccount(
+        supabase,
+        conn,
+        inv.organization_id,
+        categoryCache,
+        li.category
+      );
+      resolvedLines.push({
+        description: li.description,
+        amount: li.amount ?? 0,
+        accountId,
+      });
+    }
+    const taxAmount = inv.tax_amount ?? 0;
+    if (taxAmount > 0) {
+      const taxAccountId = await findExpenseAccount(conn, "Sales Tax Payable");
+      resolvedLines.push({
+        description: "Tax",
+        amount: taxAmount,
+        accountId: taxAccountId,
+      });
+    }
+
     const bill = await createBill(conn, {
       vendorId: matchedVendor.qbo_vendor_id,
       billDate: inv.bill_date ?? inv.created_at.slice(0, 10),
       dueDate: inv.due_date ?? undefined,
       currency: inv.currency,
       memo,
-      lines: (lineItems ?? []).map((li) => ({
-        description: li.description,
-        amount: li.amount ?? 0,
-        account: li.category,
-      })),
-      taxAmount: inv.tax_amount ?? 0,
+      lines: resolvedLines,
     });
 
     const attachments = await buildQboAttachmentBundle(supabase, invoiceId);
