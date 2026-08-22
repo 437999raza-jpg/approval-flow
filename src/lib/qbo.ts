@@ -115,7 +115,6 @@ export interface QboConnection {
   realmId: string;
   companyName: string | null;
   accessToken: string;
-  taxLiabilityAccountId: string | null;
 }
 
 // Fetch the org's QBO connection, transparently refreshing the access token
@@ -149,7 +148,6 @@ export async function getQboConnection(
         realmId: data.realm_id,
         companyName: data.company_name,
         accessToken: refreshed.accessToken,
-        taxLiabilityAccountId: data.tax_liability_account_id,
       };
     } catch {
       return null;
@@ -160,7 +158,6 @@ export async function getQboConnection(
     realmId: data.realm_id,
     companyName: data.company_name,
     accessToken: data.access_token,
-    taxLiabilityAccountId: data.tax_liability_account_id,
   };
 }
 
@@ -582,12 +579,12 @@ async function queryAccountId(
 }
 
 // Resolves a bare name (no account number) to a QBO account — used only
-// for the "no category set on this line" fallback (the tax line now uses
-// the org's configured taxLiabilityAccountId instead of a guessed name;
-// see the Sales Tax Liability Account setting in Settings). Name and
-// AccountType ARE queryable fields (unlike AcctNum — see
-// resolveCategoryAccount below for why numbered categories never go
-// through a live query at all), so this stays a live QBO call.
+// for the "no category set on this line" fallback (sales tax is handled
+// natively via TaxCodeRef now, not a manually-resolved account — see
+// resolveTaxCode below). Name and AccountType ARE queryable fields
+// (unlike AcctNum — see resolveCategoryAccount below for why numbered
+// categories never go through a live query at all), so this stays a live
+// QBO call.
 export async function findExpenseAccount(
   conn: QboConnection,
   name?: string | null
@@ -740,21 +737,127 @@ export async function resolveCategoryAccount(
   );
 }
 
+// --- Sales tax (native QBO TaxCodeRef, not a manual liability line) -----
+//
+// QBO calculates and posts sales tax itself once a line carries a
+// TaxCodeRef and the bill's GlobalTaxCalculation is TaxExcluded — it picks
+// the correct tax/liability account on its own from the company's own tax
+// settings. Flow must never build its own "Tax" expense/liability line
+// (that double-counts and posts to whatever account Flow guesses, which is
+// wrong — a vendor bill's tax isn't "Sales Tax Payable", the account for
+// tax the business owes on its own sales). So the only job here is:
+// resolve the line's selected tax RATE (e.g. 13 for 13% HST) to the QBO
+// TaxCode id with that exact resolved rate, using the already-synced
+// qbo_tax_codes mirror (rate_value comes from listTaxCodes, migration
+// 0040). A line with no tax selected gets no TaxCodeRef at all.
+
+export interface QboTaxCodeRow {
+  qboTaxCodeId: string;
+  rateValue: number;
+}
+
+// Pure — no I/O. Matches a selected tax rate (13) to the one QBO tax code
+// with that resolved rate. Never guesses across two codes that happen to
+// share a rate (e.g. two provincial codes both at 13%) — ambiguous or
+// missing returns null so the caller fails loudly instead of picking one.
+export function matchTaxCode(
+  codes: QboTaxCodeRow[],
+  rate: number | null | undefined
+): string | null {
+  if (rate == null || !Number.isFinite(rate) || rate <= 0) return null;
+  const hits = codes.filter((c) => Math.abs(c.rateValue - rate) < 0.005);
+  return hits.length === 1 ? hits[0].qboTaxCodeId : null;
+}
+
+export interface TaxCodeCache {
+  codes: QboTaxCodeRow[];
+  refreshed: boolean;
+}
+
+export async function loadTaxCodeCache(
+  supabase: SupabaseClient<Database>,
+  organizationId: string
+): Promise<TaxCodeCache> {
+  const { data } = await supabase
+    .from("qbo_tax_codes")
+    .select("qbo_tax_code_id, rate_value")
+    .eq("organization_id", organizationId)
+    .not("rate_value", "is", null);
+  return {
+    codes: (data ?? []).map((c) => ({
+      qboTaxCodeId: c.qbo_tax_code_id,
+      rateValue: Number(c.rate_value),
+    })),
+    refreshed: false,
+  };
+}
+
+// Resolves ONE line's selected tax rate to a QBO TaxCode id, refreshing
+// the mirror from QBO at most once (on the first miss) before failing
+// loudly. A line with no tax rate selected (0/null) resolves to null —
+// no TaxCodeRef, no line, nothing posted. Never falls back to a manual
+// liability-account line.
+export async function resolveTaxCode(
+  supabase: SupabaseClient<Database>,
+  conn: QboConnection,
+  organizationId: string,
+  cache: TaxCodeCache,
+  rate: number | null | undefined
+): Promise<string | null> {
+  if (rate == null || !Number.isFinite(rate) || rate <= 0) return null;
+
+  let hit = matchTaxCode(cache.codes, rate);
+  if (hit) return hit;
+
+  if (!cache.refreshed) {
+    cache.refreshed = true;
+    const fresh = await listTaxCodes(conn);
+    if (fresh.length > 0) {
+      await supabase.from("qbo_tax_codes").upsert(
+        fresh.map((c) => ({
+          organization_id: organizationId,
+          qbo_tax_code_id: c.qboTaxCodeId,
+          name: c.name,
+          rate_value: c.rateValue,
+          synced_at: new Date().toISOString(),
+        })),
+        { onConflict: "organization_id,qbo_tax_code_id" }
+      );
+    }
+    cache.codes = (await loadTaxCodeCache(supabase, organizationId)).codes;
+    hit = matchTaxCode(cache.codes, rate);
+    if (hit) return hit;
+  }
+
+  const ambiguous = cache.codes.filter((c) => Math.abs(c.rateValue - rate) < 0.005).length > 1;
+  throw new Error(
+    ambiguous
+      ? `QBO: ${rate}% matches more than one tax code in ${
+          conn.companyName ? conn.companyName : `realm ${conn.realmId}`
+        } — Flow won't guess which one applies. Deactivate or rename the duplicate in QuickBooks.`
+      : `QBO: no tax code found for ${rate}% in ${
+          conn.companyName ? conn.companyName : `realm ${conn.realmId}`
+        }. Run "Sync taxes from QuickBooks" in Settings, or confirm a tax code with this rate exists and is active.`
+  );
+}
+
 export interface QboBillInput {
   vendorId: string; // resolved QBO Vendor id — Flow never creates suppliers
   billDate: string; // YYYY-MM-DD
   dueDate?: string;
   currency: string;
+  docNumber?: string | null; // vendor's own bill/invoice number -> QBO's "Bill no."
   memo?: string; // PrivateNote — not printed on the invoice
-  // Every line — including the tax line, if any — arrives with an
-  // ALREADY-RESOLVED QBO account id. createBill never resolves a category
-  // itself; the caller resolves every line up front (see
-  // resolveCategoryAccount) so this function is a pure bill-builder with
-  // no QBO account-lookup calls of its own besides the final POST.
+  // Every line arrives with an ALREADY-RESOLVED QBO account id, and,
+  // if the user selected a tax rate on that line, an ALREADY-RESOLVED
+  // QBO TaxCode id (see resolveTaxCode). createBill never resolves a
+  // category or tax code itself and never builds its own tax line — QBO
+  // calculates and posts sales tax on its own from each line's TaxCodeRef.
   lines: {
     description?: string | null;
     amount: number;
     accountId: string;
+    taxCodeId?: string | null;
   }[];
 }
 
@@ -794,8 +897,10 @@ export async function createBill(
 
   const lines: Record<string, unknown>[] = [];
   let seq = 1;
+  let hasTaxCode = false;
   for (const line of input.lines) {
     if (!line.amount) continue;
+    if (line.taxCodeId) hasTaxCode = true;
     lines.push({
       DetailType: "AccountBasedExpenseLineDetail",
       Amount: line.amount,
@@ -803,6 +908,7 @@ export async function createBill(
       Description: line.description ?? undefined,
       AccountBasedExpenseLineDetail: {
         AccountRef: { value: line.accountId },
+        ...(line.taxCodeId ? { TaxCodeRef: { value: line.taxCodeId } } : {}),
       },
     });
   }
@@ -813,8 +919,13 @@ export async function createBill(
     VendorRef: { value: vendorId },
     Line: lines,
     ...(multiCurrency ? { CurrencyRef: { value: input.currency } } : {}),
+    // Line amounts are entered tax-exclusive; QBO computes and posts the
+    // tax itself from each line's TaxCodeRef when this is set — Flow never
+    // builds its own tax line.
+    ...(hasTaxCode ? { GlobalTaxCalculation: "TaxExcluded" } : {}),
     DueDate: input.dueDate ?? undefined,
     TxnDate: input.billDate,
+    DocNumber: input.docNumber?.trim() || undefined,
     PrivateNote: input.memo ?? undefined,
   };
 

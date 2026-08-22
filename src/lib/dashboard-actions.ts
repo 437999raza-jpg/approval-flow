@@ -18,7 +18,7 @@ import {
   stepDecisionState,
 } from "@/lib/workflow-conditions";
 import type { Database, InvoiceStatus } from "@/lib/supabase/types";
-import { getQboConnection, listCategories, listTaxRates, listTaxCodes, listClasses, listSuppliers, listProjects, matchSupplier, createBill, attachDocuments, loadCategoryAccountCache, resolveCategoryAccount } from "@/lib/qbo";
+import { getQboConnection, listCategories, listTaxRates, listTaxCodes, listClasses, listSuppliers, listProjects, matchSupplier, createBill, attachDocuments, loadCategoryAccountCache, resolveCategoryAccount, loadTaxCodeCache, resolveTaxCode } from "@/lib/qbo";
 import { fetchAllQboSuppliers } from "@/lib/qbo-all";
 import { buildQboAttachmentBundle } from "@/lib/qbo-attachments";
 
@@ -1949,7 +1949,7 @@ export async function syncToQbo(invoiceId: string) {
     const [{ data: lineItems }, { data: instrRows }] = await Promise.all([
       supabase
         .from("invoice_line_items")
-        .select("description, amount, category")
+        .select("description, amount, category, tax_rate")
         .eq("invoice_id", invoiceId),
       supabase
         .from("accounting_instructions")
@@ -1993,6 +1993,7 @@ export async function syncToQbo(invoiceId: string) {
     // shared cache means at most one refresh-from-QBO for the whole bill,
     // no matter how many lines miss.
     const categoryCache = await loadCategoryAccountCache(supabase, inv.organization_id);
+    const taxCodeCache = await loadTaxCodeCache(supabase, inv.organization_id);
     const resolvedLines = [];
     for (const li of lineItems ?? []) {
       const accountId = await resolveCategoryAccount(
@@ -2002,25 +2003,21 @@ export async function syncToQbo(invoiceId: string) {
         categoryCache,
         li.category
       );
+      // Only lines where the user actually picked a tax rate get a
+      // TaxCodeRef — QBO calculates and posts the tax itself from there.
+      // No rate selected means no tax code and nothing else added.
+      const taxCodeId = await resolveTaxCode(
+        supabase,
+        conn,
+        inv.organization_id,
+        taxCodeCache,
+        li.tax_rate
+      );
       resolvedLines.push({
         description: li.description,
         amount: li.amount ?? 0,
         accountId,
-      });
-    }
-    const taxAmount = inv.tax_amount ?? 0;
-    if (taxAmount > 0) {
-      if (!conn.taxLiabilityAccountId) {
-        throw new Error(
-          `QBO: no Sales Tax Liability Account is configured for ${
-            conn.companyName ?? "this QuickBooks company"
-          }. Set one in Settings → QuickBooks Online → Sales Tax Liability Account before syncing invoices with tax.`
-        );
-      }
-      resolvedLines.push({
-        description: "Tax",
-        amount: taxAmount,
-        accountId: conn.taxLiabilityAccountId,
+        taxCodeId,
       });
     }
 
@@ -2029,6 +2026,7 @@ export async function syncToQbo(invoiceId: string) {
       billDate: inv.bill_date ?? inv.created_at.slice(0, 10),
       dueDate: inv.due_date ?? undefined,
       currency: inv.currency,
+      docNumber: inv.invoice_number,
       memo,
       lines: resolvedLines,
     });
@@ -2117,40 +2115,3 @@ export async function disconnectQbo() {
   revalidatePath("/settings");
 }
 
-// Admin sets which synced Chart-of-Accounts liability account Flow should
-// post sales tax to on this org's bills. Flow never creates or guesses this
-// account — it must already exist and be active in QuickBooks (picked from
-// the qbo_categories mirror). Empty selection clears it, which makes
-// syncToQbo hard-fail on any invoice with tax rather than silently posting
-// tax anywhere.
-export async function saveTaxLiabilityAccount(formData: FormData) {
-  "use server";
-
-  const supabase = createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
-
-  const org = await getCurrentOrg(supabase);
-  if (!org || org.role !== "admin") return;
-
-  const accountId = (formData.get("tax_liability_account_id") as string | null)?.trim() || null;
-
-  if (accountId) {
-    const { data: match } = await supabase
-      .from("qbo_categories")
-      .select("qbo_account_id")
-      .eq("organization_id", org.id)
-      .eq("qbo_account_id", accountId)
-      .maybeSingle();
-    if (!match) return;
-  }
-
-  await supabase
-    .from("qbo_connections")
-    .update({ tax_liability_account_id: accountId, updated_at: new Date().toISOString() })
-    .eq("organization_id", org.id);
-
-  revalidatePath("/settings");
-}

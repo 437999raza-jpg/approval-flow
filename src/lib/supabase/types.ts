@@ -516,7 +516,6 @@ export interface Database {
           company_name: string | null;
           connected_at: string;
           updated_at: string;
-          tax_liability_account_id: string | null;
         };
         Insert: Partial<
           Database["public"]["Tables"]["qbo_connections"]["Row"]

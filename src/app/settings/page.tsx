@@ -6,8 +6,8 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentOrg } from "@/lib/current-org";
 import { fetchAllQboSuppliers } from "@/lib/qbo-all";
 import { SignOutButton } from "@/components/SignOutButton";
-import { disconnectQbo, refreshQboData, syncQboTaxes, syncQboClasses, syncQboCategories, syncQboSuppliers, syncQboProjects, saveTaxLiabilityAccount } from "@/lib/dashboard-actions";
-import { qboEnv, categoryDisplayName } from "@/lib/qbo";
+import { disconnectQbo, refreshQboData, syncQboTaxes, syncQboClasses, syncQboCategories, syncQboSuppliers, syncQboProjects } from "@/lib/dashboard-actions";
+import { qboEnv } from "@/lib/qbo";
 import { Avatar } from "@/components/Avatar";
 import { AvatarUploadForm } from "@/components/AvatarUploadForm";
 import { AddUsersModal } from "@/components/AddUsersModal";
@@ -281,25 +281,17 @@ export default async function SettingsPage({
   // QBO connection (RLS: admins only — everyone else sees nothing).
   const { data: qboConnection } = await supabase
     .from("qbo_connections")
-    .select("realm_id, company_name, connected_at, tax_liability_account_id")
+    .select("realm_id, company_name, connected_at")
     .eq("organization_id", org.id)
     .maybeSingle();
 
   // Categories pulled from QBO (read-only mirror; any org member can view).
   const { data: qboCategories } = await supabase
     .from("qbo_categories")
-    .select("id, qbo_account_id, name, acct_num, account_type, account_sub_type, active, synced_at")
+    .select("id, name, acct_num, account_type, account_sub_type, active, synced_at")
     .eq("organization_id", org.id)
     .order("name", { ascending: true })
     .limit(200);
-
-  // Candidate accounts for the Sales Tax Liability Account setting — active
-  // liability-type accounts only, from the same synced Chart of Accounts
-  // mirror (no extra QBO fetch needed). Flow never creates this account;
-  // an admin picks an existing one.
-  const qboLiabilityAccounts = (qboCategories ?? []).filter(
-    (c) => c.active && (c.account_type ?? "").toLowerCase().includes("liability")
-  );
 
   // Tax codes with resolved rates pulled from QBO (read-only mirror) — the
   // codes are what the bill's Tax field offers, exactly like Dext. Only
@@ -573,56 +565,6 @@ export default async function SettingsPage({
                 </p>
               )}
               </div>
-
-              {qboConnection && (
-                <div className="mt-3 border-t border-slate-100 pt-3">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                      <div className="text-xs font-bold uppercase tracking-wide text-slate-400">
-                        Sales Tax Liability Account
-                      </div>
-                      <p className="mt-1 max-w-md text-xs text-slate-500">
-                        The account Flow posts sales tax to when syncing a
-                        bill with tax. Must already exist and be active in
-                        QuickBooks — Flow never creates or guesses this
-                        account.
-                      </p>
-                    </div>
-                    {isAdmin ? (
-                      <InlineSelectSave
-                        name="tax_liability_account_id"
-                        defaultValue={qboConnection.tax_liability_account_id ?? ""}
-                        options={[
-                          { value: "", label: "— not set —" },
-                          ...qboLiabilityAccounts.map((a) => ({
-                            value: a.qbo_account_id,
-                            label: categoryDisplayName({ acctNum: a.acct_num, name: a.name }),
-                          })),
-                        ]}
-                        action={saveTaxLiabilityAccount}
-                      />
-                    ) : (
-                      <span className="text-sm text-slate-600">
-                        {(() => {
-                          const match = qboLiabilityAccounts.find(
-                            (a) => a.qbo_account_id === qboConnection.tax_liability_account_id
-                          );
-                          return match
-                            ? categoryDisplayName({ acctNum: match.acct_num, name: match.name })
-                            : "Not set";
-                        })()}
-                      </span>
-                    )}
-                  </div>
-                  {qboLiabilityAccounts.length === 0 && (
-                    <p className="mt-2 text-xs text-amber-600">
-                      No active liability accounts found in the synced Chart
-                      of Accounts. Refresh categories below, then check that
-                      QuickBooks has an active liability account.
-                    </p>
-                  )}
-                </div>
-              )}
 
               {/* Data from QuickBooks — read-only pulls */}
               <div className="mt-3 border-t border-slate-100 pt-3">
