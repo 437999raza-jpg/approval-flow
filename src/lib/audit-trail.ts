@@ -22,6 +22,24 @@ export interface InvoiceAuditDocument {
   pdf: Buffer;
 }
 
+// "vendor_name.invoice_number" (e.g. "marsil_mechanical_inc.6595") for
+// naming files that travel with the bill — the audit PDF and, in QBO, the
+// original invoice document too. Falls back to the invoice id's first 8
+// characters only when there's genuinely no invoice number to use.
+export function invoiceFileBase(invoice: {
+  vendor_name: string | null;
+  invoice_number: string | null;
+  file_name: string | null;
+  id: string;
+}): string {
+  const vendor = (invoice.vendor_name ?? invoice.file_name ?? "invoice")
+    .toLowerCase()
+    .replace(/[^\w.-]+/g, "_")
+    .slice(0, 60);
+  const number = invoice.invoice_number?.trim() || invoice.id.slice(0, 8);
+  return `${vendor}.${number}`;
+}
+
 const CONTENT_W = 512; // page width minus both margins
 
 const STATUS_LABELS: Record<string, string> = {
@@ -469,12 +487,8 @@ export async function buildInvoiceAuditDocument(
     });
   }
 
-  const base = (invoice.vendor_name ?? invoice.file_name ?? "invoice")
-    .toLowerCase()
-    .replace(/[^\w.-]+/g, "_")
-    .slice(0, 60);
   return {
-    filename: `audit-trail-${base}-${invoice.id.slice(0, 8)}.pdf`,
+    filename: `audit-trail-${invoiceFileBase(invoice)}.pdf`,
     pdf: buildPdf(lines),
   };
 }

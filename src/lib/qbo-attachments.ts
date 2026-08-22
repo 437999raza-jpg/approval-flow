@@ -1,11 +1,12 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/types";
-import { buildInvoiceAuditDocument } from "@/lib/audit-trail";
+import { buildInvoiceAuditDocument, invoiceFileBase } from "@/lib/audit-trail";
 
 // The exact files that get attached to the QuickBooks bill when an
 // approved invoice syncs:
-//   1. audit-trail-<vendor>-<id>.pdf  — chat history + approval audit trail
-//   2. the primary invoice document (invoices.file_path)
+//   1. audit-trail-<vendor>.<invoice number>.pdf — chat history + audit trail
+//   2. the primary invoice document, renamed to <vendor>.<invoice number>
+//      (invoices.file_path is usually an opaque generated name)
 //   3. every additional document page (invoice_documents, migration 0003)
 // All are returned as bytes ready for QBO's multipart attachment upload.
 // Authored by Araza.
@@ -51,7 +52,7 @@ export async function buildQboAttachmentBundle(
 ): Promise<QboAttachment[] | null> {
   const { data: invoice } = await supabase
     .from("invoices")
-    .select("id, vendor_name, file_path, file_name")
+    .select("id, vendor_name, invoice_number, file_path, file_name")
     .eq("id", invoiceId)
     .single();
   if (!invoice) return null;
@@ -68,11 +69,15 @@ export async function buildQboAttachmentBundle(
     });
   }
 
-  // 2) The primary invoice document.
+  // 2) The primary invoice document — named "vendor.invoice_number" (same
+  // scheme as the audit PDF) instead of the stored file_name, which is
+  // often an opaque generated name (email attachment id, upload token).
+  const primaryExt = invoice.file_name.split(".").pop()?.toLowerCase();
+  const primaryName = `${invoiceFileBase(invoice)}${primaryExt ? `.${primaryExt}` : ""}`;
   const primary = await downloadToAttachment(
     supabase,
     invoice.file_path,
-    invoice.file_name
+    primaryName
   );
   if (primary) attachments.push(primary);
 
