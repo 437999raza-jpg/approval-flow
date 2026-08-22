@@ -223,26 +223,53 @@ export async function listSuppliers(
   return all;
 }
 
-// Match an OCR'd vendor name to the nearest supplier already in QBO
-// (case/punctuation-insensitive, like the duplicate-matching normalizer).
-// Match an OCR'd vendor name to a QBO supplier. EXACT match only
+// Trailing business-entity words that routinely appear or vanish between
+// how a vendor's name gets OCR'd/typed on an invoice and how it's spelled
+// in QBO ("Onyx-Fire Protection Services" vs "Onyx-Fire Protection
+// Services Inc.") — stripped as a single fallback step, never as part of
+// the primary comparison, so "Inc" and "Co" don't get treated as
+// meaningless everywhere (a supplier actually named just "Co" would be
+// absurd, but stripping a TRAILING one is a safe, narrow assumption).
+const BUSINESS_SUFFIXES = new Set([
+  "inc", "incorporated", "llc", "lp", "llp", "ltd", "limited",
+  "corp", "corporation", "co", "company",
+]);
+
+function stripBusinessSuffix(normalized: string): string {
+  const words = normalized.split(" ");
+  if (words.length > 1 && BUSINESS_SUFFIXES.has(words[words.length - 1])) {
+    return words.slice(0, -1).join(" ");
+  }
+  return normalized;
+}
+
+// Match an OCR'd vendor name to a QBO supplier. Exact match first
 // (case/punctuation-insensitive via normalizeForMatching): "TRI-AN ELECTRIC
-// 2024 LTD" == "Tri-An Electric 2024 Ltd" match; anything less does not.
-//
-// This is deliberate: a fuzzy match could silently pair the invoice with the
-// wrong supplier and push a mismatched bill to QBO. If there is no exact
-// match, we return null and the invoice is flagged so a human fixes the
-// vendor before it can sync. Flow never creates suppliers.
+// 2024 LTD" == "Tri-An Electric 2024 Ltd". If nothing matches exactly, try
+// again with a trailing business suffix (Inc, LLC, Ltd, Corp, ...) dropped
+// from both sides — the single most common reason an otherwise-identical
+// name fails to line up. That second pass only ever resolves when it
+// narrows down to EXACTLY one supplier; if it's still zero, or more than
+// one supplier collapses to the same stripped name, this returns null and
+// the invoice is flagged so a human picks the right one — never guesses
+// between candidates it can't actually tell apart. Flow never creates
+// suppliers.
 export function matchSupplier(
   suppliers: { name: string }[],
   vendorName: string | null | undefined
 ): string | null {
   const needle = normalizeForMatching(vendorName);
   if (!needle) return null;
-  const hit = suppliers.find(
-    (s) => normalizeForMatching(s.name) === needle
+
+  const exact = suppliers.find((s) => normalizeForMatching(s.name) === needle);
+  if (exact) return exact.name;
+
+  const strippedNeedle = stripBusinessSuffix(needle);
+  if (strippedNeedle === needle) return null; // no suffix to drop — nothing left to try
+  const fuzzyMatches = suppliers.filter(
+    (s) => stripBusinessSuffix(normalizeForMatching(s.name)) === strippedNeedle
   );
-  return hit?.name ?? null;
+  return fuzzyMatches.length === 1 ? fuzzyMatches[0].name : null;
 }
 
 // READ-ONLY: pull the company's PROJECTS. In QuickBooks, projects live on
