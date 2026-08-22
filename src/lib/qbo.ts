@@ -559,54 +559,70 @@ export async function listClasses(
 // Find the account id from a category string like "5-15450 - HVAC":
 // match by AcctNum first (exact), then by name; fall back to the first
 // active Expense account (QBO's "Uncategorized Expense" is usually there).
+// Runs a QBO account query and returns the first hit's id, or null. Throws
+// (rather than silently returning null) on an HTTP-level failure, so a
+// broken query is never mistaken for "no matching account".
+async function queryAccountId(
+  conn: QboConnection,
+  query: string,
+  context: string
+): Promise<string | null> {
+  const res = await qboFetch(conn, `/query?query=${encodeURIComponent(query)}`);
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`QBO: ${context} query failed (HTTP ${res.status}): ${body.slice(0, 300)}`);
+  }
+  const json = (await res.json()) as {
+    QueryResponse?: { Account?: { Id: string; Name?: string }[] };
+  };
+  return json.QueryResponse?.Account?.[0]?.Id ?? null;
+}
+
 export async function findExpenseAccount(
   conn: QboConnection,
   name?: string | null
 ): Promise<string> {
   const raw = name?.trim() ?? "";
 
-  // "5-15450 - HVAC" → account number "5-15450", looked up exactly.
+  // No category set on this line at all — fall back to a generic expense
+  // account rather than blocking the whole bill over a blank field.
+  if (!raw) {
+    const fallback = await queryAccountId(
+      conn,
+      "select Id from Account where AccountType = 'Expense' and Active = true maxresults 1",
+      "fallback expense account"
+    );
+    if (fallback) return fallback;
+    throw new Error("QBO: no active Expense account exists to fall back to, and this line has no category set.");
+  }
+
+  // "5-15450 - HVAC" → account number "5-15450", looked up exactly. A
+  // category this specific failing to resolve is a real problem (wrong
+  // account silently used on a real bill) — surfaced loudly instead of
+  // silently falling back, which is what was happening before: every
+  // failed lookup landed on the same generic Expense account regardless
+  // of which category was actually picked.
   const acctMatch = raw.match(/^([0-9]+(?:-[0-9]+)*)\s*[-–—]\s*/);
   if (acctMatch) {
     const acctNum = acctMatch[1];
-    const qAcct = `select Id from Account where AcctNum = '${acctNum.replace(/'/g, "''")}' and Active = true`;
-    const resAcct = await qboFetch(
+    const hit = await queryAccountId(
       conn,
-      `/query?query=${encodeURIComponent(qAcct)}`
+      `select Id from Account where AcctNum = '${acctNum.replace(/'/g, "''")}' and Active = true`,
+      `account number "${acctNum}"`
     );
-    if (resAcct.ok) {
-      const json = (await resAcct.json()) as {
-        QueryResponse?: { Account?: { Id: string }[] };
-      };
-      const hit = json.QueryResponse?.Account?.[0];
-      if (hit) return hit.Id;
-    }
+    if (hit) return hit;
+    throw new Error(
+      `QBO: category "${raw}" — no active account found with number "${acctNum}". Run Refresh data in Settings → Data from QuickBooks, or confirm this account still exists and is active in QuickBooks.`
+    );
   }
 
-  if (raw) {
-    const q = `select Id from Account where Name = '${raw.replace(/'/g, "''")}' and Active = true`;
-    const res = await qboFetch(conn, `/query?query=${encodeURIComponent(q)}`);
-    if (!res.ok) {
-      const body = await res.text();
-      throw new Error(
-        `QBO: account lookup failed (HTTP ${res.status}): ${body.slice(0, 300)}`
-      );
-    }
-    const json = (await res.json()) as {
-      QueryResponse?: { Account?: { Id: string }[] };
-    };
-    const hit = json.QueryResponse?.Account?.[0];
-    if (hit) return hit.Id;
-  }
-  const q =
-    "select Id from Account where AccountType = 'Expense' and Active = true maxresults 1";
-  const res = await qboFetch(conn, `/query?query=${encodeURIComponent(q)}`);
-  const json = (await res.json()) as {
-    QueryResponse?: { Account?: { Id: string }[] };
-  };
-  const fallback = json.QueryResponse?.Account?.[0];
-  if (fallback) return fallback.Id;
-  throw new Error("QBO: no expense account found");
+  const hit = await queryAccountId(
+    conn,
+    `select Id from Account where Name = '${raw.replace(/'/g, "''")}' and Active = true`,
+    `account name "${raw}"`
+  );
+  if (hit) return hit;
+  throw new Error(`QBO: no active account found named "${raw}".`);
 }
 
 export interface QboBillInput {
