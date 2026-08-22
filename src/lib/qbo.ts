@@ -628,6 +628,29 @@ export interface QboBillResult {
   docNumber: string | null;
 }
 
+// QBO rejects the Bill's CurrencyRef property outright — a 2010
+// ValidationFault ("Request has invalid or unsupported property"), not
+// just a no-op — on any company that doesn't have multicurrency turned
+// on, which is the normal state for a single-currency (e.g. CAD-only)
+// company. Per Intuit's own Bill entity docs: "CurrencyRef — Required
+// only if multicurrency is enabled for the company. Do not use this
+// field if multicurrency is not enabled." Checked via the /preferences
+// endpoint's CurrencyPrefs.MultiCurrencyEnabled flag; defaults to false
+// (omit CurrencyRef) if the check itself fails, since that's the far
+// more common — and far safer — company configuration.
+async function isMultiCurrencyEnabled(conn: QboConnection): Promise<boolean> {
+  try {
+    const res = await qboFetch(conn, "/preferences");
+    if (!res.ok) return false;
+    const json = (await res.json()) as {
+      Preferences?: { CurrencyPrefs?: { MultiCurrencyEnabled?: boolean } };
+    };
+    return json.Preferences?.CurrencyPrefs?.MultiCurrencyEnabled === true;
+  } catch {
+    return false;
+  }
+}
+
 export async function createBill(
   conn: QboConnection,
   input: QboBillInput
@@ -661,10 +684,11 @@ export async function createBill(
   }
   if (lines.length === 0) throw new Error("QBO: bill has no line items");
 
+  const multiCurrency = await isMultiCurrencyEnabled(conn);
   const body: Record<string, unknown> = {
     VendorRef: { value: vendorId },
     Line: lines,
-    CurrencyRef: { value: input.currency },
+    ...(multiCurrency ? { CurrencyRef: { value: input.currency } } : {}),
     DueDate: input.dueDate ?? undefined,
     TxnDate: input.billDate,
     PrivateNote: input.memo ?? undefined,
