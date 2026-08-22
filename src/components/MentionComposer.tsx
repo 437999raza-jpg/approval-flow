@@ -56,18 +56,32 @@ export function MentionComposer({
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
-    if (query === null || filtered.length === 0) return;
-    if (e.key === "ArrowDown") {
+    if (query === null) return;
+    if (e.key === "ArrowDown" && filtered.length > 0) {
       e.preventDefault();
       setActive((a) => Math.min(a + 1, filtered.length - 1));
-    } else if (e.key === "ArrowUp") {
+    } else if (e.key === "ArrowUp" && filtered.length > 0) {
       e.preventDefault();
       setActive((a) => Math.max(a - 1, 0));
-    } else if (e.key === "Enter") {
+    } else if (e.key === "Enter" && filtered.length > 0) {
       e.preventDefault();
       selectMember(filtered[active] ?? filtered[0]);
     } else if (e.key === "Escape") {
+      // Back out of mention mode entirely: close the dropdown AND remove
+      // the "@query" text it was matching against — closing the dropdown
+      // alone left "@partial" sitting in the message, needing an extra
+      // backspace (or several) to actually clean up after changing your
+      // mind about mentioning someone.
+      const el = inputRef.current;
+      const pos = el?.selectionStart ?? text.length;
+      const uptoCursor = text.slice(0, pos);
+      const afterCursor = text.slice(pos);
+      const newUpto = uptoCursor.replace(/(?:^|\s)@(\S*)$/, (m) =>
+        m.startsWith(" ") ? " " : ""
+      );
+      setText(newUpto + afterCursor);
       setQuery(null);
+      requestAnimationFrame(() => el?.focus());
     }
   }
 

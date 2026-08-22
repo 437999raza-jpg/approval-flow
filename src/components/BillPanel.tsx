@@ -42,6 +42,10 @@ export interface BillAdminData {
   deleteInvoice: () => Promise<void>;
   // The final release: pushes a fully-approved (qbo_ready) bill to QBO.
   syncToQbo?: () => Promise<void>;
+  // Wipes a stuck qbo_sync_status/qbo_error without retrying — for a bill
+  // that failed while qbo_ready and then moved on (e.g. sent back to
+  // review), where the error is stale and there's nothing to retry.
+  clearQboError?: () => Promise<void>;
 }
 
 export interface BillInstructionsEntry {
@@ -738,27 +742,61 @@ export function BillPanel({
                   </a>
                 )}
               </p>
-            ) : invoice.qbo_sync_status === "error" ? (
-              <p className="text-red-600">
-                Sync failed
-                {invoice.qbo_error ? `: ${invoice.qbo_error}` : ""}
-              </p>
+            ) : invoice.qbo_sync_status === "error" && !(invoice.status === "qbo_ready" && admin.visible) ? (
+              // A failed sync only ever touches qbo_sync_status/qbo_error,
+              // never invoice.status — so this is the bill-moved-on case:
+              // it failed while qbo_ready, then got sent back to review (or
+              // otherwise progressed) before anyone retried, leaving a
+              // stale error with nothing to retry against anymore. "Clear"
+              // is the only sensible action here; the qbo_ready case below
+              // gets a real Retry instead.
+              <div className="space-y-2">
+                <p className="text-red-600">
+                  Sync failed
+                  {invoice.qbo_error ? `: ${invoice.qbo_error}` : ""}
+                </p>
+                {admin.visible && admin.clearQboError && (
+                  <form action={admin.clearQboError}>
+                    <button className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">
+                      Clear error
+                    </button>
+                  </form>
+                )}
+              </div>
             ) : invoice.status === "qbo_ready" && admin.visible ? (
               <div className="space-y-2">
-                <p className="text-sky-700">
-                  Workflow complete — this bill is ready for the final
-                  QuickBooks release.
-                </p>
-                <form action={admin.syncToQbo}>
-                  <button
-                    disabled={!qboConnected}
-                    className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-                  >
-                    {qboConnected
-                      ? "Sync to QuickBooks (final)"
-                      : "Connect QuickBooks in Settings first"}
-                  </button>
-                </form>
+                {invoice.qbo_sync_status === "error" ? (
+                  <p className="text-red-600">
+                    Sync failed
+                    {invoice.qbo_error ? `: ${invoice.qbo_error}` : ""}
+                  </p>
+                ) : (
+                  <p className="text-sky-700">
+                    Workflow complete — this bill is ready for the final
+                    QuickBooks release.
+                  </p>
+                )}
+                <div className="flex items-center gap-2">
+                  <form action={admin.syncToQbo}>
+                    <button
+                      disabled={!qboConnected}
+                      className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+                    >
+                      {qboConnected
+                        ? invoice.qbo_sync_status === "error"
+                          ? "Retry sync to QuickBooks"
+                          : "Sync to QuickBooks (final)"
+                        : "Connect QuickBooks in Settings first"}
+                    </button>
+                  </form>
+                  {invoice.qbo_sync_status === "error" && admin.clearQboError && (
+                    <form action={admin.clearQboError}>
+                      <button className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">
+                        Clear error
+                      </button>
+                    </form>
+                  )}
+                </div>
               </div>
             ) : (
               <p className="text-slate-400">

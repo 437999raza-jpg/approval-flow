@@ -95,16 +95,23 @@ export function InstructionsBox({
       )}
 
       {/* History — everyone's notes, oldest first. Only the latest shows
-          by default; older ones are a click away (see showAllNotes above). */}
+          by default; older ones are a click away (see showAllNotes above).
+          One toggle button, always in the same top spot, always the same
+          blue styling — it used to jump from a blue link at the top
+          ("Show N earlier notes") to a separate gray one at the bottom
+          ("Collapse") once expanded, which read as two different controls
+          instead of one toggle. */}
       {entries.length > 0 ? (
         <div className="mt-2 space-y-1.5">
-          {hiddenCount > 0 && (
+          {entries.length > 1 && (
             <button
               type="button"
-              onClick={() => setShowAllNotes(true)}
+              onClick={() => setShowAllNotes((v) => !v)}
               className="text-[11px] font-medium text-blue-600 hover:underline"
             >
-              Show {hiddenCount} earlier note{hiddenCount > 1 ? "s" : ""}
+              {showAllNotes
+                ? "Collapse"
+                : `Show ${hiddenCount} earlier note${hiddenCount > 1 ? "s" : ""}`}
             </button>
           )}
           {visibleEntries.map((e) => (
@@ -122,15 +129,6 @@ export function InstructionsBox({
               </p>
             </div>
           ))}
-          {showAllNotes && entries.length > 1 && (
-            <button
-              type="button"
-              onClick={() => setShowAllNotes(false)}
-              className="text-[11px] text-slate-400 hover:underline"
-            >
-              Collapse
-            </button>
-          )}
         </div>
       ) : (
         <p className="mt-2 text-xs text-slate-400">

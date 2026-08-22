@@ -2032,6 +2032,37 @@ export async function syncToQbo(invoiceId: string) {
   revalidatePath("/settings");
 }
 
+// Clear a stuck sync error without retrying. syncToQbo only ever touches
+// qbo_sync_status/qbo_error, never invoice.status, so a bill that failed
+// while qbo_ready and then got sent back to review (or otherwise moved
+// on) is left showing a permanently stale "Sync failed" message with no
+// way to dismiss it — retrying isn't even offered once the bill is no
+// longer qbo_ready. This is the reset valve for that: wipe the error
+// fields so the bill goes back to reading as "not synced yet" instead of
+// stuck on an error from a previous, no-longer-relevant attempt.
+export async function clearQboError(invoiceId: string) {
+  "use server";
+
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+  if (!(await canReview(supabase))) return;
+
+  await supabase
+    .from("invoices")
+    .update({
+      qbo_sync_status: null,
+      qbo_error: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", invoiceId);
+
+  revalidatePath("/dashboard", "layout");
+  revalidatePath("/settings");
+}
+
 // Disconnect the org from QuickBooks (admin only).
 export async function disconnectQbo() {
   "use server";
