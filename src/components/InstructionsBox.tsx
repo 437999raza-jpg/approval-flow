@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import type { BillInstructionsEntry } from "./BillPanel";
+import { SubmitButton } from "./SubmitButton";
 
 // Instructions for accounting — an append-only thread. Each approver ADDS
 // their own line (nobody can change a previous one), and the whole thread
@@ -159,20 +160,20 @@ export function InstructionsBox({
           />
         )}
         {approve ? (
-          <button
+          <SubmitButton
             disabled={requiresNote && text.trim().length === 0}
             className="w-full rounded-md border border-transparent bg-emerald-600 px-4 py-2 text-center text-sm font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
           >
             Approve
-          </button>
+          </SubmitButton>
         ) : readOnly ? null : (
           <div className="flex items-center justify-between">
             <span className="text-[10px] text-slate-400">
               note is added to the thread
             </span>
-            <button className="rounded-md border border-transparent bg-slate-800 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-700">
+            <SubmitButton className="rounded-md border border-transparent bg-slate-800 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-700">
               Add note
-            </button>
+            </SubmitButton>
           </div>
         )}
       </form>

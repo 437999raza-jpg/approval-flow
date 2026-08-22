@@ -1,5 +1,7 @@
 "use client";
 
+import { SubmitButton } from "./SubmitButton";
+
 // A form-action submit button that requires a native confirm() before
 // firing — for destructive server actions (e.g. permanently deleting an
 // invoice) where a plain button is too easy to click by accident.
@@ -22,9 +24,7 @@ export function ConfirmSubmitButton({
         if (!window.confirm(confirmMessage)) e.preventDefault();
       }}
     >
-      <button type="submit" className={className}>
-        {children}
-      </button>
+      <SubmitButton className={className}>{children}</SubmitButton>
     </form>
   );
 }

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Combobox } from "@/components/Combobox";
+import { SubmitButton } from "@/components/SubmitButton";
 
 export interface SupplierDefaultsValues {
   category: string;
@@ -164,9 +165,9 @@ export function SupplierRulesModal({
                 >
                   Cancel
                 </button>
-                <button className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700">
+                <SubmitButton className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700">
                   Apply
-                </button>
+                </SubmitButton>
               </div>
             </form>
           </div>

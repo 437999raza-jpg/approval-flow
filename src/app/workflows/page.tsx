@@ -8,6 +8,7 @@ import { fetchAllQboSuppliers } from "@/lib/qbo-all";
 import { SignOutButton } from "@/components/SignOutButton";
 import { WorkflowRuleRow } from "@/components/WorkflowRuleRow";
 import { StepApproversManager } from "@/components/StepApproversManager";
+import { SubmitButton } from "@/components/SubmitButton";
 import type { RowCondition as StepApproverCondition } from "@/components/StepApproverMatrixRow";
 import {
   RULE_TYPE_VALUES,
@@ -696,9 +697,9 @@ export default async function WorkflowsPage() {
                       </p>
                     </div>
                     <form action={dismissImpactReport.bind(null, impact.id)}>
-                      <button className="whitespace-nowrap text-xs text-amber-700 hover:underline">
+                      <SubmitButton className="whitespace-nowrap text-xs text-amber-700 hover:underline">
                         Dismiss
-                      </button>
+                      </SubmitButton>
                     </form>
                   </div>
                   <ul className="mt-3 space-y-1.5">
@@ -747,9 +748,9 @@ export default async function WorkflowsPage() {
                 />
                 Default workflow
               </label>
-              <button className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700">
+              <SubmitButton className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700">
                 Create workflow
-              </button>
+              </SubmitButton>
             </form>
           )}
 
@@ -792,14 +793,14 @@ export default async function WorkflowsPage() {
                             />
                             default
                           </label>
-                          <button className="rounded-md bg-slate-800 px-2 py-1 text-xs font-medium text-white hover:bg-slate-700">
+                          <SubmitButton className="rounded-md bg-slate-800 px-2 py-1 text-xs font-medium text-white hover:bg-slate-700">
                             Save
-                          </button>
+                          </SubmitButton>
                         </form>
                         <form action={deleteWorkflow.bind(null, w.id)}>
-                          <button className="text-xs text-red-500 hover:underline">
+                          <SubmitButton className="text-xs text-red-500 hover:underline">
                             Delete
-                          </button>
+                          </SubmitButton>
                         </form>
                       </>
                     )}
@@ -841,9 +842,9 @@ export default async function WorkflowsPage() {
                                     <option value="all">Require all matching approvers</option>
                                     <option value="any">Require any one approver</option>
                                   </select>
-                                  <button className="rounded-md bg-slate-800 px-2 py-1 text-xs font-medium text-white hover:bg-slate-700">
+                                  <SubmitButton className="rounded-md bg-slate-800 px-2 py-1 text-xs font-medium text-white hover:bg-slate-700">
                                     Save
-                                  </button>
+                                  </SubmitButton>
                                 </form>
                               ) : (
                                 <span className="text-sm font-medium text-slate-700">
@@ -856,25 +857,25 @@ export default async function WorkflowsPage() {
                               {isAdmin && (
                                 <>
                                   <form action={moveStep.bind(null, s.id, "up")}>
-                                    <button
+                                    <SubmitButton
                                       disabled={i === 0}
                                       className="rounded-md border border-slate-200 px-2 py-1 text-xs text-slate-500 hover:bg-slate-50 disabled:opacity-40"
                                     >
                                       ↑
-                                    </button>
+                                    </SubmitButton>
                                   </form>
                                   <form action={moveStep.bind(null, s.id, "down")}>
-                                    <button
+                                    <SubmitButton
                                       disabled={i === wfSteps.length - 1}
                                       className="rounded-md border border-slate-200 px-2 py-1 text-xs text-slate-500 hover:bg-slate-50 disabled:opacity-40"
                                     >
                                       ↓
-                                    </button>
+                                    </SubmitButton>
                                   </form>
                                   <form action={deleteStep.bind(null, s.id)}>
-                                    <button className="text-xs text-red-500 hover:underline">
+                                    <SubmitButton className="text-xs text-red-500 hover:underline">
                                       Remove step
-                                    </button>
+                                    </SubmitButton>
                                   </form>
                                 </>
                               )}
@@ -926,9 +927,9 @@ export default async function WorkflowsPage() {
                           <option value="all">Require all matching approvers</option>
                           <option value="any">Require any one approver</option>
                         </select>
-                        <button className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">
+                        <SubmitButton className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">
                           Add step
-                        </button>
+                        </SubmitButton>
                       </form>
                     )}
                   </div>

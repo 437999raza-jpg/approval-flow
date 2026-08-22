@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { SubmitButton } from "./SubmitButton";
 
 interface RoleOption {
   value: string;
@@ -93,9 +94,9 @@ export function AddUsersModal({
                 >
                   Cancel
                 </button>
-                <button className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700">
+                <SubmitButton className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700">
                   Invite
-                </button>
+                </SubmitButton>
               </div>
             </form>
           </div>

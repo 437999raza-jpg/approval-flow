@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useFormStatus } from "react-dom";
 
 import {
   BillPanel,
@@ -16,6 +17,23 @@ import type { AuditTimelineEntry } from "@/lib/audit-timeline";
 type Invoice = Database["public"]["Tables"]["invoices"]["Row"];
 type LineItem = Database["public"]["Tables"]["invoice_line_items"]["Row"];
 type Comment = Database["public"]["Tables"]["invoice_comments"]["Row"];
+
+// "Add document" is a label (styled as a button) wrapping a hidden file
+// input, not a real submit button — but the upload it triggers still
+// needs the same "did that register" feedback as everywhere else.
+function UploadLabel({ children }: { children: ReactNode }) {
+  const { pending } = useFormStatus();
+  return (
+    <label
+      className={`cursor-pointer rounded-md border border-slate-200 px-2 py-1 text-xs font-medium text-slate-500 hover:bg-slate-50 ${
+        pending ? "opacity-60" : ""
+      }`}
+    >
+      {pending ? "Uploading…" : "Add document"}
+      {children}
+    </label>
+  );
+}
 
 export interface DocumentRef {
   name: string;
@@ -190,8 +208,7 @@ export function DetailSplit({
               )}
               {uploadAction && canEdit && (
                 <form ref={formRef} action={uploadAction} className="flex-none">
-                  <label className="cursor-pointer rounded-md border border-slate-200 px-2 py-1 text-xs font-medium text-slate-500 hover:bg-slate-50">
-                    Add document
+                  <UploadLabel>
                     <input
                       type="file"
                       name="file"
@@ -203,7 +220,7 @@ export function DetailSplit({
                         }
                       }}
                     />
-                  </label>
+                  </UploadLabel>
                 </form>
               )}
             </span>

@@ -6,6 +6,7 @@ import { MentionComposer } from "./MentionComposer";
 import { ApprovalStepper } from "./ApprovalStepper";
 import { InlineSelectSave } from "./InlineSelectSave";
 import { ConfirmSubmitButton } from "./ConfirmSubmitButton";
+import { SubmitButton } from "./SubmitButton";
 import { InstructionsBox } from "./InstructionsBox";
 import { InvoiceStatusBadge } from "./InvoiceStatusBadge";
 import type { Database } from "@/lib/supabase/types";
@@ -445,37 +446,37 @@ export function BillPanel({
                         <div className="mt-auto flex gap-2 pt-3">
                           {invoice.status === "on_review" && canReview && (
                             <form action={approval.reviewComplete} className="flex-1">
-                              <button className="w-full rounded-md border border-transparent bg-blue-600 px-4 py-2 text-center text-sm font-semibold text-white hover:bg-blue-700">
+                              <SubmitButton className="w-full rounded-md border border-transparent bg-blue-600 px-4 py-2 text-center text-sm font-semibold text-white hover:bg-blue-700">
                                 Review Complete
-                              </button>
+                              </SubmitButton>
                             </form>
                           )}
                           {approval.canUnhold && (
                             <form action={approval.unhold} className="flex-1">
-                              <button className="w-full rounded-md border border-transparent bg-blue-600 px-4 py-2 text-center text-sm font-semibold text-white hover:bg-blue-700">
+                              <SubmitButton className="w-full rounded-md border border-transparent bg-blue-600 px-4 py-2 text-center text-sm font-semibold text-white hover:bg-blue-700">
                                 Unhold
-                              </button>
+                              </SubmitButton>
                             </form>
                           )}
                           {approval.canDecide && (
                             <>
                               <form action={approval.hold} className="flex-1">
-                                <button className="w-full rounded-md border border-amber-300 bg-amber-50 px-4 py-2 text-center text-sm font-semibold text-amber-800 hover:bg-amber-100">
+                                <SubmitButton className="w-full rounded-md border border-amber-300 bg-amber-50 px-4 py-2 text-center text-sm font-semibold text-amber-800 hover:bg-amber-100">
                                   Hold
-                                </button>
+                                </SubmitButton>
                               </form>
                               <form action={approval.reject} className="flex-1">
-                                <button className="w-full rounded-md border border-transparent bg-red-600 px-4 py-2 text-center text-sm font-semibold text-white hover:bg-red-700">
+                                <SubmitButton className="w-full rounded-md border border-transparent bg-red-600 px-4 py-2 text-center text-sm font-semibold text-white hover:bg-red-700">
                                   Reject
-                                </button>
+                                </SubmitButton>
                               </form>
                             </>
                           )}
                           {approval.canCancel && !approval.canUnhold && (
                             <form action={approval.cancel} className="flex-1">
-                              <button className="w-full rounded-md border border-slate-300 px-4 py-2 text-center text-sm font-semibold text-slate-600 hover:bg-slate-50">
+                              <SubmitButton className="w-full rounded-md border border-slate-300 px-4 py-2 text-center text-sm font-semibold text-slate-600 hover:bg-slate-50">
                                 Cancel
-                              </button>
+                              </SubmitButton>
                             </form>
                           )}
                         </div>
@@ -525,9 +526,9 @@ export function BillPanel({
             canReview &&
             !readOnly && (
               <form action={backToReview} className="mt-3">
-                <button className="rounded-md border border-slate-300 px-3 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50">
+                <SubmitButton className="rounded-md border border-slate-300 px-3 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50">
                   Back to Review
-                </button>
+                </SubmitButton>
               </form>
             )}
         </div>
@@ -728,9 +729,9 @@ export function BillPanel({
           </button>
           {!readOnly && (
             <form action={reExtract}>
-              <button className="font-medium text-slate-500 hover:text-slate-700 hover:underline">
+              <SubmitButton className="font-medium text-slate-500 hover:text-slate-700 hover:underline">
                 Re-extract document fields
-              </button>
+              </SubmitButton>
             </form>
           )}
         </div>
@@ -770,9 +771,9 @@ export function BillPanel({
                 {admin.visible && admin.clearQboSync && (
                   <div>
                     <form action={admin.clearQboSync}>
-                      <button className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">
+                      <SubmitButton className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">
                         Undo sync (allow re-sync)
-                      </button>
+                      </SubmitButton>
                     </form>
                     <p className="mt-1 text-[11px] text-slate-400">
                       Only clears Flow&apos;s own record — the Bill already
@@ -797,9 +798,9 @@ export function BillPanel({
                 </p>
                 {admin.visible && admin.clearQboError && (
                   <form action={admin.clearQboError}>
-                    <button className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">
+                    <SubmitButton className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">
                       Clear error
-                    </button>
+                    </SubmitButton>
                   </form>
                 )}
               </div>
@@ -818,7 +819,7 @@ export function BillPanel({
                 )}
                 <div className="flex items-center gap-2">
                   <form action={admin.syncToQbo}>
-                    <button
+                    <SubmitButton
                       disabled={!qboConnected}
                       className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
                     >
@@ -827,13 +828,13 @@ export function BillPanel({
                           ? "Retry sync to QuickBooks"
                           : "Sync to QuickBooks (final)"
                         : "Connect QuickBooks in Settings first"}
-                    </button>
+                    </SubmitButton>
                   </form>
                   {invoice.qbo_sync_status === "error" && admin.clearQboError && (
                     <form action={admin.clearQboError}>
-                      <button className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">
+                      <SubmitButton className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">
                         Clear error
-                      </button>
+                      </SubmitButton>
                     </form>
                   )}
                 </div>
@@ -889,9 +890,9 @@ export function BillPanel({
                   members={members}
                   placeholder="Ask a question or leave a note… (@ to mention someone)"
                 />
-                <button className="rounded-md bg-slate-800 px-3 py-2 text-sm font-medium text-white hover:bg-slate-700">
+                <SubmitButton className="rounded-md bg-slate-800 px-3 py-2 text-sm font-medium text-white hover:bg-slate-700">
                   Post
-                </button>
+                </SubmitButton>
               </form>
             )}
           </CollapsibleSection>
@@ -988,6 +989,11 @@ function LineItemRow({
   const formId = `line-item-${itemId}`;
   const formRef = useRef<HTMLFormElement>(null);
   const descRef = useRef<HTMLTextAreaElement>(null);
+  // The "Add" button below is associated with the hidden form via the
+  // form="..." attribute, not by being a descendant of it — useFormStatus
+  // only tracks descendants of the <form> it's actually inside, so it
+  // can't see this submission. Tracked by hand instead.
+  const [addPending, setAddPending] = useState(false);
   const cellCls = "w-full truncate border-b border-transparent bg-transparent px-0 py-1.5 text-xs text-slate-800 hover:border-slate-200 focus:border-blue-500 focus:outline-none disabled:text-slate-400";
   // Description wraps and grows instead of truncating — PMs need to read
   // the whole thing, not just what fits on one line.
@@ -1116,12 +1122,21 @@ function LineItemRow({
         !readOnly && (
           <div className="flex items-center justify-end gap-1.5 pt-1">
             <button
-              form={formId}
-              type="submit"
+              type="button"
               title="Add line"
-              className="text-sm font-medium text-blue-600 hover:underline"
+              disabled={addPending}
+              onClick={async () => {
+                if (!formRef.current) return;
+                setAddPending(true);
+                try {
+                  await saveLineItem(itemId, new FormData(formRef.current));
+                } finally {
+                  setAddPending(false);
+                }
+              }}
+              className={`text-sm font-medium text-blue-600 hover:underline ${addPending ? "opacity-60" : ""}`}
             >
-              Add
+              {addPending ? "Adding…" : "Add"}
             </button>
             <button
               type="button"
@@ -1138,24 +1153,16 @@ function LineItemRow({
           <div className="flex items-center justify-end gap-1.5 pt-1 opacity-0 group-hover:opacity-100">
             {cloneLineItem && (
               <form action={cloneLineItem.bind(null, itemId)}>
-                <button
-                  type="submit"
-                  title="Clone line"
-                  className="text-slate-400 hover:text-blue-600"
-                >
+                <SubmitButton title="Clone line" className="text-slate-400 hover:text-blue-600">
                   ⧉
-                </button>
+                </SubmitButton>
               </form>
             )}
             {deleteLineItem && (
               <form action={deleteLineItem.bind(null, itemId)}>
-                <button
-                  type="submit"
-                  title="Delete line"
-                  className="text-slate-400 hover:text-red-500"
-                >
+                <SubmitButton title="Delete line" className="text-slate-400 hover:text-red-500">
                   ×
-                </button>
+                </SubmitButton>
               </form>
             )}
           </div>

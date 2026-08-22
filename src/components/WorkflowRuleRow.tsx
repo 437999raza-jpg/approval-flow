@@ -8,6 +8,7 @@ import {
   type RuleOperator,
   type RuleType,
 } from "@/lib/workflow-rules";
+import { SubmitButton } from "@/components/SubmitButton";
 
 // One editable workflow rule row (ApprovalMax-style "workflow item"):
 // field (Total Amount / Requester / Supplier / …) + operator + value(s).
@@ -95,15 +96,15 @@ export function WorkflowRuleRow({
             className={`${inputCls} w-36`}
           />
         )}
-        <button className="rounded-md bg-slate-800 px-2.5 py-1 text-xs font-medium text-white hover:bg-slate-700">
+        <SubmitButton className="rounded-md bg-slate-800 px-2.5 py-1 text-xs font-medium text-white hover:bg-slate-700">
           {isNew ? "Add item" : "Save"}
-        </button>
+        </SubmitButton>
       </form>
       {!isNew && deleteRule && (
         <form action={deleteRule.bind(null, ruleId)}>
-          <button className="text-xs text-red-500 hover:underline">
+          <SubmitButton className="text-xs text-red-500 hover:underline">
             Remove
-          </button>
+          </SubmitButton>
         </form>
       )}
     </div>

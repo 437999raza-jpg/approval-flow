@@ -14,6 +14,7 @@ import { AddUsersModal } from "@/components/AddUsersModal";
 import { SearchInput } from "@/components/SearchInput";
 import { InlineSelectSave } from "@/components/InlineSelectSave";
 import { InlineTextSave } from "@/components/InlineTextSave";
+import { SubmitButton } from "@/components/SubmitButton";
 import type { Database } from "@/lib/supabase/types";
 
 type OrgRole =
@@ -527,9 +528,9 @@ export default async function SettingsPage({
                     Reconnect
                   </a>
                   <form action={disconnectQbo}>
-                    <button className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">
+                    <SubmitButton className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">
                       Disconnect
-                    </button>
+                    </SubmitButton>
                   </form>
                 </div>
               ) : isAdmin ? (
@@ -575,9 +576,9 @@ export default async function SettingsPage({
                   <span className="flex-1" />
                   {isAdmin && qboConnection && (
                     <form action={refreshQboData}>
-                      <button className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">
+                      <SubmitButton className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">
                         Refresh data
-                      </button>
+                      </SubmitButton>
                     </form>
                   )}
                 </div>
@@ -597,9 +598,9 @@ export default async function SettingsPage({
                     </span>
                     {isAdmin && (
                       <form action={syncQboTaxes}>
-                        <button className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">
+                        <SubmitButton className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">
                           Sync taxes from QuickBooks
-                        </button>
+                        </SubmitButton>
                       </form>
                     )}
                   </div>
@@ -631,9 +632,9 @@ export default async function SettingsPage({
                     </span>
                     {isAdmin && (
                       <form action={syncQboClasses}>
-                        <button className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">
+                        <SubmitButton className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">
                           Sync classes from QuickBooks
-                        </button>
+                        </SubmitButton>
                       </form>
                     )}
                   </div>
@@ -665,9 +666,9 @@ export default async function SettingsPage({
                     </span>
                     {isAdmin && (
                       <form action={syncQboProjects}>
-                        <button className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">
+                        <SubmitButton className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">
                           Sync projects from QuickBooks
-                        </button>
+                        </SubmitButton>
                       </form>
                     )}
                   </div>
@@ -704,9 +705,9 @@ export default async function SettingsPage({
                     </span>
                     {isAdmin && (
                       <form action={syncQboSuppliers}>
-                        <button className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">
+                        <SubmitButton className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">
                           Sync suppliers from QuickBooks
-                        </button>
+                        </SubmitButton>
                       </form>
                     )}
                   </div>
@@ -743,9 +744,9 @@ export default async function SettingsPage({
                     </span>
                     {isAdmin && (
                       <form action={syncQboCategories}>
-                        <button className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">
+                        <SubmitButton className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">
                           Sync categories from QuickBooks
-                        </button>
+                        </SubmitButton>
                       </form>
                     )}
                   </div>
@@ -913,9 +914,9 @@ export default async function SettingsPage({
                         <td className="px-4 py-3">
                           {m.user_id !== user.id && (
                             <form action={removeMember.bind(null, m.id)}>
-                              <button className="text-xs text-red-500 hover:underline">
+                              <SubmitButton className="text-xs text-red-500 hover:underline">
                                 Remove
-                              </button>
+                              </SubmitButton>
                             </form>
                           )}
                         </td>
@@ -960,9 +961,9 @@ export default async function SettingsPage({
                 placeholder="QBO ID (optional)"
                 className={`${inputCls} w-40`}
               />
-              <button className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700">
+              <SubmitButton className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700">
                 Add
-              </button>
+              </SubmitButton>
             </form>
 
             <ul className="mt-4 divide-y divide-slate-100 rounded-lg border border-slate-200 bg-white">
@@ -1001,16 +1002,16 @@ export default async function SettingsPage({
                     >
                       {p.source}
                     </span>
-                    <button className="rounded-md bg-slate-800 px-2.5 py-1 text-xs font-medium text-white hover:bg-slate-700">
+                    <SubmitButton className="rounded-md bg-slate-800 px-2.5 py-1 text-xs font-medium text-white hover:bg-slate-700">
                       Save
-                    </button>
+                    </SubmitButton>
                   </form>
                   <div className="mt-2 flex flex-wrap items-center gap-3">
                     <span className="flex-1" />
                     <form action={deleteProject.bind(null, p.id)}>
-                      <button className="text-xs text-red-500 hover:underline">
+                      <SubmitButton className="text-xs text-red-500 hover:underline">
                         Delete
-                      </button>
+                      </SubmitButton>
                     </form>
                   </div>
                 </li>

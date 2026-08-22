@@ -6,6 +6,7 @@ import { getCurrentOrg } from "@/lib/current-org";
 import { createInvoiceFromFile, InvoiceIngestError } from "@/lib/invoices";
 import { extractPdfPageRange, renderPdfPagesToPngDataUrls } from "@/lib/invoice-split";
 import { ConfirmSubmitButton } from "@/components/ConfirmSubmitButton";
+import { SubmitButton } from "@/components/SubmitButton";
 
 const INVOICE_BUCKET = "invoices";
 
@@ -186,12 +187,9 @@ export default async function PendingSplitReviewPage({
       {pending.status === "pending" && (
         <div className="mt-6 flex items-center gap-3">
           <form action={confirmSplit.bind(null, pending.id)}>
-            <button
-              type="submit"
-              className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
-            >
+            <SubmitButton className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700">
               Confirm split — create {pending.groups.length} invoices
-            </button>
+            </SubmitButton>
           </form>
           <ConfirmSubmitButton
             action={dismissSplit.bind(null, pending.id)}

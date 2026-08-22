@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentOrg } from "@/lib/current-org";
 import { SignOutButton } from "@/components/SignOutButton";
+import { SubmitButton } from "@/components/SubmitButton";
 import { runReport, type ReportConfig } from "@/lib/reports";
 
 // ---------------------------------------------------------------------
@@ -278,9 +279,9 @@ export default async function ReportsPage({
               </div>
             </div>
 
-            <button className="mt-4 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700">
+            <SubmitButton className="mt-4 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700">
               Save & run report
-            </button>
+            </SubmitButton>
           </form>
 
           {/* Saved reports */}
@@ -297,9 +298,9 @@ export default async function ReportsPage({
                   {r.name}
                 </Link>
                 <form action={deleteReport.bind(null, r.id)}>
-                  <button className="text-xs text-red-500 hover:underline">
+                  <SubmitButton className="text-xs text-red-500 hover:underline">
                     Delete
-                  </button>
+                  </SubmitButton>
                 </form>
               </div>
             ))}

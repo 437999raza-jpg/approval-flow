@@ -10,32 +10,47 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [sent, setSent] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // These are plain client-side onSubmit handlers (direct Supabase auth
+  // calls), not server actions, so useFormStatus doesn't apply here —
+  // tracked by hand instead, same as everywhere else in the app.
+  const [magicLinkPending, setMagicLinkPending] = useState(false);
+  const [passwordPending, setPasswordPending] = useState(false);
 
   async function sendMagicLink(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
-    const supabase = createClient();
-    const { error } = await supabase.auth.signInWithOtp({
-      email,
-      options: {
-        emailRedirectTo: `${window.location.origin}/auth/callback?next=/dashboard`,
-      },
-    });
-    if (error) setError(error.message);
-    else setSent(true);
+    setMagicLinkPending(true);
+    try {
+      const supabase = createClient();
+      const { error } = await supabase.auth.signInWithOtp({
+        email,
+        options: {
+          emailRedirectTo: `${window.location.origin}/auth/callback?next=/dashboard`,
+        },
+      });
+      if (error) setError(error.message);
+      else setSent(true);
+    } finally {
+      setMagicLinkPending(false);
+    }
   }
 
   async function signInWithPassword(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
-    const supabase = createClient();
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) {
-      setError(error.message);
-      return;
+    setPasswordPending(true);
+    try {
+      const supabase = createClient();
+      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      if (error) {
+        setError(error.message);
+        return;
+      }
+      router.push("/dashboard");
+      router.refresh();
+    } finally {
+      setPasswordPending(false);
     }
-    router.push("/dashboard");
-    router.refresh();
   }
 
   return (
@@ -58,9 +73,10 @@ export default function LoginPage() {
           />
           <button
             type="submit"
-            className="w-full rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+            disabled={magicLinkPending}
+            className={`w-full rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 ${magicLinkPending ? "opacity-60" : ""}`}
           >
-            Send magic link
+            {magicLinkPending ? "Sending…" : "Send magic link"}
           </button>
         </form>
       )}
@@ -82,9 +98,10 @@ export default function LoginPage() {
         />
         <button
           type="submit"
-          className="w-full rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          disabled={passwordPending}
+          className={`w-full rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 ${passwordPending ? "opacity-60" : ""}`}
         >
-          Sign in with password
+          {passwordPending ? "Signing in…" : "Sign in with password"}
         </button>
       </form>
 
