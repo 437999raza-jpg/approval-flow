@@ -14,6 +14,7 @@ import { SignOutButton } from "@/components/SignOutButton";
 import { CollapsiblePane } from "@/components/CollapsiblePane";
 import { DetailSplit, type DocumentRef } from "@/components/DetailSplit";
 import { Sidebar } from "@/components/Sidebar";
+import { DocumentFocusProvider } from "@/components/DocumentFocusContext";
 import { DocumentSearchModal, type DocumentSearchFilters } from "@/components/DocumentSearchModal";
 import type { SupplierDefaultsValues } from "@/components/SupplierRulesModal";
 import type { MultiSelectOption } from "@/components/MultiSelect";
@@ -933,6 +934,7 @@ export default async function DashboardPage({
   ];
 
   return (
+    <DocumentFocusProvider>
     <div className="flex h-screen bg-slate-50 text-slate-900">
       {/* Sidebar (collapsible via hamburger) */}
       <Sidebar>
@@ -1331,5 +1333,6 @@ export default async function DashboardPage({
         </div>
       </div>
     </div>
+    </DocumentFocusProvider>
   );
 }

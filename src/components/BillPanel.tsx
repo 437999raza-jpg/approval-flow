@@ -80,8 +80,14 @@ const ghostLabel = "block text-[10px] font-semibold uppercase tracking-wide text
 // horizontally-scrolling box on anything narrower than ~780px (the Bill
 // panel itself defaults to 480px). Cells rely on `truncate` + a `title`
 // tooltip for anything that still doesn't fit.
+//
+// Class and Tax are short, fixed-shape values (a project code, a 1-2
+// digit %) — as `fr` tracks they used to balloon with the panel's width
+// and look mostly empty; Amount is a currency figure ("-165,000.00") that
+// needs real room and was getting squeezed. Class/Tax are now small fixed
+// widths instead of flexible shares, and that space moved to Amount.
 const LINE_ITEM_COLS =
-  "grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)_minmax(0,1.3fr)_minmax(0,0.8fr)_56px_80px_44px_42px]";
+  "grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)_minmax(0,1.3fr)_88px_52px_104px_44px_42px]";
 
 // ApprovalMax-style "Bill" panel, styled as a document: every data item is
 // editable in place and maps to QBO on sync (vendor/bill number/dates/

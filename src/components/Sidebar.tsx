@@ -2,6 +2,7 @@
 
 import { useState, type ReactNode } from "react";
 import { ResizeHandle } from "./ResizeHandle";
+import { useDocumentFocus } from "./DocumentFocusContext";
 
 // Collapsible left sidebar. Collapses to a slim rail with a hamburger button
 // so the content gets the full width. Width is drag-resizable. Client
@@ -9,6 +10,12 @@ import { ResizeHandle } from "./ResizeHandle";
 export function Sidebar({ children }: { children: ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);
   const [width, setWidth] = useState(240);
+  const { focused: docFocused } = useDocumentFocus();
+
+  // A document open for the 50/50 split takes the whole screen — not even
+  // the collapsed rail stays. collapsed/width are untouched, so whatever
+  // state this was in comes right back once the document closes.
+  if (docFocused) return null;
 
   if (collapsed) {
     return (

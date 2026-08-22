@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { useFormStatus } from "react-dom";
 
 import {
@@ -10,6 +10,7 @@ import {
   type BillInstructionsData,
 } from "./BillPanel";
 import { ResizeHandle } from "./ResizeHandle";
+import { useDocumentFocus } from "./DocumentFocusContext";
 import type { SupplierDefaultsValues } from "./SupplierRulesModal";
 import type { Database } from "@/lib/supabase/types";
 import type { AuditTimelineEntry } from "@/lib/audit-timeline";
@@ -109,10 +110,12 @@ export function DetailSplit({
   const [billOpen, setBillOpen] = useState(true);
   const [docIndex, setDocIndex] = useState(0);
   const [billW, setBillW] = useState(480);
+  const outerRef = useRef<HTMLDivElement>(null);
   const docRef = useRef<HTMLDivElement>(null);
   const docScrollerRef = useRef<HTMLDivElement>(null);
   const billRef = useRef<HTMLDivElement>(null);
   const formRef = useRef<HTMLFormElement>(null);
+  const { setFocused } = useDocumentFocus();
 
   // Switching invoices (navigation keeps this component mounted) must not
   // carry the previous invoice's scroll position into the new one — reset
@@ -122,23 +125,43 @@ export function DetailSplit({
     docScrollerRef.current?.scrollTo({ top: 0 });
   }, [invoiceId]);
 
+  // Snap to an even 50/50 split every time the document opens — the
+  // sidebar and invoice list have just hidden (see setFocused below), so
+  // this pane's own width has grown to the full screen by the time this
+  // runs (useLayoutEffect fires after that DOM update, before paint, so
+  // there's no visible flash of the old width first).
+  useLayoutEffect(() => {
+    if (showDoc && outerRef.current) {
+      setBillW(Math.round(outerRef.current.getBoundingClientRect().width / 2));
+    }
+  }, [showDoc]);
+
+  // If this pane disappears for any reason while a document is open (e.g.
+  // the invoice gets deselected), the sidebar/list must come back — there
+  // would otherwise be nothing left on screen to un-focus with.
+  useEffect(() => () => setFocused(false), [setFocused]);
+
   const safeIndex = Math.min(docIndex, Math.max(documents.length - 1, 0));
   const doc = documents[safeIndex];
   const multi = documents.length > 1;
 
   const openDocument = () => {
     setShowDoc(true);
+    setFocused(true);
     setDocIndex(0);
   };
 
-  const hideDocument = () => setShowDoc(false);
+  const hideDocument = () => {
+    setShowDoc(false);
+    setFocused(false);
+  };
 
   const prevDoc = () =>
     setDocIndex((i) => (i + documents.length - 1) % documents.length);
   const nextDoc = () => setDocIndex((i) => (i + 1) % documents.length);
 
   return (
-    <div className="flex min-w-0 flex-1">
+    <div ref={outerRef} className="flex min-w-0 flex-1">
       {showDoc ? (
         <div
           ref={docRef}

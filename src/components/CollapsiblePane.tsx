@@ -2,6 +2,7 @@
 
 import { useState, type ReactNode } from "react";
 import { ResizeHandle } from "./ResizeHandle";
+import { useDocumentFocus } from "./DocumentFocusContext";
 
 // A collapsible vertical pane (used for the invoice list). Collapses to a
 // slim strip with a chevron + vertical label, mirroring the document pane.
@@ -17,6 +18,12 @@ export function CollapsiblePane({
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const [width, setWidth] = useState(320);
+  const { focused: docFocused } = useDocumentFocus();
+
+  // A document open for the 50/50 split takes the whole screen — not even
+  // the collapsed strip stays. open/width are untouched, so whatever state
+  // this was in comes right back once the document closes.
+  if (docFocused) return null;
 
   if (!open) {
     return (
