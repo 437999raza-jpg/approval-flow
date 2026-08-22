@@ -192,8 +192,17 @@ export async function buildInvoiceAuditDocument(
     idName: (id) => projectNameById.get(id),
   });
 
+  // The PDF is built server-side, where there's no browser to default to
+  // the viewer's local time — toLocaleString() without an explicit
+  // timeZone falls back to the SERVER's zone (UTC on Vercel), showing
+  // times hours ahead of what the same timestamp renders as in the app
+  // itself (client-rendered, so it naturally uses the browser's zone).
+  // No org-level timezone setting exists yet, and every project/address
+  // in this app is Ontario-based, so hardcode Eastern for now.
+  const TZ = "America/Toronto";
   const fmtDate = (iso: string) =>
     new Date(iso).toLocaleString(undefined, {
+      timeZone: TZ,
       weekday: "long",
       day: "numeric",
       month: "long",
@@ -260,7 +269,7 @@ export async function buildInvoiceAuditDocument(
       { label: "Bill date", value: invoice.bill_date ?? "—" },
     ],
     [
-      { label: "Generated", value: new Date().toLocaleDateString() },
+      { label: "Generated", value: new Date().toLocaleDateString(undefined, { timeZone: TZ }) },
       { label: "Due date", value: invoice.due_date ?? "—" },
     ],
   ];
@@ -338,7 +347,9 @@ export async function buildInvoiceAuditDocument(
               color: stateColor,
             },
             {
-              text: decision ? new Date(decision.decided_at).toLocaleDateString() : "-",
+              text: decision
+                ? new Date(decision.decided_at).toLocaleDateString(undefined, { timeZone: TZ })
+                : "-",
               x: 420,
               size: 10,
             },
