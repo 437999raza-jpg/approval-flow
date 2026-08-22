@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { SupplierRulesModal, type SupplierDefaultsValues } from "./SupplierRulesModal";
 import { Combobox } from "./Combobox";
 import { CollapsibleSection } from "./CollapsibleSection";
@@ -72,7 +72,7 @@ const ghostLabel = "block text-[10px] font-semibold uppercase tracking-wide text
 // panel itself defaults to 480px). Cells rely on `truncate` + a `title`
 // tooltip for anything that still doesn't fit.
 const LINE_ITEM_COLS =
-  "grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_minmax(0,1.3fr)_minmax(0,0.8fr)_56px_80px_44px_18px]";
+  "grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)_minmax(0,1.3fr)_minmax(0,0.8fr)_56px_80px_44px_42px]";
 
 // ApprovalMax-style "Bill" panel, styled as a document: every data item is
 // editable in place and maps to QBO on sync (vendor/bill number/dates/
@@ -91,6 +91,7 @@ export function BillPanel({
   saveBill,
   saveLineItem,
   deleteLineItem,
+  cloneLineItem,
   reExtract,
   backToReview,
   canReview,
@@ -128,6 +129,7 @@ export function BillPanel({
     formData: FormData
   ) => Promise<void>;
   deleteLineItem: (lineItemId: string) => Promise<void>;
+  cloneLineItem: (lineItemId: string) => Promise<void>;
   reExtract: () => Promise<void>;
   backToReview: () => Promise<void>;
   canReview: boolean;
@@ -231,6 +233,24 @@ export function BillPanel({
   const billBlur = readOnly
     ? { disabled: true as const }
     : { onBlur: () => billFormRef.current?.requestSubmit() };
+
+  // The blank "add line" row only shows up when explicitly asked for
+  // (the "+ Add line" button) instead of always sitting at the bottom of
+  // the table — it used to be the ONLY way to add a line at all, which
+  // meant a permanently-open, half-filled-looking row for every bill.
+  // Once the save actually lands (a new id shows up in `lineItems`,
+  // fed back in from the server after revalidation) the blank row
+  // closes itself again rather than doubling up with the now-real row.
+  const [addingLine, setAddingLine] = useState(false);
+  const knownLineItemIds = useRef(new Set(lineItems.map((li) => li.id)));
+  useEffect(() => {
+    const ids = new Set(lineItems.map((li) => li.id));
+    if (addingLine && lineItems.some((li) => !knownLineItemIds.current.has(li.id))) {
+      setAddingLine(false);
+    }
+    knownLineItemIds.current = ids;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lineItems]);
 
   return (
     <div className="flex h-full w-full flex-col border-r border-slate-200 bg-white">
@@ -609,10 +629,11 @@ export function BillPanel({
                 qboTaxRates={qboTaxRates}
                 saveLineItem={saveLineItem}
                 deleteLineItem={deleteLineItem}
+                cloneLineItem={cloneLineItem}
                 readOnly={readOnly}
               />
             ))}
-            {!readOnly && (
+            {!readOnly && addingLine && (
               <LineItemRow
                 itemId="new"
                 defaults={{
@@ -630,10 +651,21 @@ export function BillPanel({
                 qboTaxRates={qboTaxRates}
                 saveLineItem={saveLineItem}
                 deleteLineItem={undefined}
+                cloneLineItem={undefined}
                 readOnly={false}
+                onCancel={() => setAddingLine(false)}
               />
             )}
           </div>
+          {!readOnly && !addingLine && (
+            <button
+              type="button"
+              onClick={() => setAddingLine(true)}
+              className="mt-2 rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
+            >
+              + Add line
+            </button>
+          )}
 
           {/* Totals — derived from the line items above (Amount × each
               line's Tax %); not separately editable. currency still
@@ -842,7 +874,9 @@ function LineItemRow({
   qboTaxRates,
   saveLineItem,
   deleteLineItem,
+  cloneLineItem,
   readOnly,
+  onCancel,
 }: {
   itemId: string;
   defaults: {
@@ -863,12 +897,28 @@ function LineItemRow({
     formData: FormData
   ) => Promise<void>;
   deleteLineItem?: (lineItemId: string) => Promise<void>;
+  cloneLineItem?: (lineItemId: string) => Promise<void>;
   readOnly: boolean;
+  // The blank add-line row's "cancel" button — dismisses it without
+  // saving. Only meaningful when itemId === "new".
+  onCancel?: () => void;
 }) {
   const isNew = itemId === "new";
   const formId = `line-item-${itemId}`;
   const formRef = useRef<HTMLFormElement>(null);
+  const descRef = useRef<HTMLTextAreaElement>(null);
   const cellCls = "w-full truncate border-b border-transparent bg-transparent px-0 py-1.5 text-xs text-slate-800 hover:border-slate-200 focus:border-blue-500 focus:outline-none disabled:text-slate-400";
+  // Description wraps and grows instead of truncating — PMs need to read
+  // the whole thing, not just what fits on one line.
+  const descCls = "w-full resize-none overflow-hidden whitespace-pre-wrap break-words border-b border-transparent bg-transparent px-0 py-1.5 text-xs text-slate-800 hover:border-slate-200 focus:border-blue-500 focus:outline-none disabled:text-slate-400";
+
+  const autoResizeDesc = () => {
+    const el = descRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  };
+  useEffect(autoResizeDesc, []);
 
   // Existing rows save automatically when a field loses focus (no Save
   // button). The blank "add line" row keeps an explicit button. In
@@ -886,7 +936,7 @@ function LineItemRow({
 
   return (
     <div
-      className={`group grid ${LINE_ITEM_COLS} items-center gap-x-2 border-b border-slate-100 py-0.5`}
+      className={`group grid ${LINE_ITEM_COLS} items-start gap-x-2 border-b border-slate-100 py-0.5`}
     >
       <form
         id={formId}
@@ -906,12 +956,15 @@ function LineItemRow({
           if (!isNew && !readOnly) formRef.current?.requestSubmit();
         }}
       />
-      <input
+      <textarea
+        ref={descRef}
         form={formId}
         name="description"
+        rows={1}
         defaultValue={defaults.description}
         placeholder={isNew ? "Description" : undefined}
-        className={cellCls}
+        className={descCls}
+        onInput={autoResizeDesc}
         {...blurSave}
       />
       <Combobox
@@ -961,7 +1014,7 @@ function LineItemRow({
         className={`${cellCls} text-right tabular-nums`}
         {...blurSave}
       />
-      <div className="flex justify-center">
+      <div className="flex justify-center pt-1.5">
         <input
           form={formId}
           name="linked"
@@ -973,27 +1026,51 @@ function LineItemRow({
       </div>
       {isNew ? (
         !readOnly && (
-          <button
-            form={formId}
-            type="submit"
-            title="Add line"
-            className="justify-self-end text-sm font-medium text-blue-600 hover:underline"
-          >
-            +
-          </button>
-        )
-      ) : (
-        !readOnly &&
-        deleteLineItem && (
-          <form action={deleteLineItem.bind(null, itemId)} className="justify-self-end">
+          <div className="flex items-center justify-end gap-1.5 pt-1">
             <button
+              form={formId}
               type="submit"
-              title="Delete line"
-              className="text-slate-300 opacity-0 hover:text-red-500 group-hover:opacity-100"
+              title="Add line"
+              className="text-sm font-medium text-blue-600 hover:underline"
+            >
+              Add
+            </button>
+            <button
+              type="button"
+              title="Cancel"
+              onClick={onCancel}
+              className="text-slate-400 hover:text-slate-600"
             >
               ×
             </button>
-          </form>
+          </div>
+        )
+      ) : (
+        !readOnly && (
+          <div className="flex items-center justify-end gap-1.5 pt-1 opacity-0 group-hover:opacity-100">
+            {cloneLineItem && (
+              <form action={cloneLineItem.bind(null, itemId)}>
+                <button
+                  type="submit"
+                  title="Clone line"
+                  className="text-slate-400 hover:text-blue-600"
+                >
+                  ⧉
+                </button>
+              </form>
+            )}
+            {deleteLineItem && (
+              <form action={deleteLineItem.bind(null, itemId)}>
+                <button
+                  type="submit"
+                  title="Delete line"
+                  className="text-slate-400 hover:text-red-500"
+                >
+                  ×
+                </button>
+              </form>
+            )}
+          </div>
         )
       )}
     </div>

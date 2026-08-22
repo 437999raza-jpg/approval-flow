@@ -45,6 +45,7 @@ import {
   overrideStatus,
   saveLineItem,
   deleteLineItem,
+  cloneLineItem,
   reExtract,
   syncToQbo,
 } from "@/lib/dashboard-actions";
@@ -1192,6 +1193,7 @@ export default async function DashboardPage({
                   saveBill: saveBill.bind(null, selected.id),
                   saveLineItem: saveLineItem.bind(null, selected.id),
                   deleteLineItem: deleteLineItem.bind(null, selected.id),
+                  cloneLineItem: cloneLineItem.bind(null, selected.id),
                   reExtract: reExtract.bind(null, selected.id),
                   qboConnected: !!qboConnection,
                   qboRealmId: qboConnection?.realm_id ?? null,

@@ -1275,6 +1275,68 @@ export async function deleteLineItem(invoiceId: string, lineItemId: string) {
   revalidatePath("/dashboard", "layout");
 }
 
+// Duplicate a line item exactly (same category/description/tax/class/
+// project/amount) as a new row right after it — the fast path for "one
+// more line just like this one", instead of re-typing everything into
+// the blank add-line row.
+export async function cloneLineItem(invoiceId: string, lineItemId: string) {
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
+  const { data: invoice } = await supabase
+    .from("invoices")
+    .select("organization_id")
+    .eq("id", invoiceId)
+    .single();
+  if (!invoice) return;
+
+  const { data: item } = await supabase
+    .from("invoice_line_items")
+    .select("category, description, tax_rate, class, project_id, amount, linked, line_order")
+    .eq("id", lineItemId)
+    .single();
+  if (!item) return;
+
+  const { data: last } = await supabase
+    .from("invoice_line_items")
+    .select("line_order")
+    .eq("invoice_id", invoiceId)
+    .order("line_order", { ascending: false })
+    .limit(1);
+
+  await supabase.from("invoice_line_items").insert({
+    category: item.category,
+    description: item.description,
+    tax_rate: item.tax_rate,
+    class: item.class,
+    project_id: item.project_id,
+    amount: item.amount,
+    linked: item.linked,
+    invoice_id: invoiceId,
+    line_order: (last?.[0]?.line_order ?? 0) + 1,
+  });
+
+  await recomputeInvoiceTotals(supabase, invoiceId);
+
+  await supabase.from("audit_log").insert({
+    organization_id: invoice.organization_id,
+    invoice_id: invoiceId,
+    actor_id: user.id,
+    action: "invoice.line_item_added",
+    metadata: {
+      description: item.description,
+      category: item.category,
+      amount: item.amount,
+      cloned: true,
+    },
+  });
+
+  revalidatePath("/dashboard", "layout");
+}
+
 // Re-run extraction on the invoice's primary document and replace the
 // mapped fields + line items (Dext-style "re-process"). Best-effort.
 export async function reExtract(invoiceId: string) {

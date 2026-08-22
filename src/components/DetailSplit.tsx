@@ -41,6 +41,7 @@ export interface BillData {
     formData: FormData
   ) => Promise<void>;
   deleteLineItem: (lineItemId: string) => Promise<void>;
+  cloneLineItem: (lineItemId: string) => Promise<void>;
   reExtract: () => Promise<void>;
   backToReview: () => Promise<void>;
   canReview: boolean;
@@ -310,6 +311,7 @@ export function DetailSplit({
             saveBill={bill.saveBill}
             saveLineItem={bill.saveLineItem}
             deleteLineItem={bill.deleteLineItem}
+            cloneLineItem={bill.cloneLineItem}
             reExtract={bill.reExtract}
             backToReview={bill.backToReview}
             canReview={bill.canReview}
