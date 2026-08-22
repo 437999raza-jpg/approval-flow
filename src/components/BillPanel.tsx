@@ -92,6 +92,8 @@ export function BillPanel({
   qboSuppliers,
   qboClasses,
   qboTaxRates,
+  qboTaxUsesCodes,
+  qboSupplierDefaultTaxRates,
   saveBill,
   saveLineItem,
   deleteLineItem,
@@ -126,7 +128,14 @@ export function BillPanel({
   qboCategories?: string[];
   qboSuppliers?: string[];
   qboClasses?: string[];
-  qboTaxRates?: { value: string; label: string }[];
+  // value = QBO tax code id (see resolveTaxCode in qbo.ts), secondaryValue
+  // = its resolved rate. False qboTaxUsesCodes means these fell back to
+  // plain rates instead (no tax codes synced) — value IS the rate then.
+  qboTaxRates?: { value: string; label: string; secondaryValue?: string }[];
+  qboTaxUsesCodes?: boolean;
+  // Rate-only options for the vendor default-rules modal — supplier
+  // defaults have no tax code identity to attach (see saveSupplierDefaults).
+  qboSupplierDefaultTaxRates?: { value: string; label: string }[];
   saveBill: (formData: FormData) => Promise<void>;
   saveLineItem: (
     lineItemId: string,
@@ -491,7 +500,7 @@ export function BillPanel({
                   <SupplierRulesModal
                     vendorName={invoice.vendor_name}
                     qboCategories={qboCategories}
-                    qboTaxRates={qboTaxRates}
+                    qboTaxRates={qboSupplierDefaultTaxRates}
                     saveAction={saveSupplierDefaults}
                   />
                 </div>
@@ -622,6 +631,7 @@ export function BillPanel({
                   category: item.category ?? "",
                   description: item.description ?? "",
                   tax_rate: item.tax_rate ?? "",
+                  qbo_tax_code_id: item.qbo_tax_code_id ?? "",
                   class: item.class ?? "",
                   project_id: item.project_id ?? "",
                   amount: num2(item.amount),
@@ -631,6 +641,7 @@ export function BillPanel({
                 qboCategories={qboCategories}
                 qboClasses={qboClasses}
                 qboTaxRates={qboTaxRates}
+                qboTaxUsesCodes={qboTaxUsesCodes}
                 saveLineItem={saveLineItem}
                 deleteLineItem={deleteLineItem}
                 cloneLineItem={cloneLineItem}
@@ -644,6 +655,7 @@ export function BillPanel({
                   category: "",
                   description: "",
                   tax_rate: "",
+                  qbo_tax_code_id: "",
                   class: "",
                   project_id: "",
                   amount: "",
@@ -653,6 +665,7 @@ export function BillPanel({
                 qboCategories={qboCategories}
                 qboClasses={qboClasses}
                 qboTaxRates={qboTaxRates}
+                qboTaxUsesCodes={qboTaxUsesCodes}
                 saveLineItem={saveLineItem}
                 deleteLineItem={undefined}
                 cloneLineItem={undefined}
@@ -910,6 +923,7 @@ function LineItemRow({
   qboCategories,
   qboClasses,
   qboTaxRates,
+  qboTaxUsesCodes,
   saveLineItem,
   deleteLineItem,
   cloneLineItem,
@@ -921,6 +935,7 @@ function LineItemRow({
     category: string;
     description: string;
     tax_rate: number | "";
+    qbo_tax_code_id: string;
     class: string;
     project_id: string;
     amount: string;
@@ -929,7 +944,8 @@ function LineItemRow({
   projects: { id: string; name: string }[];
   qboCategories?: string[];
   qboClasses?: string[];
-  qboTaxRates?: { value: string; label: string }[];
+  qboTaxRates?: { value: string; label: string; secondaryValue?: string }[];
+  qboTaxUsesCodes?: boolean;
   saveLineItem: (
     lineItemId: string,
     formData: FormData
@@ -1031,9 +1047,16 @@ function LineItemRow({
       />
       <Combobox
         formId={formId}
-        name="tax_rate"
+        name={qboTaxUsesCodes ? "qbo_tax_code_id" : "tax_rate"}
+        secondaryName={qboTaxUsesCodes ? "tax_rate" : undefined}
         options={qboTaxRates ?? []}
-        defaultValue={defaults.tax_rate === "" ? "" : String(defaults.tax_rate)}
+        defaultValue={
+          qboTaxUsesCodes
+            ? defaults.qbo_tax_code_id
+            : defaults.tax_rate === ""
+              ? ""
+              : String(defaults.tax_rate)
+        }
         placeholder={isNew ? "Tax %" : undefined}
         className={`${cellCls} text-right tabular-nums`}
         disabled={readOnly}

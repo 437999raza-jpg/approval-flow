@@ -210,7 +210,7 @@ export default async function DashboardPage({
       .order("rate_value", { ascending: true }),
     supabase
       .from("qbo_tax_codes")
-      .select("name, rate_value")
+      .select("qbo_tax_code_id, name, rate_value")
       .eq("organization_id", org.id)
       .order("name", { ascending: true }),
     supabase
@@ -357,9 +357,26 @@ export default async function DashboardPage({
   }));
 
   // Tax field offers the QBO codes with their resolved rates, exactly like
-  // Dext/ApprovalMax: type "h" → "H (13%)" → picks 13%. The value stored is
-  // the rate; the label shows the code.
-  const qboTaxCodeOptions: { value: string; label: string }[] = (
+  // Dext/ApprovalMax: type "h" → "H (13%)" → picks it, box shows "13". The
+  // submitted value is the QBO tax code id (not the rate) — two codes can
+  // resolve to the same rate (e.g. "H" and "M&E (ON)" both 13%), so the
+  // rate alone can't tell QBO which one to use; the rate itself still
+  // rides along as secondaryValue for the app's own tax-total math.
+  const qboTaxCodeOptions: { value: string; label: string; secondaryValue: string }[] = (
+    qboTaxCodeRows ?? []
+  )
+    .filter((c) => c.rate_value != null)
+    .map((c) => ({
+      value: c.qbo_tax_code_id,
+      label: `${c.name} (${c.rate_value}%)`,
+      secondaryValue: String(c.rate_value),
+    }));
+
+  // Supplier default rules only ever store a plain rate (no per-org tax
+  // code identity to disambiguate against — see supplier_defaults.tax_rate
+  // and its "apply to inbox" bulk-update path), so its Tax field keeps the
+  // old rate-as-value shape rather than the line-item Tax field's code id.
+  const qboTaxCodeRateOnlyOptions: { value: string; label: string }[] = (
     qboTaxCodeRows ?? []
   )
     .filter((c) => c.rate_value != null)
@@ -367,6 +384,8 @@ export default async function DashboardPage({
       value: String(c.rate_value),
       label: `${c.name} (${c.rate_value}%)`,
     }));
+  const qboSupplierDefaultTaxOptions =
+    qboTaxCodeRateOnlyOptions.length > 0 ? qboTaxCodeRateOnlyOptions : qboTaxRateOptions;
 
   const classOptions: MultiSelectOption[] = [
     ...new Set((lineItemRows ?? []).map((r) => r.class).filter((c): c is string => !!c)),
@@ -1191,6 +1210,8 @@ export default async function DashboardPage({
                   qboSuppliers: qboSupplierNames,
                   qboClasses: qboClassNames,
                   qboTaxRates: qboTaxCodeOptions.length > 0 ? qboTaxCodeOptions : qboTaxRateOptions,
+                  qboTaxUsesCodes: qboTaxCodeOptions.length > 0,
+                  qboSupplierDefaultTaxRates: qboSupplierDefaultTaxOptions,
                   saveBill: saveBill.bind(null, selected.id),
                   saveLineItem: saveLineItem.bind(null, selected.id),
                   deleteLineItem: deleteLineItem.bind(null, selected.id),

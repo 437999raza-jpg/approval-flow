@@ -20,13 +20,16 @@ import { createPortal } from "react-dom";
 
 export type ComboboxOption =
   | string
-  | { label: string; value: string };
+  | { label: string; value: string; secondaryValue?: string };
 
 function labelOf(o: ComboboxOption): string {
   return typeof o === "string" ? o : o.label;
 }
 function valueOf(o: ComboboxOption): string {
   return typeof o === "string" ? o : o.value;
+}
+function secondaryValueOf(o: ComboboxOption): string {
+  return typeof o === "string" ? "" : (o.secondaryValue ?? "");
 }
 function isObjOption(o: ComboboxOption): boolean {
   return typeof o !== "string";
@@ -44,6 +47,7 @@ export function Combobox({
   matchStart = false,
   showValue = false,
   minQueryLength = 2,
+  secondaryName,
 }: {
   name: string;
   formId: string;
@@ -59,11 +63,20 @@ export function Combobox({
   // project "2022-58 (Midway Nissan)").
   matchStart?: boolean;
   // For { label, value } options: display the VALUE in the box (tax rates)
-  // instead of the label (project names).
+  // instead of the label (project names). With secondaryName set, shows
+  // secondaryValue instead (the rate) while `value` (the tax code id) is
+  // what's actually submitted — see secondaryName below.
   showValue?: boolean;
   // Minimum characters before searching starts. Tax codes are single
   // letters (H, G, P), so the Tax field uses 1; big lists use 2.
   minQueryLength?: number;
+  // Submits a SECOND hidden field alongside `value`, from the matched
+  // option's `secondaryValue`. Tax needs both: the exact QBO tax code id
+  // (as `value`/`name`, since two codes can share the same rate — e.g. "H"
+  // and "M&E (ON)" both at 13% — so the rate alone can't identify which
+  // one was picked) and the resolved rate (as `secondaryValue`, for the
+  // app's own tax-total math and display).
+  secondaryName?: string;
 }) {
   const hasPairs = options.length > 0 && isObjOption(options[0]);
   const pairForValue = (v: string) =>
@@ -82,7 +95,8 @@ export function Combobox({
     if (!hasPairs) return v;
     const match = pairForValue(v);
     if (!match) return v;
-    return showValue ? valueOf(match) : labelOf(match);
+    if (!showValue) return labelOf(match);
+    return secondaryName ? secondaryValueOf(match) || valueOf(match) : valueOf(match);
   };
 
   const [selected, setSelected] = useState(defaultValue); // submitted value
@@ -98,6 +112,7 @@ export function Combobox({
   const boxRef = useRef<HTMLDivElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const hiddenRef = useRef<HTMLInputElement>(null);
+  const secondaryHiddenRef = useRef<HTMLInputElement>(null);
   const committedRef = useRef(defaultValue);
 
   // The dropdown is portaled to document.body and positioned against the
@@ -181,9 +196,14 @@ export function Combobox({
     : [];
   const filtered = ranked;
 
-  // Keep the hidden value input in sync with the selected value.
+  // Keep the hidden value input(s) in sync with the selected value.
   useEffect(() => {
     if (hiddenRef.current) hiddenRef.current.value = selected;
+    if (secondaryHiddenRef.current) {
+      const match = pairForValue(selected);
+      secondaryHiddenRef.current.value = match ? secondaryValueOf(match) : "";
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected]);
 
   useEffect(() => {
@@ -227,6 +247,10 @@ export function Combobox({
       // already hold the new value or the old one gets saved (e.g. picking
       // project GM but saving the previous Lexus).
       if (hiddenRef.current) hiddenRef.current.value = value;
+      if (secondaryHiddenRef.current) {
+        const match = pairForValue(value);
+        secondaryHiddenRef.current.value = match ? secondaryValueOf(match) : "";
+      }
       onCommit(value);
     }
   }
@@ -234,12 +258,13 @@ export function Combobox({
   function pick(o: ComboboxOption) {
     const v = valueOf(o);
     setSelected(v);
-    setQuery(showValue && hasPairs ? v : labelOf(o));
+    setQuery(showValue && hasPairs ? (secondaryName ? secondaryValueOf(o) || v : v) : labelOf(o));
     setOpen(false);
     if (v !== committedRef.current) {
       committedRef.current = v;
       // Same synchronous DOM write as commitCurrent — see above.
       if (hiddenRef.current) hiddenRef.current.value = v;
+      if (secondaryHiddenRef.current) secondaryHiddenRef.current.value = secondaryValueOf(o);
       onCommit(v);
     }
   }
@@ -253,6 +278,18 @@ export function Combobox({
           form={formId}
           name={name}
           value={selected}
+        />
+      )}
+      {hasPairs && secondaryName && (
+        <input
+          ref={secondaryHiddenRef}
+          type="hidden"
+          form={formId}
+          name={secondaryName}
+          defaultValue={(() => {
+            const match = pairForValue(defaultValue);
+            return match ? secondaryValueOf(match) : "";
+          })()}
         />
       )}
       <input

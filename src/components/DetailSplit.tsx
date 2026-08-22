@@ -34,7 +34,15 @@ export interface BillData {
   qboCategories?: string[];
   qboSuppliers?: string[];
   qboClasses?: string[];
-  qboTaxRates?: { value: string; label: string }[];
+  qboTaxRates?: { value: string; label: string; secondaryValue?: string }[];
+  // True when qboTaxRates came from the org's synced QBO TaX CODES (each
+  // option's value is the QBO tax code id — see BillPanel's Tax field).
+  // False means it fell back to plain rates with no code identity at all
+  // (no tax codes synced yet), which can't produce a TaxCodeRef.
+  qboTaxUsesCodes?: boolean;
+  // Rate-only options (no tax code id) for the vendor default-rules Tax
+  // field — supplier_defaults.tax_rate has no code identity to attach.
+  qboSupplierDefaultTaxRates?: { value: string; label: string }[];
   saveBill: (formData: FormData) => Promise<void>;
   saveLineItem: (
     lineItemId: string,
@@ -308,6 +316,8 @@ export function DetailSplit({
             qboSuppliers={bill.qboSuppliers}
             qboClasses={bill.qboClasses}
             qboTaxRates={bill.qboTaxRates}
+            qboTaxUsesCodes={bill.qboTaxUsesCodes}
+            qboSupplierDefaultTaxRates={bill.qboSupplierDefaultTaxRates}
             saveBill={bill.saveBill}
             saveLineItem={bill.saveLineItem}
             deleteLineItem={bill.deleteLineItem}

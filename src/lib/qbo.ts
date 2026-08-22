@@ -792,18 +792,26 @@ export async function loadTaxCodeCache(
   };
 }
 
-// Resolves ONE line's selected tax rate to a QBO TaxCode id, refreshing
-// the mirror from QBO at most once (on the first miss) before failing
-// loudly. A line with no tax rate selected (0/null) resolves to null —
-// no TaxCodeRef, no line, nothing posted. Never falls back to a manual
-// liability-account line.
+// Resolves ONE line's tax to a QBO TaxCode id. If the line already carries
+// the exact code the user picked (qbo_tax_code_id, saved by the Tax field
+// — see Combobox's secondaryName wiring in BillPanel), that's used as-is;
+// no ambiguity is possible since it names one specific code directly. Only
+// legacy rows saved before that column existed (rate only, no code id)
+// fall back to matching by rate — refreshing the mirror from QBO at most
+// once (on the first miss) before failing loudly, since two codes can
+// share a rate (e.g. "H" and "M&E (ON)" both 13%) and Flow won't guess
+// which one to use. A line with no tax selected at all (0/null, no code
+// id) resolves to null — no TaxCodeRef, no line, nothing posted. Never
+// falls back to a manual liability-account line.
 export async function resolveTaxCode(
   supabase: SupabaseClient<Database>,
   conn: QboConnection,
   organizationId: string,
   cache: TaxCodeCache,
-  rate: number | null | undefined
+  rate: number | null | undefined,
+  codeId?: string | null
 ): Promise<string | null> {
+  if (codeId) return codeId;
   if (rate == null || !Number.isFinite(rate) || rate <= 0) return null;
 
   let hit = matchTaxCode(cache.codes, rate);

@@ -1156,6 +1156,7 @@ export async function saveLineItem(
     category: text("category"),
     description: text("description"),
     tax_rate: num("tax_rate"),
+    qbo_tax_code_id: text("qbo_tax_code_id"),
     class: text("class"),
     project_id: text("project_id"),
     amount: num("amount"),
@@ -1180,7 +1181,7 @@ export async function saveLineItem(
     // (from → to) instead of a generic "line edited".
     const { data: before } = await supabase
       .from("invoice_line_items")
-      .select("description, category, class, project_id, tax_rate, amount")
+      .select("description, category, class, project_id, tax_rate, qbo_tax_code_id, amount")
       .eq("id", lineItemId)
       .single();
 
@@ -1295,7 +1296,7 @@ export async function cloneLineItem(invoiceId: string, lineItemId: string) {
 
   const { data: item } = await supabase
     .from("invoice_line_items")
-    .select("category, description, tax_rate, class, project_id, amount, linked, line_order")
+    .select("category, description, tax_rate, qbo_tax_code_id, class, project_id, amount, linked, line_order")
     .eq("id", lineItemId)
     .single();
   if (!item) return;
@@ -1311,6 +1312,7 @@ export async function cloneLineItem(invoiceId: string, lineItemId: string) {
     category: item.category,
     description: item.description,
     tax_rate: item.tax_rate,
+    qbo_tax_code_id: item.qbo_tax_code_id,
     class: item.class,
     project_id: item.project_id,
     amount: item.amount,
@@ -1949,7 +1951,7 @@ export async function syncToQbo(invoiceId: string) {
     const [{ data: lineItems }, { data: instrRows }] = await Promise.all([
       supabase
         .from("invoice_line_items")
-        .select("description, amount, category, tax_rate")
+        .select("description, amount, category, tax_rate, qbo_tax_code_id")
         .eq("invoice_id", invoiceId),
       supabase
         .from("accounting_instructions")
@@ -2011,7 +2013,8 @@ export async function syncToQbo(invoiceId: string) {
         conn,
         inv.organization_id,
         taxCodeCache,
-        li.tax_rate
+        li.tax_rate,
+        li.qbo_tax_code_id
       );
       resolvedLines.push({
         description: li.description,
