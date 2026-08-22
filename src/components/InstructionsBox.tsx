@@ -34,6 +34,15 @@ export function InstructionsBox({
   const formId = "instructions-form";
   const [text, setText] = useState("");
   const [localCos, setLocalCos] = useState(false);
+  // Every note ever added used to render in full, permanently pushing the
+  // actual bill (vendor/amount/etc.) further down the panel with each new
+  // note — on a bill with a handful of notes this box alone ran ~200px
+  // tall. Only the latest note shows by default; the rest are one click
+  // away. The full thread still composes into the QBO memo regardless of
+  // this UI state — nothing here changes what actually gets sent.
+  const [showAllNotes, setShowAllNotes] = useState(false);
+  const visibleEntries = showAllNotes ? entries : entries.slice(-1);
+  const hiddenCount = entries.length - visibleEntries.length;
 
   // Locked once set upstream; otherwise the current approver can tick it.
   const cos = hasCosOrExtras || localCos;
@@ -85,10 +94,20 @@ export function InstructionsBox({
         </p>
       )}
 
-      {/* History — everyone's notes, oldest first */}
+      {/* History — everyone's notes, oldest first. Only the latest shows
+          by default; older ones are a click away (see showAllNotes above). */}
       {entries.length > 0 ? (
         <div className="mt-2 space-y-1.5">
-          {entries.map((e) => (
+          {hiddenCount > 0 && (
+            <button
+              type="button"
+              onClick={() => setShowAllNotes(true)}
+              className="text-[11px] font-medium text-blue-600 hover:underline"
+            >
+              Show {hiddenCount} earlier note{hiddenCount > 1 ? "s" : ""}
+            </button>
+          )}
+          {visibleEntries.map((e) => (
             <div key={e.id} className="rounded-md bg-slate-50 px-2.5 py-1.5">
               <div className="flex items-baseline justify-between gap-2">
                 <span className="text-[11px] font-semibold text-slate-700">
@@ -103,6 +122,15 @@ export function InstructionsBox({
               </p>
             </div>
           ))}
+          {showAllNotes && entries.length > 1 && (
+            <button
+              type="button"
+              onClick={() => setShowAllNotes(false)}
+              className="text-[11px] text-slate-400 hover:underline"
+            >
+              Collapse
+            </button>
+          )}
         </div>
       ) : (
         <p className="mt-2 text-xs text-slate-400">

@@ -777,7 +777,7 @@ export function BillPanel({
 
         <div className="border-t border-slate-100 px-6 py-3">
           <CollapsibleSection
-            title="Discussion"
+            title="Discussion / Notes"
             badge={comments.length > 0 ? comments.length : undefined}
           >
             <div className="mt-3 space-y-3">
