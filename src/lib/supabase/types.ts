@@ -448,6 +448,7 @@ export interface Database {
           name_normalized: string;
           active: boolean;
           synced_at: string;
+          integration: string;
         };
         Insert: Partial<
           Database["public"]["Tables"]["qbo_suppliers"]["Row"]
@@ -544,6 +545,7 @@ export interface Database {
           tax_rate: number | null;
           payment_terms_days: number | null;
           currency: string | null;
+          product_service: string | null;
           created_at: string;
           updated_at: string;
         };

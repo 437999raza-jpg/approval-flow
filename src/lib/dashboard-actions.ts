@@ -578,8 +578,12 @@ export async function saveBill(invoiceId: string, formData: FormData) {
 // Payment terms) to the invoice itself — of every other invoice from this
 // same supplier still sitting in the review queue. Future invoices from
 // this vendor pick up the rule automatically at ingestion (invoices.ts).
+// invoiceId is null when saved from the Settings -> Suppliers page (not
+// tied to any one bill) rather than the Bill panel's "Supplier rules"
+// modal — both write the exact same supplier_defaults row through this
+// one action, so the two places can never drift out of sync.
 export async function saveSupplierDefaults(
-  invoiceId: string,
+  invoiceId: string | null,
   vendorName: string,
   formData: FormData
 ) {
@@ -610,6 +614,7 @@ export async function saveSupplierDefaults(
   const values = {
     category: text("category"),
     class: text("class"),
+    product_service: text("product_service"),
     project_id: text("project_id"),
     tax_rate: num("tax_rate"),
     payment_terms_days: int("payment_terms_days"),
@@ -617,13 +622,15 @@ export async function saveSupplierDefaults(
   };
 
   // Only fields the user explicitly set become the rule — blanks never
-  // overwrite existing defaults (and class/project are per-bill choices,
-  // never saved as supplier rules).
+  // overwrite existing defaults. Project stays a per-bill choice (a
+  // supplier can work on many jobs), never saved as a supplier rule.
   const rule: Database["public"]["Tables"]["supplier_defaults"]["Update"] = {
     vendor_name: vendorName,
     updated_at: new Date().toISOString(),
   };
   if (values.category) rule.category = values.category;
+  if (values.class) rule.class = values.class;
+  if (values.product_service) rule.product_service = values.product_service;
   if (values.tax_rate != null) rule.tax_rate = values.tax_rate;
   if (values.payment_terms_days != null)
     rule.payment_terms_days = values.payment_terms_days;
@@ -665,6 +672,7 @@ export async function saveSupplierDefaults(
       const lineItemUpdate: Database["public"]["Tables"]["invoice_line_items"]["Update"] =
         {};
       if (values.category) lineItemUpdate.category = values.category;
+      if (values.class) lineItemUpdate.class = values.class;
       if (values.tax_rate != null) lineItemUpdate.tax_rate = values.tax_rate;
       if (Object.keys(lineItemUpdate).length > 0) {
         await supabase
@@ -684,6 +692,38 @@ export async function saveSupplierDefaults(
   });
 
   revalidatePath("/dashboard", "layout");
+  revalidatePath("/settings/suppliers");
+}
+
+// Which accounting platform a supplier belongs to — lives on qbo_suppliers
+// (not supplier_defaults) since it's a property of the supplier record
+// itself, not a default applied to its invoices. Purely informational
+// today: every supplier comes from this org's one QBO connection, and
+// nothing reads this field yet — it's there for whenever a Xero/Zoho
+// Books connection exists to actually pick between.
+export async function saveSupplierIntegration(
+  qboSupplierId: string,
+  formData: FormData
+) {
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
+  const org = await getCurrentOrg(supabase);
+  if (!org) return;
+
+  const integration = String(formData.get("integration") ?? "").trim();
+  if (!integration) return;
+
+  await supabase
+    .from("qbo_suppliers")
+    .update({ integration })
+    .eq("id", qboSupplierId)
+    .eq("organization_id", org.id);
+
+  revalidatePath("/settings/suppliers");
 }
 
 // Is the signed-in user allowed to review extracted data (admin only)?

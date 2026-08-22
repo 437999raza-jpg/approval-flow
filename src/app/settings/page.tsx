@@ -703,6 +703,13 @@ export default async function SettingsPage({
                     <span className="text-sm font-semibold text-slate-800">
                       Suppliers
                     </span>
+                    <Link
+                      href="/settings/suppliers"
+                      className="text-xs font-medium text-blue-600 hover:underline"
+                    >
+                      Manage suppliers →
+                    </Link>
+                    <span className="flex-1" />
                     {isAdmin && (
                       <form action={syncQboSuppliers}>
                         <SubmitButton className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">
@@ -713,7 +720,9 @@ export default async function SettingsPage({
                   </div>
                   <p className="mt-1 text-xs text-slate-500">
                     Read-only from QuickBooks — Flow never creates suppliers.
-                    OCR vendor names are matched against this list.
+                    OCR vendor names are matched against this list. Set
+                    category/class/tax/currency/payment-term defaults per
+                    supplier on the Manage suppliers page.
                   </p>
                   {qboSuppliers && qboSuppliers.length > 0 ? (
                     <div className="mt-1">

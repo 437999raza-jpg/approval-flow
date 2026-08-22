@@ -3,7 +3,13 @@
 import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import { useState } from "react";
 
-export function SearchInput({ defaultValue }: { defaultValue: string }) {
+export function SearchInput({
+  defaultValue,
+  placeholder = "Search vendor, file, invoice #...",
+}: {
+  defaultValue: string;
+  placeholder?: string;
+}) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -19,7 +25,7 @@ export function SearchInput({ defaultValue }: { defaultValue: string }) {
   return (
     <input
       type="search"
-      placeholder="Search vendor, file, invoice #..."
+      placeholder={placeholder}
       value={value}
       onChange={(e) => setValue(e.target.value)}
       onKeyDown={(e) => e.key === "Enter" && submit(value)}

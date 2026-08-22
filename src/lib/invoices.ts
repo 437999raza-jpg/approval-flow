@@ -162,8 +162,9 @@ export async function createInvoiceFromFile({
   // document's own printed totals, and not the pre-override tax rates.
   // When extraction found no line items there's nothing to derive from,
   // so the whole-document totals are the only numbers available.
-  // Supplier rules carry Category, Tax rate, Payment terms, Currency —
-  // never Class or Project (those are per-bill choices).
+  // Supplier rules carry Category, Class, Tax rate, Payment terms, Currency
+  // — never Project (a supplier can work on many jobs, so that stays a
+  // per-bill choice, detected from the PO number above instead).
   const hasLineItems = !!extracted && extracted.line_items.length > 0;
   const finalLineItems = hasLineItems
     ? extracted!.line_items.map((li) => ({
@@ -171,7 +172,7 @@ export async function createInvoiceFromFile({
         amount: li.amount,
         tax_rate: supplierDefaults?.tax_rate ?? li.tax_rate,
         category: hbPayableCategoryFor(li) ?? supplierDefaults?.category ?? li.category,
-        class: li.class,
+        class: supplierDefaults?.class ?? li.class,
         project_id: projectId,
       }))
     : supplierDefaults
@@ -181,7 +182,7 @@ export async function createInvoiceFromFile({
             amount: extracted?.total_amount ?? null,
             tax_rate: supplierDefaults.tax_rate,
             category: supplierDefaults.category,
-            class: null,
+            class: supplierDefaults.class,
             project_id: projectId,
           },
         ]

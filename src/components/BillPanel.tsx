@@ -505,7 +505,9 @@ export function BillPanel({
                   <SupplierRulesModal
                     vendorName={invoice.vendor_name}
                     qboCategories={qboCategories}
+                    qboClasses={qboClasses}
                     qboTaxRates={qboSupplierDefaultTaxRates}
+                    initialValues={supplierDefaults}
                     saveAction={saveSupplierDefaults}
                   />
                 </div>

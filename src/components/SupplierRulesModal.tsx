@@ -7,6 +7,7 @@ import { SubmitButton } from "@/components/SubmitButton";
 export interface SupplierDefaultsValues {
   category: string;
   class: string;
+  product_service: string;
   project_id: string;
   tax_rate: string;
   payment_terms_days: string;
@@ -16,27 +17,24 @@ export interface SupplierDefaultsValues {
 export function SupplierRulesModal({
   vendorName,
   qboCategories,
+  qboClasses,
   qboTaxRates,
+  initialValues,
   saveAction,
 }: {
   vendorName: string;
   // QBO mirrors (read-only) for searchable pick-lists, same as the bill.
   qboCategories?: string[];
+  qboClasses?: string[];
   qboTaxRates?: { value: string; label: string }[];
+  // Whatever's already saved for this supplier (or, if nothing's saved
+  // yet, sensible values pulled from the current invoice) — the dialog
+  // always reflects what's actually stored, not a blank slate.
+  initialValues: SupplierDefaultsValues;
   saveAction: (formData: FormData) => Promise<void>;
 }) {
   const [open, setOpen] = useState(false);
   const formId = "supplier-rules-form";
-  // Always start BLANK — never pre-fill from the current invoice or a
-  // saved rule. Only what you explicitly pick in this dialog is saved.
-  const blank: SupplierDefaultsValues = {
-    category: "",
-    class: "",
-    project_id: "",
-    tax_rate: "",
-    payment_terms_days: "",
-    currency: "",
-  };
 
   return (
     <>
@@ -80,10 +78,12 @@ export function SupplierRulesModal({
               className="space-y-3 p-6"
             >
               <p className="text-xs text-slate-500">
-                Applied automatically to future invoices from this supplier —
-                only the fields you set here are saved. Leave a field blank
-                to leave it to extraction. Project and Class are chosen per
-                bill, never as a supplier rule.
+                Saved for this supplier and applied automatically to its
+                future invoices — only the fields you set here are saved,
+                blank ones are left to extraction. This is the same record
+                shown in Settings → Suppliers, so it&apos;s always in sync
+                either way. Project is still chosen per bill, never as a
+                supplier rule.
               </p>
 
               <div>
@@ -94,9 +94,36 @@ export function SupplierRulesModal({
                   formId={formId}
                   name="category"
                   options={qboCategories ?? []}
-                  defaultValue={blank.category}
+                  defaultValue={initialValues.category}
                   placeholder="Search category…"
                   onCommit={() => {}}
+                  className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-600">
+                  Class
+                </label>
+                <Combobox
+                  formId={formId}
+                  name="class"
+                  options={qboClasses ?? []}
+                  defaultValue={initialValues.class}
+                  placeholder="Search class…"
+                  onCommit={() => {}}
+                  className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-600">
+                  Product/Service
+                </label>
+                <input
+                  name="product_service"
+                  defaultValue={initialValues.product_service}
+                  placeholder="e.g. Subcontractor labour"
                   className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
                 />
               </div>
@@ -110,7 +137,7 @@ export function SupplierRulesModal({
                     formId={formId}
                     name="tax_rate"
                     options={qboTaxRates ?? []}
-                    defaultValue={blank.tax_rate}
+                    defaultValue={initialValues.tax_rate}
                     placeholder="Tax %"
                     onCommit={() => {}}
                     showValue
@@ -124,7 +151,7 @@ export function SupplierRulesModal({
                   </label>
                   <input
                     name="currency"
-                    defaultValue={blank.currency}
+                    defaultValue={initialValues.currency}
                     placeholder="e.g. CAD"
                     className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
                   />
@@ -140,7 +167,7 @@ export function SupplierRulesModal({
                     name="payment_terms_days"
                     type="number"
                     min={0}
-                    defaultValue={blank.payment_terms_days}
+                    defaultValue={initialValues.payment_terms_days}
                     className="w-24 rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
                   />
                   <span className="text-sm text-slate-500">days after invoice date</span>
@@ -154,7 +181,7 @@ export function SupplierRulesModal({
                   defaultChecked
                   className="mt-0.5 h-4 w-4 rounded border-slate-300"
                 />
-                Apply to all invoices still in review from this supplier
+                Also apply to all invoices still in review from this supplier
               </label>
 
               <div className="flex justify-end gap-2 pt-2">
@@ -166,7 +193,7 @@ export function SupplierRulesModal({
                   Cancel
                 </button>
                 <SubmitButton className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700">
-                  Apply
+                  Save
                 </SubmitButton>
               </div>
             </form>
