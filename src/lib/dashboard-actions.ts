@@ -18,7 +18,7 @@ import {
   stepDecisionState,
 } from "@/lib/workflow-conditions";
 import type { Database, InvoiceStatus } from "@/lib/supabase/types";
-import { getQboConnection, listCategories, listTaxRates, listTaxCodes, listClasses, listSuppliers, listProjects, matchSupplier, createBill, attachDocuments, findExpenseAccount, loadCategoryAccountCache, resolveCategoryAccount } from "@/lib/qbo";
+import { getQboConnection, listCategories, listTaxRates, listTaxCodes, listClasses, listSuppliers, listProjects, matchSupplier, createBill, attachDocuments, loadCategoryAccountCache, resolveCategoryAccount } from "@/lib/qbo";
 import { fetchAllQboSuppliers } from "@/lib/qbo-all";
 import { buildQboAttachmentBundle } from "@/lib/qbo-attachments";
 
@@ -2010,11 +2010,17 @@ export async function syncToQbo(invoiceId: string) {
     }
     const taxAmount = inv.tax_amount ?? 0;
     if (taxAmount > 0) {
-      const taxAccountId = await findExpenseAccount(conn, "Sales Tax Payable");
+      if (!conn.taxLiabilityAccountId) {
+        throw new Error(
+          `QBO: no Sales Tax Liability Account is configured for ${
+            conn.companyName ?? "this QuickBooks company"
+          }. Set one in Settings → QuickBooks Online → Sales Tax Liability Account before syncing invoices with tax.`
+        );
+      }
       resolvedLines.push({
         description: "Tax",
         amount: taxAmount,
-        accountId: taxAccountId,
+        accountId: conn.taxLiabilityAccountId,
       });
     }
 
@@ -2106,6 +2112,44 @@ export async function disconnectQbo() {
   await supabase
     .from("qbo_connections")
     .delete()
+    .eq("organization_id", org.id);
+
+  revalidatePath("/settings");
+}
+
+// Admin sets which synced Chart-of-Accounts liability account Flow should
+// post sales tax to on this org's bills. Flow never creates or guesses this
+// account — it must already exist and be active in QuickBooks (picked from
+// the qbo_categories mirror). Empty selection clears it, which makes
+// syncToQbo hard-fail on any invoice with tax rather than silently posting
+// tax anywhere.
+export async function saveTaxLiabilityAccount(formData: FormData) {
+  "use server";
+
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
+  const org = await getCurrentOrg(supabase);
+  if (!org || org.role !== "admin") return;
+
+  const accountId = (formData.get("tax_liability_account_id") as string | null)?.trim() || null;
+
+  if (accountId) {
+    const { data: match } = await supabase
+      .from("qbo_categories")
+      .select("qbo_account_id")
+      .eq("organization_id", org.id)
+      .eq("qbo_account_id", accountId)
+      .maybeSingle();
+    if (!match) return;
+  }
+
+  await supabase
+    .from("qbo_connections")
+    .update({ tax_liability_account_id: accountId, updated_at: new Date().toISOString() })
     .eq("organization_id", org.id);
 
   revalidatePath("/settings");

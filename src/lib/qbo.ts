@@ -115,6 +115,7 @@ export interface QboConnection {
   realmId: string;
   companyName: string | null;
   accessToken: string;
+  taxLiabilityAccountId: string | null;
 }
 
 // Fetch the org's QBO connection, transparently refreshing the access token
@@ -148,6 +149,7 @@ export async function getQboConnection(
         realmId: data.realm_id,
         companyName: data.company_name,
         accessToken: refreshed.accessToken,
+        taxLiabilityAccountId: data.tax_liability_account_id,
       };
     } catch {
       return null;
@@ -158,6 +160,7 @@ export async function getQboConnection(
     realmId: data.realm_id,
     companyName: data.company_name,
     accessToken: data.access_token,
+    taxLiabilityAccountId: data.tax_liability_account_id,
   };
 }
 
@@ -578,10 +581,12 @@ async function queryAccountId(
   return json.QueryResponse?.Account?.[0]?.Id ?? null;
 }
 
-// Resolves a bare name (no account number) to a QBO account — the tax
-// line ("Sales Tax Payable") and the "no category set on this line"
-// fallback. Name and AccountType ARE queryable fields (unlike AcctNum —
-// see resolveCategoryAccount below for why numbered categories never go
+// Resolves a bare name (no account number) to a QBO account — used only
+// for the "no category set on this line" fallback (the tax line now uses
+// the org's configured taxLiabilityAccountId instead of a guessed name;
+// see the Sales Tax Liability Account setting in Settings). Name and
+// AccountType ARE queryable fields (unlike AcctNum — see
+// resolveCategoryAccount below for why numbered categories never go
 // through a live query at all), so this stays a live QBO call.
 export async function findExpenseAccount(
   conn: QboConnection,
