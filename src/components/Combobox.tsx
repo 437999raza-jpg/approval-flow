@@ -89,7 +89,12 @@ export function Combobox({
   const [query, setQuery] = useState(displayOf(defaultValue)); // shown text
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(-1);
-  const [rect, setRect] = useState<{ top: number; left: number; width: number } | null>(null);
+  type DropRect = {
+    left: number;
+    width: number;
+    maxHeight: number;
+  } & ({ top: number; bottom?: undefined } | { bottom: number; top?: undefined });
+  const [rect, setRect] = useState<DropRect | null>(null);
   const boxRef = useRef<HTMLDivElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const hiddenRef = useRef<HTMLInputElement>(null);
@@ -101,14 +106,31 @@ export function Combobox({
   // scrolling container, which clips any in-flow absolute-positioned
   // overlay at its own edge once the panel is scrolled (an ancestor's
   // overflow-y-auto clips descendants regardless of z-index). A portal
-  // escapes that entirely.
+  // escapes that entirely — but `position: fixed` only escapes ancestor
+  // clipping, not the actual browser viewport: a full-height (288px)
+  // dropdown opened near the bottom of the window still runs off-screen,
+  // and since this app has no page-level scroll (fixed-height panes
+  // throughout), that overflow is simply unreachable. So: flip the
+  // dropdown above the field when there's more room up there than down,
+  // and always cap its height to whatever space is actually available
+  // in the chosen direction (it already scrolls internally past that).
+  const MAX_DROPDOWN = 288; // matches the old max-h-72
+  const EDGE_MARGIN = 8;
   useEffect(() => {
     if (!open) return;
     const update = () => {
       const el = boxRef.current;
       if (!el) return;
       const r = el.getBoundingClientRect();
-      setRect({ top: r.bottom, left: r.left, width: r.width });
+      const spaceBelow = window.innerHeight - r.bottom - EDGE_MARGIN;
+      const spaceAbove = r.top - EDGE_MARGIN;
+      const openUp = spaceBelow < 120 && spaceAbove > spaceBelow;
+      const maxHeight = Math.max(80, Math.min(MAX_DROPDOWN, openUp ? spaceAbove : spaceBelow));
+      setRect(
+        openUp
+          ? { bottom: window.innerHeight - r.top + 2, left: r.left, width: r.width, maxHeight }
+          : { top: r.bottom + 2, left: r.left, width: r.width, maxHeight }
+      );
     };
     update();
     window.addEventListener("scroll", update, true);
@@ -285,14 +307,17 @@ export function Combobox({
             ref={dropdownRef}
             style={{
               position: "fixed",
-              top: rect.top + 2,
+              ...(rect.top !== undefined ? { top: rect.top } : { bottom: rect.bottom }),
               left: rect.left,
               width: Math.max(rect.width, 180),
             }}
             className="z-50"
           >
             {filtered.length > 0 ? (
-              <div className="max-h-72 overflow-y-auto rounded-md border border-slate-200 bg-white py-0.5 shadow-lg">
+              <div
+                style={{ maxHeight: rect.maxHeight }}
+                className="overflow-y-auto rounded-md border border-slate-200 bg-white py-0.5 shadow-lg"
+              >
                 {filtered.map((o, i) => (
                   <button
                     key={valueOf(o)}
