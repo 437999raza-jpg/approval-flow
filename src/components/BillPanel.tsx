@@ -860,7 +860,7 @@ function LineItemRow({
   const isNew = itemId === "new";
   const formId = `line-item-${itemId}`;
   const formRef = useRef<HTMLFormElement>(null);
-  const cellCls = "border-b border-transparent bg-transparent px-0 py-1.5 text-xs text-slate-800 hover:border-slate-200 focus:border-blue-500 focus:outline-none disabled:text-slate-400";
+  const cellCls = "w-full truncate border-b border-transparent bg-transparent px-0 py-1.5 text-xs text-slate-800 hover:border-slate-200 focus:border-blue-500 focus:outline-none disabled:text-slate-400";
 
   // Existing rows save automatically when a field loses focus (no Save
   // button). The blank "add line" row keeps an explicit button. In

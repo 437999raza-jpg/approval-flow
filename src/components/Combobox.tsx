@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 // Searchable combobox for bill fields: type to filter, click or arrow+enter
 // to pick. Submits the field's value through the hidden form like the plain
@@ -88,9 +89,35 @@ export function Combobox({
   const [query, setQuery] = useState(displayOf(defaultValue)); // shown text
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(-1);
+  const [rect, setRect] = useState<{ top: number; left: number; width: number } | null>(null);
   const boxRef = useRef<HTMLDivElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
   const hiddenRef = useRef<HTMLInputElement>(null);
   const committedRef = useRef(defaultValue);
+
+  // The dropdown is portaled to document.body and positioned against the
+  // input's live screen coordinates instead of a plain `absolute` child —
+  // this component sits inside the Bill panel's own independently-
+  // scrolling container, which clips any in-flow absolute-positioned
+  // overlay at its own edge once the panel is scrolled (an ancestor's
+  // overflow-y-auto clips descendants regardless of z-index). A portal
+  // escapes that entirely.
+  useEffect(() => {
+    if (!open) return;
+    const update = () => {
+      const el = boxRef.current;
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      setRect({ top: r.bottom, left: r.left, width: r.width });
+    };
+    update();
+    window.addEventListener("scroll", update, true);
+    window.addEventListener("resize", update);
+    return () => {
+      window.removeEventListener("scroll", update, true);
+      window.removeEventListener("resize", update);
+    };
+  }, [open]);
 
   // After a save the page re-renders with the SAME key, so React reuses
   // this instance and the internal state would keep showing the OLD value
@@ -139,7 +166,14 @@ export function Combobox({
 
   useEffect(() => {
     function onDocMouseDown(e: MouseEvent) {
-      if (boxRef.current && !boxRef.current.contains(e.target as Node)) {
+      const target = e.target as Node;
+      const inBox = boxRef.current && boxRef.current.contains(target);
+      // The dropdown lives in a portal (document.body), outside boxRef's
+      // own DOM subtree — without this check every click on an option
+      // would look like an "outside" click and close+commit before the
+      // option's own onMouseDown had a chance to fire pick().
+      const inDropdown = dropdownRef.current && dropdownRef.current.contains(target);
+      if (!inBox && !inDropdown) {
         setOpen(false);
         commitCurrent();
       }
@@ -241,36 +275,54 @@ export function Combobox({
         placeholder={placeholder}
         disabled={disabled}
         autoComplete="off"
+        title={query}
         className={className}
       />
-      {open && filtered.length > 0 && (
-        <div className="absolute left-0 top-full z-30 mt-0.5 max-h-72 w-full min-w-[180px] overflow-y-auto rounded-md border border-slate-200 bg-white py-0.5 shadow-lg">
-          {filtered.map((o, i) => (
-            <button
-              key={valueOf(o)}
-              type="button"
-              tabIndex={-1}
-              onMouseDown={(e) => {
-                e.preventDefault();
-                pick(o);
-              }}
-              onMouseEnter={() => setActive(i)}
-              className={`block w-full truncate px-2 py-1 text-left text-xs ${
-                i === active ? "bg-blue-50 text-blue-700" : "text-slate-700"
-              }`}
-            >
-              {labelOf(o)}
-            </button>
-          ))}
-        </div>
-      )}
-      {open && !searching && (
-        <div className="absolute left-0 top-full z-30 mt-0.5 w-full min-w-[180px] rounded-md border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-400 shadow-lg">
-          {minQueryLength === 1
-            ? "Type to search…"
-            : `Type at least ${minQueryLength} characters to search…`}
-        </div>
-      )}
+      {open &&
+        rect &&
+        createPortal(
+          <div
+            ref={dropdownRef}
+            style={{
+              position: "fixed",
+              top: rect.top + 2,
+              left: rect.left,
+              width: Math.max(rect.width, 180),
+            }}
+            className="z-50"
+          >
+            {filtered.length > 0 ? (
+              <div className="max-h-72 overflow-y-auto rounded-md border border-slate-200 bg-white py-0.5 shadow-lg">
+                {filtered.map((o, i) => (
+                  <button
+                    key={valueOf(o)}
+                    type="button"
+                    tabIndex={-1}
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      pick(o);
+                    }}
+                    onMouseEnter={() => setActive(i)}
+                    className={`block w-full truncate px-2 py-1 text-left text-xs ${
+                      i === active ? "bg-blue-50 text-blue-700" : "text-slate-700"
+                    }`}
+                  >
+                    {labelOf(o)}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              !searching && (
+                <div className="rounded-md border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-400 shadow-lg">
+                  {minQueryLength === 1
+                    ? "Type to search…"
+                    : `Type at least ${minQueryLength} characters to search…`}
+                </div>
+              )
+            )}
+          </div>,
+          document.body
+        )}
     </div>
   );
 }
