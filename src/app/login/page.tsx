@@ -4,8 +4,15 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
+// Two ways in, one form visible at a time: password is the default (the
+// common path for a returning user), one-time email link is a fallback
+// reachable via a single toggle — also doubles as "forgot password" since
+// there's no separate reset flow, it just signs you in without one.
+type Mode = "password" | "magic";
+
 export default function LoginPage() {
   const router = useRouter();
+  const [mode, setMode] = useState<Mode>("password");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [sent, setSent] = useState(false);
@@ -15,6 +22,7 @@ export default function LoginPage() {
   // tracked by hand instead, same as everywhere else in the app.
   const [magicLinkPending, setMagicLinkPending] = useState(false);
   const [passwordPending, setPasswordPending] = useState(false);
+  const pending = magicLinkPending || passwordPending;
 
   async function sendMagicLink(e: React.FormEvent) {
     e.preventDefault();
@@ -53,59 +61,176 @@ export default function LoginPage() {
     }
   }
 
+  function switchMode(next: Mode) {
+    setMode(next);
+    setError(null);
+  }
+
+  const inputCls =
+    "w-full rounded-lg border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100";
+  const labelCls = "mb-1.5 block text-xs font-medium text-slate-600";
+  const primaryBtnCls = (isPending: boolean) =>
+    `flex w-full items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60 ${
+      isPending ? "opacity-70" : ""
+    }`;
+
+  function Spinner() {
+    return (
+      <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+      </svg>
+    );
+  }
+
   return (
-    <main className="mx-auto max-w-sm p-8">
-      <h1 className="text-xl font-semibold">Sign in</h1>
+    <main className="flex min-h-screen items-center justify-center bg-slate-50 px-4 py-12">
+      <div className="w-full max-w-sm">
+        <div className="mb-8 flex flex-col items-center text-center">
+          <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-blue-600 text-white shadow-sm">
+            <svg viewBox="0 0 24 24" fill="none" className="h-6 w-6">
+              <path
+                d="M5 13l4 4L19 7"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </div>
+          <h1 className="mt-3 text-lg font-semibold text-slate-900">
+            Approval Flow
+          </h1>
+          <p className="mt-1 text-sm text-slate-500">
+            Sign in to review and approve invoices
+          </p>
+        </div>
 
-      {sent ? (
-        <p className="mt-4 text-sm text-slate-600">
-          Check {email} for a sign-in link.
-        </p>
-      ) : (
-        <form onSubmit={sendMagicLink} className="mt-4 space-y-3">
-          <input
-            type="email"
-            required
-            placeholder="you@company.com"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-          />
-          <button
-            type="submit"
-            disabled={magicLinkPending}
-            className={`w-full rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 ${magicLinkPending ? "opacity-60" : ""}`}
-          >
-            {magicLinkPending ? "Sending…" : "Send magic link"}
-          </button>
-        </form>
-      )}
+        <div className="rounded-2xl border border-slate-200 bg-white p-7 shadow-sm shadow-slate-200/50">
+          {mode === "magic" && sent ? (
+            <div className="py-2 text-center">
+              <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-emerald-50 text-emerald-600">
+                <svg viewBox="0 0 24 24" fill="none" className="h-5 w-5">
+                  <path
+                    d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </div>
+              <p className="mt-3 text-sm font-medium text-slate-800">
+                Check your email
+              </p>
+              <p className="mt-1 text-sm text-slate-500">
+                We sent a sign-in link to <span className="font-medium text-slate-700">{email}</span>.
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  setSent(false);
+                  switchMode("password");
+                }}
+                className="mt-5 text-sm font-medium text-blue-600 hover:underline"
+              >
+                ← Back to sign in
+              </button>
+            </div>
+          ) : mode === "magic" ? (
+            <form onSubmit={sendMagicLink} className="space-y-4">
+              <div>
+                <label className={labelCls}>Email</label>
+                <input
+                  type="email"
+                  required
+                  autoFocus
+                  placeholder="you@company.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className={inputCls}
+                />
+              </div>
+              <button type="submit" disabled={pending} className={primaryBtnCls(magicLinkPending)}>
+                {magicLinkPending && <Spinner />}
+                {magicLinkPending ? "Sending…" : "Send one-time link"}
+              </button>
+              <button
+                type="button"
+                onClick={() => switchMode("password")}
+                className="block w-full text-center text-sm font-medium text-slate-500 hover:text-slate-700"
+              >
+                ← Sign in with password instead
+              </button>
+            </form>
+          ) : (
+            <form onSubmit={signInWithPassword} className="space-y-4">
+              <div>
+                <label className={labelCls}>Email</label>
+                <input
+                  type="email"
+                  required
+                  autoFocus
+                  placeholder="you@company.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className={inputCls}
+                />
+              </div>
+              <div>
+                <div className="mb-1.5 flex items-center justify-between">
+                  <label className={labelCls + " mb-0"}>Password</label>
+                  <button
+                    type="button"
+                    onClick={() => switchMode("magic")}
+                    className="text-xs font-medium text-blue-600 hover:underline"
+                  >
+                    Forgot password?
+                  </button>
+                </div>
+                <input
+                  type="password"
+                  required
+                  placeholder="••••••••"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className={inputCls}
+                />
+              </div>
+              <button type="submit" disabled={pending} className={primaryBtnCls(passwordPending)}>
+                {passwordPending && <Spinner />}
+                {passwordPending ? "Signing in…" : "Sign in"}
+              </button>
+              <div className="relative py-1 text-center">
+                <div className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-slate-200" />
+                <span className="relative bg-white px-3 text-xs text-slate-400">or</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => switchMode("magic")}
+                className="flex w-full items-center justify-center gap-2 rounded-lg border border-slate-300 px-4 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50"
+              >
+                <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4 text-slate-400">
+                  <path
+                    d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+                Email me a one-time link
+              </button>
+            </form>
+          )}
 
-      <div className="my-4 flex items-center gap-3 text-xs text-slate-400">
-        <div className="h-px flex-1 bg-slate-200" />
-        or
-        <div className="h-px flex-1 bg-slate-200" />
+          {error && (
+            <p className="mt-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
+              {error}
+            </p>
+          )}
+        </div>
       </div>
-
-      <form onSubmit={signInWithPassword} className="space-y-3">
-        <input
-          type="password"
-          required
-          placeholder="Password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-        />
-        <button
-          type="submit"
-          disabled={passwordPending}
-          className={`w-full rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 ${passwordPending ? "opacity-60" : ""}`}
-        >
-          {passwordPending ? "Signing in…" : "Sign in with password"}
-        </button>
-      </form>
-
-      {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
     </main>
   );
 }
