@@ -2097,6 +2097,56 @@ export async function clearQboError(invoiceId: string) {
   revalidatePath("/settings");
 }
 
+// Undoes a SUCCESSFUL sync in Flow's own records — for a bill that synced
+// with something wrong on it (bad line, wrong tax) and needs to be pushed
+// again after a fix, not just an error to dismiss. Only clears Flow's
+// side (qbo_sync_status/qbo_bill_id/qbo_synced_at, and status back to
+// qbo_ready so it reappears for a re-sync); it does NOT touch, void, or
+// delete the Bill that already exists in QuickBooks. Re-syncing after this
+// creates a SECOND bill in QBO — the original must be voided/deleted there
+// by hand first if it shouldn't stay. Admin only; logged to audit_log
+// since undoing a completed financial sync is consequential.
+export async function clearQboSync(invoiceId: string) {
+  "use server";
+
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+  if (!(await canReview(supabase))) return;
+
+  const { data: inv } = await supabase
+    .from("invoices")
+    .select("organization_id, status, qbo_bill_id")
+    .eq("id", invoiceId)
+    .single();
+  if (!inv) return;
+
+  await supabase
+    .from("invoices")
+    .update({
+      qbo_sync_status: null,
+      qbo_error: null,
+      qbo_bill_id: null,
+      qbo_synced_at: null,
+      status: inv.status === "approved" ? "qbo_ready" : inv.status,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", invoiceId);
+
+  await supabase.from("audit_log").insert({
+    organization_id: inv.organization_id,
+    invoice_id: invoiceId,
+    actor_id: user.id,
+    action: "invoice.qbo_sync_cleared",
+    metadata: { previous_qbo_bill_id: inv.qbo_bill_id },
+  });
+
+  revalidatePath("/dashboard", "layout");
+  revalidatePath("/settings");
+}
+
 // Disconnect the org from QuickBooks (admin only).
 export async function disconnectQbo() {
   "use server";

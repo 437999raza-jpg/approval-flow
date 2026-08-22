@@ -46,6 +46,10 @@ export interface BillAdminData {
   // that failed while qbo_ready and then moved on (e.g. sent back to
   // review), where the error is stale and there's nothing to retry.
   clearQboError?: () => Promise<void>;
+  // Undoes a SUCCESSFUL sync in Flow's own records only — does not touch
+  // the Bill already created in QuickBooks. For a bill that synced with
+  // something wrong on it and needs to be pushed again after a fix.
+  clearQboSync?: () => Promise<void>;
 }
 
 export interface BillInstructionsEntry {
@@ -738,23 +742,39 @@ export function BillPanel({
           </div>
           <div className="mt-2 space-y-2">
             {invoice.qbo_sync_status === "synced" ? (
-              <p className="flex items-center gap-2 text-emerald-700">
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                Synced to QuickBooks
-                {invoice.qbo_synced_at
-                  ? ` — ${new Date(invoice.qbo_synced_at).toLocaleDateString()}`
-                  : ""}
-                {qboConnected && qboRealmId && invoice.qbo_bill_id && (
-                  <a
-                    href={`https://qbo.intuit.com/app/bill?txnId=${invoice.qbo_bill_id}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="font-medium text-blue-600 hover:underline"
-                  >
-                    Open in QuickBooks Online ↗
-                  </a>
+              <div className="space-y-1.5">
+                <p className="flex flex-wrap items-center gap-2 text-emerald-700">
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                  Synced to QuickBooks
+                  {invoice.qbo_synced_at
+                    ? ` — ${new Date(invoice.qbo_synced_at).toLocaleDateString()}`
+                    : ""}
+                  {qboConnected && qboRealmId && invoice.qbo_bill_id && (
+                    <a
+                      href={`https://qbo.intuit.com/app/bill?txnId=${invoice.qbo_bill_id}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="font-medium text-blue-600 hover:underline"
+                    >
+                      Open in QuickBooks Online ↗
+                    </a>
+                  )}
+                </p>
+                {admin.visible && admin.clearQboSync && (
+                  <div>
+                    <form action={admin.clearQboSync}>
+                      <button className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">
+                        Undo sync (allow re-sync)
+                      </button>
+                    </form>
+                    <p className="mt-1 text-[11px] text-slate-400">
+                      Only clears Flow&apos;s own record — the Bill already
+                      in QuickBooks is untouched. Void or delete it there
+                      yourself first if you don&apos;t want a duplicate.
+                    </p>
+                  </div>
                 )}
-              </p>
+              </div>
             ) : invoice.qbo_sync_status === "error" && !(invoice.status === "qbo_ready" && admin.visible) ? (
               // A failed sync only ever touches qbo_sync_status/qbo_error,
               // never invoice.status — so this is the bill-moved-on case:

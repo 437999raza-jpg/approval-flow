@@ -49,6 +49,7 @@ import {
   reExtract,
   syncToQbo,
   clearQboError,
+  clearQboSync,
 } from "@/lib/dashboard-actions";
 
 type Invoice = Database["public"]["Tables"]["invoices"]["Row"];
@@ -1264,6 +1265,7 @@ export default async function DashboardPage({
                     deleteInvoice: deleteInvoiceAction.bind(null, selected.id),
                     syncToQbo: syncToQbo.bind(null, selected.id),
                     clearQboError: clearQboError.bind(null, selected.id),
+                    clearQboSync: clearQboSync.bind(null, selected.id),
                   },
                   instructions: {
                     entries: instructionEntriesForSelected,
