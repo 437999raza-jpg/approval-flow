@@ -64,7 +64,15 @@ export interface BillInstructionsData {
 const ghostField =
   "w-full border-b border-transparent bg-transparent px-0 py-1 text-sm text-slate-800 hover:border-slate-200 focus:border-blue-500 focus:outline-none disabled:text-slate-500";
 const ghostLabel = "block text-[10px] font-semibold uppercase tracking-wide text-slate-400";
-const LINE_ITEM_COLS = "grid-cols-[1fr_1.3fr_1.5fr_0.9fr_90px_110px_52px_24px]";
+// minmax(0, Nfr) — not plain Nfr — so tracks can actually shrink below
+// their content's min-content width; a plain fr track refuses to go
+// narrower than the widest unbreakable content (e.g. a long project
+// name), which is what was forcing the whole table into its own
+// horizontally-scrolling box on anything narrower than ~780px (the Bill
+// panel itself defaults to 480px). Cells rely on `truncate` + a `title`
+// tooltip for anything that still doesn't fit.
+const LINE_ITEM_COLS =
+  "grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_minmax(0,1.3fr)_minmax(0,0.8fr)_56px_80px_44px_18px]";
 
 // ApprovalMax-style "Bill" panel, styled as a document: every data item is
 // editable in place and maps to QBO on sync (vendor/bill number/dates/
@@ -569,9 +577,9 @@ export function BillPanel({
           <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">
             Category details
           </div>
-          <div className="mt-2 overflow-x-auto overflow-y-visible">
+          <div className="mt-2">
             <div
-              className={`grid ${LINE_ITEM_COLS} min-w-[780px] gap-x-3 border-b border-slate-200 pb-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-400`}
+              className={`grid ${LINE_ITEM_COLS} gap-x-2 border-b border-slate-200 pb-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-400`}
             >
               <span>Category</span>
               <span>Description</span>
@@ -878,7 +886,7 @@ function LineItemRow({
 
   return (
     <div
-      className={`group grid ${LINE_ITEM_COLS} items-center gap-x-3 border-b border-slate-100 py-0.5`}
+      className={`group grid ${LINE_ITEM_COLS} items-center gap-x-2 border-b border-slate-100 py-0.5`}
     >
       <form
         id={formId}
