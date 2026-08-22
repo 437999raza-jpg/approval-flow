@@ -113,6 +113,11 @@ export function Combobox({
   const dropdownRef = useRef<HTMLDivElement>(null);
   const hiddenRef = useRef<HTMLInputElement>(null);
   const secondaryHiddenRef = useRef<HTMLInputElement>(null);
+  // For plain-string options (no pairs — category, class, supplier, etc.)
+  // the VISIBLE input is the field that actually submits (there's no
+  // separate hidden input to write to), so it needs the exact same
+  // synchronous-DOM-write treatment as hiddenRef below.
+  const queryInputRef = useRef<HTMLInputElement>(null);
   const committedRef = useRef(defaultValue);
 
   // The dropdown is portaled to document.body and positioned against the
@@ -242,11 +247,16 @@ export function Combobox({
     if (value !== committedRef.current) {
       committedRef.current = value;
       setSelected(value);
-      // Write the hidden input's DOM value SYNCHRONOUSLY — the form submits
-      // right after this, before React re-renders, so the hidden input must
-      // already hold the new value or the old one gets saved (e.g. picking
-      // project GM but saving the previous Lexus).
+      // Write the submitted field's DOM value SYNCHRONOUSLY — the form
+      // submits right after this (onCommit below calls requestSubmit()),
+      // before React has re-rendered, so whichever element actually
+      // carries the form value must already hold the new one or the old
+      // one gets saved (e.g. picking project GM but saving the previous
+      // Lexus — or, for plain-string options like category, saving
+      // whatever partial text was last typed instead of the full picked
+      // value, since the visible input IS the submitted field there).
       if (hiddenRef.current) hiddenRef.current.value = value;
+      else if (queryInputRef.current) queryInputRef.current.value = value;
       if (secondaryHiddenRef.current) {
         const match = pairForValue(value);
         secondaryHiddenRef.current.value = match ? secondaryValueOf(match) : "";
@@ -257,13 +267,15 @@ export function Combobox({
 
   function pick(o: ComboboxOption) {
     const v = valueOf(o);
+    const displayText = showValue && hasPairs ? (secondaryName ? secondaryValueOf(o) || v : v) : labelOf(o);
     setSelected(v);
-    setQuery(showValue && hasPairs ? (secondaryName ? secondaryValueOf(o) || v : v) : labelOf(o));
+    setQuery(displayText);
     setOpen(false);
     if (v !== committedRef.current) {
       committedRef.current = v;
       // Same synchronous DOM write as commitCurrent — see above.
       if (hiddenRef.current) hiddenRef.current.value = v;
+      else if (queryInputRef.current) queryInputRef.current.value = displayText;
       if (secondaryHiddenRef.current) secondaryHiddenRef.current.value = secondaryValueOf(o);
       onCommit(v);
     }
@@ -293,6 +305,7 @@ export function Combobox({
         />
       )}
       <input
+        ref={queryInputRef}
         form={hasPairs ? undefined : formId}
         name={hasPairs ? undefined : name}
         value={query}
