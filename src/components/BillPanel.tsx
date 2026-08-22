@@ -747,7 +747,9 @@ export function BillPanel({
                   <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
                   Synced to QuickBooks
                   {invoice.qbo_synced_at
-                    ? ` — ${new Date(invoice.qbo_synced_at).toLocaleDateString()}`
+                    ? ` — ${new Date(invoice.qbo_synced_at).toLocaleDateString()} at ${new Date(
+                        invoice.qbo_synced_at
+                      ).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`
                     : ""}
                   {qboConnected && qboRealmId && invoice.qbo_bill_id && (
                     <a

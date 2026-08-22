@@ -18,7 +18,7 @@ import {
   stepDecisionState,
 } from "@/lib/workflow-conditions";
 import type { Database, InvoiceStatus } from "@/lib/supabase/types";
-import { getQboConnection, listCategories, listTaxRates, listTaxCodes, listClasses, listSuppliers, listProjects, matchSupplier, createBill, attachDocuments, loadCategoryAccountCache, resolveCategoryAccount, loadTaxCodeCache, resolveTaxCode } from "@/lib/qbo";
+import { getQboConnection, listCategories, listTaxRates, listTaxCodes, listClasses, listSuppliers, listProjects, matchSupplier, createBill, attachDocuments, loadCategoryAccountCache, resolveCategoryAccount, loadTaxCodeCache, resolveTaxCode, loadClassCache, resolveClass } from "@/lib/qbo";
 import { fetchAllQboSuppliers } from "@/lib/qbo-all";
 import { buildQboAttachmentBundle } from "@/lib/qbo-attachments";
 
@@ -1951,7 +1951,7 @@ export async function syncToQbo(invoiceId: string) {
     const [{ data: lineItems }, { data: instrRows }] = await Promise.all([
       supabase
         .from("invoice_line_items")
-        .select("description, amount, category, tax_rate, qbo_tax_code_id")
+        .select("description, amount, category, tax_rate, qbo_tax_code_id, class, project_id")
         .eq("invoice_id", invoiceId),
       supabase
         .from("accounting_instructions")
@@ -1980,13 +1980,21 @@ export async function syncToQbo(invoiceId: string) {
     const instrName = new Map(
       (instrProfiles ?? []).map((p) => [p.id, p.full_name ?? "Team member"])
     );
-    const memo =
-      (instrRows ?? [])
-        .map(
-          (r) =>
-            `${r.author_id ? (instrName.get(r.author_id) ?? "Team member") : "System"}: ${r.body}`
-        )
-        .join("\n") || undefined;
+    // Consecutive messages from the same author only name them once (like
+    // a chat thread) instead of repeating "Name: " on every line.
+    const memoLines: string[] = [];
+    let lastAuthorKey: string | null = null;
+    for (const r of instrRows ?? []) {
+      const name = r.author_id ? (instrName.get(r.author_id) ?? "Team member") : "System";
+      const key = r.author_id ?? "system";
+      if (key === lastAuthorKey) {
+        memoLines.push(r.body);
+      } else {
+        memoLines.push(`${name}: ${r.body}`);
+        lastAuthorKey = key;
+      }
+    }
+    const memo = memoLines.join("\n") || undefined;
 
     // Resolve every line's category to a QBO account id BEFORE building
     // the bill — never inside createBill, and never via a live QBO query
@@ -1996,6 +2004,21 @@ export async function syncToQbo(invoiceId: string) {
     // no matter how many lines miss.
     const categoryCache = await loadCategoryAccountCache(supabase, inv.organization_id);
     const taxCodeCache = await loadTaxCodeCache(supabase, inv.organization_id);
+    const classCache = await loadClassCache(supabase, inv.organization_id);
+    // Project → QBO Customer/Job id is a direct lookup, not a name match:
+    // Flow's own projects table already stores the synced QBO id
+    // (projects.qbo_id) on each row. A manually-created project (never
+    // synced from QBO) has no qbo_id — its lines just get no CustomerRef.
+    const projectIds = [
+      ...new Set((lineItems ?? []).map((li) => li.project_id).filter((id): id is string => !!id)),
+    ];
+    const { data: projectRows } =
+      projectIds.length > 0
+        ? await supabase.from("projects").select("id, qbo_id").in("id", projectIds)
+        : { data: [] };
+    const qboCustomerIdByProject = new Map(
+      (projectRows ?? []).map((p) => [p.id, p.qbo_id])
+    );
     const resolvedLines = [];
     for (const li of lineItems ?? []) {
       const accountId = await resolveCategoryAccount(
@@ -2016,11 +2039,15 @@ export async function syncToQbo(invoiceId: string) {
         li.tax_rate,
         li.qbo_tax_code_id
       );
+      const classId = await resolveClass(supabase, conn, inv.organization_id, classCache, li.class);
+      const customerId = li.project_id ? (qboCustomerIdByProject.get(li.project_id) ?? null) : null;
       resolvedLines.push({
         description: li.description,
         amount: li.amount ?? 0,
         accountId,
         taxCodeId,
+        classId,
+        customerId,
       });
     }
 

@@ -849,6 +849,89 @@ export async function resolveTaxCode(
   );
 }
 
+// --- Class (e.g. "2022-58") -----------------------------------------
+
+export interface QboClassRow {
+  qboClassId: string;
+  name: string;
+}
+
+// Pure — no I/O. Case-insensitive exact match against the already-synced
+// qbo_classes mirror.
+export function matchClass(
+  classes: QboClassRow[],
+  className: string | null | undefined
+): string | null {
+  const raw = className?.trim() ?? "";
+  if (!raw) return null;
+  const needle = raw.toLowerCase();
+  return classes.find((c) => c.name.trim().toLowerCase() === needle)?.qboClassId ?? null;
+}
+
+export interface ClassCache {
+  classes: QboClassRow[];
+  refreshed: boolean;
+}
+
+export async function loadClassCache(
+  supabase: SupabaseClient<Database>,
+  organizationId: string
+): Promise<ClassCache> {
+  const { data } = await supabase
+    .from("qbo_classes")
+    .select("qbo_class_id, name")
+    .eq("organization_id", organizationId)
+    .eq("active", true);
+  return {
+    classes: (data ?? []).map((c) => ({ qboClassId: c.qbo_class_id, name: c.name })),
+    refreshed: false,
+  };
+}
+
+// Resolves ONE line's class name to a QBO Class id, refreshing the mirror
+// from QBO at most once (on the first miss) before failing loudly. A line
+// with no class set resolves to null — no ClassRef, nothing forced.
+export async function resolveClass(
+  supabase: SupabaseClient<Database>,
+  conn: QboConnection,
+  organizationId: string,
+  cache: ClassCache,
+  className: string | null | undefined
+): Promise<string | null> {
+  const raw = className?.trim() ?? "";
+  if (!raw) return null;
+
+  let hit = matchClass(cache.classes, raw);
+  if (hit) return hit;
+
+  if (!cache.refreshed) {
+    cache.refreshed = true;
+    const fresh = await listClasses(conn, 500);
+    if (fresh.length > 0) {
+      await supabase.from("qbo_classes").upsert(
+        fresh.map((c) => ({
+          organization_id: organizationId,
+          qbo_class_id: c.qboClassId,
+          name: c.name,
+          active: c.active,
+          sub_class: c.subClass,
+          synced_at: new Date().toISOString(),
+        })),
+        { onConflict: "organization_id,qbo_class_id" }
+      );
+    }
+    cache.classes = (await loadClassCache(supabase, organizationId)).classes;
+    hit = matchClass(cache.classes, raw);
+    if (hit) return hit;
+  }
+
+  throw new Error(
+    `QBO class "${raw}" was not found in ${
+      conn.companyName ? conn.companyName : `realm ${conn.realmId}`
+    }. Run "Sync classes from QuickBooks" in Settings, or confirm this class exists and is active.`
+  );
+}
+
 export interface QboBillInput {
   vendorId: string; // resolved QBO Vendor id — Flow never creates suppliers
   billDate: string; // YYYY-MM-DD
@@ -866,6 +949,8 @@ export interface QboBillInput {
     amount: number;
     accountId: string;
     taxCodeId?: string | null;
+    classId?: string | null; // resolved QBO Class id (see resolveClass)
+    customerId?: string | null; // resolved QBO Customer/Project id (projects.qbo_id)
   }[];
 }
 
@@ -917,6 +1002,8 @@ export async function createBill(
       AccountBasedExpenseLineDetail: {
         AccountRef: { value: line.accountId },
         ...(line.taxCodeId ? { TaxCodeRef: { value: line.taxCodeId } } : {}),
+        ...(line.classId ? { ClassRef: { value: line.classId } } : {}),
+        ...(line.customerId ? { CustomerRef: { value: line.customerId } } : {}),
       },
     });
   }
