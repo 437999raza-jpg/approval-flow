@@ -260,8 +260,11 @@ async function listResendAttachments(apiKey: string, emailId: string) {
   };
   let lastErr: string | null = null;
   for (let attempt = 0; attempt < 3; attempt++) {
+    // NOTE: received-email APIs live under /emails/receiving/ — the plain
+    // /emails/{id} path is for SENT emails and returns "Email not found"
+    // for received ones.
     const res = await fetch(
-      `https://api.resend.com/emails/${emailId}/attachments`,
+      `https://api.resend.com/emails/receiving/${emailId}/attachments`,
       { headers: { Authorization: `Bearer ${apiKey}` } }
     );
     if (res.ok) {
