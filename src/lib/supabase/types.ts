@@ -77,6 +77,7 @@ export interface Database {
           source: "manual" | "qbo";
           active: boolean;
           created_at: string;
+          first_seen_at: string;
         };
         Insert: Partial<
           Database["public"]["Tables"]["projects"]["Row"]
@@ -406,6 +407,7 @@ export interface Database {
           account_sub_type: string | null;
           active: boolean;
           synced_at: string;
+          first_seen_at: string;
         };
         Insert: Partial<
           Database["public"]["Tables"]["qbo_categories"]["Row"]
@@ -428,6 +430,7 @@ export interface Database {
           active: boolean;
           sub_class: boolean;
           synced_at: string;
+          first_seen_at: string;
         };
         Insert: Partial<
           Database["public"]["Tables"]["qbo_classes"]["Row"]
@@ -451,6 +454,7 @@ export interface Database {
           active: boolean;
           synced_at: string;
           integration: string;
+          first_seen_at: string;
         };
         Insert: Partial<
           Database["public"]["Tables"]["qbo_suppliers"]["Row"]
@@ -462,6 +466,20 @@ export interface Database {
         };
         Update: Partial<
           Database["public"]["Tables"]["qbo_suppliers"]["Row"]
+        >;
+        Relationships: [];
+      };
+      qbo_sync_log: {
+        Row: {
+          organization_id: string;
+          section: "taxes" | "classes" | "categories" | "suppliers" | "projects";
+          synced_at: string;
+        };
+        Insert: Partial<
+          Database["public"]["Tables"]["qbo_sync_log"]["Row"]
+        > & { organization_id: string; section: string };
+        Update: Partial<
+          Database["public"]["Tables"]["qbo_sync_log"]["Row"]
         >;
         Relationships: [];
       };

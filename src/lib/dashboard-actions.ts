@@ -1513,6 +1513,26 @@ export async function saveDefaultTaxRate(formData: FormData) {
 }
 
 
+// Record when a QBO mirror section was last synced — Settings shows
+// "N on File. Last synced on <time>" per section and lists only the items
+// that are NEW in the most recent sync (rows whose first_seen_at is >= this
+// timestamp). Written BEFORE the upserts so the window covers this run;
+// failures are logged but never fail the sync itself.
+async function recordQboSync(
+  supabase: ReturnType<typeof createClient>,
+  orgId: string,
+  section: "taxes" | "classes" | "categories" | "suppliers" | "projects",
+  at: string
+) {
+  const { error } = await supabase
+    .from("qbo_sync_log")
+    .upsert(
+      { organization_id: orgId, section, synced_at: at },
+      { onConflict: "organization_id,section" }
+    );
+  if (error) console.error("recordQboSync failed:", error);
+}
+
 // Pull QuickBooks tax RATES (the % applied to bills) into the app.
 // READ-ONLY against QBO — nothing is ever written to QuickBooks here.
 // Admin only. Rates are deduped by percentage (e.g. GST 5%, HST 13%).
@@ -1542,6 +1562,8 @@ export async function syncQboTaxes() {
       listTaxRates(conn),
       listTaxCodes(conn),
     ]);
+
+    await recordQboSync(supabase, org.id, "taxes", new Date().toISOString());
 
     if (rates.length > 0) {
       const { error } = await supabase.from("qbo_tax_rates").upsert(
@@ -1610,6 +1632,9 @@ export async function syncQboClasses() {
   let classes: Awaited<ReturnType<typeof listClasses>> = [];
   try {
     classes = await listClasses(conn);
+
+    await recordQboSync(supabase, org.id, "classes", new Date().toISOString());
+
     if (classes.length > 0) {
       const { error } = await supabase.from("qbo_classes").upsert(
         classes.map((c) => ({
@@ -1666,6 +1691,9 @@ export async function syncQboCategories() {
     categories = await listCategories(conn, 500, {
       acctNumPrefixes: ["2", "5", "6"],
     });
+
+    await recordQboSync(supabase, org.id, "categories", new Date().toISOString());
+
     if (categories.length > 0) {
       const { error } = await supabase.from("qbo_categories").upsert(
         categories.map((c) => ({
@@ -1719,6 +1747,9 @@ export async function syncQboSuppliers() {
   let suppliers: Awaited<ReturnType<typeof listSuppliers>> = [];
   try {
     suppliers = await listSuppliers(conn);
+
+    await recordQboSync(supabase, org.id, "suppliers", new Date().toISOString());
+
     if (suppliers.length > 0) {
       const { error } = await supabase.from("qbo_suppliers").upsert(
         suppliers.map((s) => ({
@@ -1773,6 +1804,9 @@ export async function syncQboProjects() {
   let projects: Awaited<ReturnType<typeof listProjects>> = [];
   try {
     projects = await listProjects(conn);
+
+    await recordQboSync(supabase, org.id, "projects", new Date().toISOString());
+
     if (projects.length > 0) {
       const { error } = await supabase.from("projects").upsert(
         projects.map((p) => ({
@@ -1828,6 +1862,18 @@ export async function refreshQboData() {
       listCategories(conn, 500, { acctNumPrefixes: ["2", "5", "6"] }),
       listSuppliers(conn),
       listProjects(conn),
+    ]);
+
+    // One timestamp for every section, written before the upserts, so each
+    // Settings section shows this run as its "Last synced" and lists the
+    // items that are new in it.
+    const syncNow = new Date().toISOString();
+    await Promise.all([
+      recordQboSync(supabase, org.id, "taxes", syncNow),
+      recordQboSync(supabase, org.id, "classes", syncNow),
+      recordQboSync(supabase, org.id, "categories", syncNow),
+      recordQboSync(supabase, org.id, "suppliers", syncNow),
+      recordQboSync(supabase, org.id, "projects", syncNow),
     ]);
 
     if (rates.length > 0) {

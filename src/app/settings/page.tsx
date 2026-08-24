@@ -4,7 +4,6 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentOrg } from "@/lib/current-org";
-import { fetchAllQboSuppliers } from "@/lib/qbo-all";
 import { SignOutButton } from "@/components/SignOutButton";
 import { disconnectQbo, refreshQboData, saveDefaultTaxRate, syncQboTaxes, syncQboClasses, syncQboCategories, syncQboSuppliers, syncQboProjects } from "@/lib/dashboard-actions";
 import { qboEnv } from "@/lib/qbo";
@@ -15,6 +14,7 @@ import { SearchInput } from "@/components/SearchInput";
 import { InlineSelectSave } from "@/components/InlineSelectSave";
 import { InlineTextSave } from "@/components/InlineTextSave";
 import { SubmitButton } from "@/components/SubmitButton";
+import { DefaultTaxRateForm } from "@/components/DefaultTaxRateForm";
 import type { Database } from "@/lib/supabase/types";
 
 type OrgRole =
@@ -286,14 +286,6 @@ export default async function SettingsPage({
     .eq("organization_id", org.id)
     .maybeSingle();
 
-  // Categories pulled from QBO (read-only mirror; any org member can view).
-  const { data: qboCategories } = await supabase
-    .from("qbo_categories")
-    .select("id, name, acct_num, account_type, account_sub_type, active, synced_at")
-    .eq("organization_id", org.id)
-    .order("name", { ascending: true })
-    .limit(200);
-
   // Tax codes with resolved rates pulled from QBO (read-only mirror) — the
   // codes are what the bill's Tax field offers, exactly like Dext. Only
   // codes with a usable rate are listed (H 13%, M&E 13%, Out of Scope 0%).
@@ -305,26 +297,96 @@ export default async function SettingsPage({
     .order("name", { ascending: true })
     .limit(50);
 
-  // Classes pulled from QBO (read-only mirror).
-  const { data: qboClasses } = await supabase
-    .from("qbo_classes")
-    .select("id, name, active")
-    .eq("organization_id", org.id)
-    .order("name", { ascending: true })
-    .limit(200);
+  // Default-tax-rate choices = the distinct synced rates, sorted.
+  const defaultTaxRates = [
+    ...new Set(
+      (qboTaxCodes ?? [])
+        .map((c) => c.rate_value)
+        .filter((r): r is number => r != null)
+    ),
+  ].sort((a, b) => a - b);
 
-  // Suppliers pulled from QBO (read-only mirror — Flow never creates these).
-  // Paginated: PostgREST caps responses at 1000 rows.
-  const qboSuppliers = await fetchAllQboSuppliers(supabase, org.id);
+  // Per-section sync log (migration 0049): when each QBO mirror was last
+  // synced, so sections can show "N on File. Last synced on <time>".
+  const { data: qboSyncLog } = await supabase
+    .from("qbo_sync_log")
+    .select("section, synced_at")
+    .eq("organization_id", org.id);
+  const lastSyncBySection = new Map(
+    (qboSyncLog ?? []).map((r) => [r.section, r.synced_at])
+  );
+  const classesLastSync = lastSyncBySection.get("classes");
+  const categoriesLastSync = lastSyncBySection.get("categories");
+  const suppliersLastSync = lastSyncBySection.get("suppliers");
+  const projectsLastSync = lastSyncBySection.get("projects");
 
-  // Projects imported from QBO (customers with IsProject=true).
-  const { data: qboProjects } = await supabase
-    .from("projects")
-    .select("id, name, qbo_id, source, active")
-    .eq("organization_id", org.id)
-    .eq("source", "qbo")
-    .order("name", { ascending: true })
-    .limit(500);
+  // Exact "on file" counts — PostgREST caps row responses at 1000 rows, so
+  // use head + count=exact rather than fetching the lists.
+  const [
+    { count: classesCount },
+    { count: categoriesCount },
+    { count: suppliersCount },
+    { count: projectsCount },
+  ] = await Promise.all([
+    supabase
+      .from("qbo_classes")
+      .select("id", { count: "exact", head: true })
+      .eq("organization_id", org.id),
+    supabase
+      .from("qbo_categories")
+      .select("id", { count: "exact", head: true })
+      .eq("organization_id", org.id),
+    supabase
+      .from("qbo_suppliers")
+      .select("id", { count: "exact", head: true })
+      .eq("organization_id", org.id),
+    supabase
+      .from("projects")
+      .select("id", { count: "exact", head: true })
+      .eq("organization_id", org.id)
+      .eq("source", "qbo"),
+  ]);
+
+  // ONLY the items that are NEW in the most recent sync run get listed in
+  // each section (first_seen_at >= that run's log timestamp). Blank when
+  // nothing new — the section never synced shows nothing either.
+  const newClasses = classesLastSync
+    ? (await supabase
+        .from("qbo_classes")
+        .select("id, name")
+        .eq("organization_id", org.id)
+        .gte("first_seen_at", classesLastSync)
+        .order("name", { ascending: true })
+        .limit(100)).data ?? []
+    : [];
+  const newCategories = categoriesLastSync
+    ? (await supabase
+        .from("qbo_categories")
+        .select("id, name, acct_num, account_type, account_sub_type")
+        .eq("organization_id", org.id)
+        .gte("first_seen_at", categoriesLastSync)
+        .order("name", { ascending: true })
+        .limit(100)).data ?? []
+    : [];
+  const newSuppliers = suppliersLastSync
+    ? (await supabase
+        .from("qbo_suppliers")
+        .select("id, name")
+        .eq("organization_id", org.id)
+        .gte("first_seen_at", suppliersLastSync)
+        .order("name", { ascending: true })
+        .limit(100)).data ?? []
+    : [];
+  const newProjects = projectsLastSync
+    ? (await supabase
+        .from("projects")
+        .select("id, name")
+        .eq("organization_id", org.id)
+        .eq("source", "qbo")
+        .gte("first_seen_at", projectsLastSync)
+        .order("name", { ascending: true })
+        .limit(100)).data ?? []
+    : [];
 
   // Billing & usage: this month's invoice counts (org-wide, admin view).
   const monthStart = new Date();
@@ -401,6 +463,17 @@ export default async function SettingsPage({
 
   const inputCls =
     "rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none";
+
+  // "Last synced on Feb 21, 2026, 3:42 PM" style timestamps for the QBO
+  // mirror sections.
+  const fmtSync = (iso: string) =>
+    new Date(iso).toLocaleString(undefined, {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
 
   return (
     <div className="flex h-screen bg-slate-50 text-slate-900">
@@ -650,30 +723,11 @@ export default async function SettingsPage({
                       Applied to every incoming invoice when the supplier has
                       no rule of their own. Choose one of the synced rates.
                     </p>
-                    <form action={saveDefaultTaxRate} className="mt-2 flex flex-wrap items-center gap-2">
-                      <select
-                        name="default_tax_rate"
-                        defaultValue={org.default_tax_rate?.toString() ?? ""}
-                        className="rounded-md border border-slate-300 px-3 py-1.5 text-sm focus:border-blue-500 focus:outline-none"
-                      >
-                        <option value="">— none —</option>
-                        {[...new Set((qboTaxCodes ?? []).map((c) => c.rate_value))]
-                          .sort((a, b) => a - b)
-                          .map((rate) => (
-                            <option key={rate} value={rate}>
-                              {rate}%
-                            </option>
-                          ))}
-                      </select>
-                      <SubmitButton className="rounded-md bg-slate-800 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-700">
-                        Save
-                      </SubmitButton>
-                    </form>
-                    {org.default_tax_rate != null && (
-                      <p className="mt-1.5 text-xs text-emerald-700">
-                        Current default: {org.default_tax_rate}%
-                      </p>
-                    )}
+                    <DefaultTaxRateForm
+                      currentRate={org.default_tax_rate}
+                      rates={defaultTaxRates}
+                      action={saveDefaultTaxRate}
+                    />
                   </div>
                 )}
 
@@ -691,23 +745,33 @@ export default async function SettingsPage({
                       </form>
                     )}
                   </div>
-                  {qboClasses && qboClasses.length > 0 ? (
+                  <p className="mt-1 text-xs text-slate-500">
+                    New classes added in QuickBooks show up here after a
+                    sync.
+                  </p>
+                  <div className="mt-1 text-xs text-slate-400">
+                    {classesCount != null
+                      ? `${classesCount} class${classesCount === 1 ? "" : "es"} on File. `
+                      : ""}
+                    {classesLastSync ? (
+                      <>Last synced on {fmtSync(classesLastSync)}.</>
+                    ) : (
+                      <>Not synced yet.</>
+                    )}
+                  </div>
+                  {newClasses.length > 0 && (
                     <div className="mt-1">
-                      <div className="text-xs text-slate-400">
-                        {qboClasses.length} class{Number(qboClasses.length) === 1 ? "" : "es"} on file:
+                      <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                        Newly synced
                       </div>
-                      <ul className="mt-1 flex max-h-48 flex-wrap gap-x-4 gap-y-0.5 overflow-y-auto">
-                        {qboClasses.map((c) => (
+                      <ul className="mt-0.5 flex max-h-48 flex-wrap gap-x-4 gap-y-0.5 overflow-y-auto">
+                        {newClasses.map((c) => (
                           <li key={c.id} className="w-40 text-sm text-slate-700">
                             {c.name}
                           </li>
                         ))}
                       </ul>
                     </div>
-                  ) : (
-                    <p className="mt-1 text-sm text-slate-400">
-                      No classes synced yet.
-                    </p>
                   )}
                 </div>
 
@@ -730,23 +794,29 @@ export default async function SettingsPage({
                     (customers with IsProject=true). Regular customers are
                     not imported.
                   </p>
-                  {qboProjects && qboProjects.length > 0 ? (
+                  <div className="mt-1 text-xs text-slate-400">
+                    {projectsCount != null
+                      ? `${projectsCount} project${projectsCount === 1 ? "" : "s"} on File. `
+                      : ""}
+                    {projectsLastSync ? (
+                      <>Last synced on {fmtSync(projectsLastSync)}.</>
+                    ) : (
+                      <>Not synced yet.</>
+                    )}
+                  </div>
+                  {newProjects.length > 0 && (
                     <div className="mt-1">
-                      <div className="text-xs text-slate-400">
-                        {qboProjects.length} project{Number(qboProjects.length) === 1 ? "" : "s"} on file:
+                      <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                        Newly synced
                       </div>
-                      <ul className="mt-1 flex max-h-48 flex-wrap gap-x-4 gap-y-0.5 overflow-y-auto">
-                        {qboProjects.map((p) => (
+                      <ul className="mt-0.5 flex max-h-48 flex-wrap gap-x-4 gap-y-0.5 overflow-y-auto">
+                        {newProjects.map((p) => (
                           <li key={p.id} className="w-72 truncate text-sm text-slate-700">
                             {p.name}
                           </li>
                         ))}
                       </ul>
                     </div>
-                  ) : (
-                    <p className="mt-1 text-sm text-slate-400">
-                      No projects synced yet.
-                    </p>
                   )}
                 </div>
 
@@ -777,23 +847,29 @@ export default async function SettingsPage({
                     category/class/tax/currency/payment-term defaults per
                     supplier on the Manage suppliers page.
                   </p>
-                  {qboSuppliers && qboSuppliers.length > 0 ? (
+                  <div className="mt-1 text-xs text-slate-400">
+                    {suppliersCount != null
+                      ? `${suppliersCount} supplier${suppliersCount === 1 ? "" : "s"} on File. `
+                      : ""}
+                    {suppliersLastSync ? (
+                      <>Last synced on {fmtSync(suppliersLastSync)}.</>
+                    ) : (
+                      <>Not synced yet.</>
+                    )}
+                  </div>
+                  {newSuppliers.length > 0 && (
                     <div className="mt-1">
-                      <div className="text-xs text-slate-400">
-                        {qboSuppliers.length} supplier{Number(qboSuppliers.length) === 1 ? "" : "s"} on file:
+                      <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                        Newly synced
                       </div>
-                      <ul className="mt-1 flex max-h-48 flex-wrap gap-x-4 gap-y-0.5 overflow-y-auto">
-                        {qboSuppliers.map((s) => (
+                      <ul className="mt-0.5 flex max-h-48 flex-wrap gap-x-4 gap-y-0.5 overflow-y-auto">
+                        {newSuppliers.map((s) => (
                           <li key={s.id} className="w-64 truncate text-sm text-slate-700">
                             {s.name}
                           </li>
                         ))}
                       </ul>
                     </div>
-                  ) : (
-                    <p className="mt-1 text-sm text-slate-400">
-                      No suppliers synced yet.
-                    </p>
                   )}
                 </div>
 
@@ -816,27 +892,38 @@ export default async function SettingsPage({
                     One list from QuickBooks — every account whose number
                     starts with 2, 5, or 6.
                   </p>
-                  {qboCategories && qboCategories.length > 0 ? (
-                    <ul className="mt-1 max-h-48 divide-y divide-slate-100 overflow-y-auto">
-                      {qboCategories.map((c) => (
-                        <li
-                          key={c.id}
-                          className="flex flex-wrap items-center gap-2 py-1.5 text-sm"
-                        >
-                          <span className="min-w-0 flex-1 truncate font-medium text-slate-800">
-                            {c.acct_num ? `${c.acct_num} - ${c.name}` : c.name}
-                          </span>
-                          <span className="text-xs text-slate-400">
-                            {c.account_type ?? "—"}
-                            {c.account_sub_type ? ` · ${c.account_sub_type}` : ""}
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
-                  ) : (
-                    <p className="mt-1 text-sm text-slate-400">
-                      No categories imported yet.
-                    </p>
+                  <div className="mt-1 text-xs text-slate-400">
+                    {categoriesCount != null
+                      ? `${categoriesCount} categor${categoriesCount === 1 ? "y" : "ies"} on File. `
+                      : ""}
+                    {categoriesLastSync ? (
+                      <>Last synced on {fmtSync(categoriesLastSync)}.</>
+                    ) : (
+                      <>Not synced yet.</>
+                    )}
+                  </div>
+                  {newCategories.length > 0 && (
+                    <div className="mt-1">
+                      <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                        Newly synced
+                      </div>
+                      <ul className="mt-0.5 max-h-48 divide-y divide-slate-100 overflow-y-auto">
+                        {newCategories.map((c) => (
+                          <li
+                            key={c.id}
+                            className="flex flex-wrap items-center gap-2 py-1.5 text-sm"
+                          >
+                            <span className="min-w-0 flex-1 truncate font-medium text-slate-800">
+                              {c.acct_num ? `${c.acct_num} - ${c.name}` : c.name}
+                            </span>
+                            <span className="text-xs text-slate-400">
+                              {c.account_type ?? "—"}
+                              {c.account_sub_type ? ` · ${c.account_sub_type}` : ""}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
                   )}
                 </div>
               </div>
