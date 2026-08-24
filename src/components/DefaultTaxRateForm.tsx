@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { clsx } from "clsx";
+import { saveScrollPosition } from "./ScrollPreserveForm";
 
 // Default tax rate for new invoices (Settings → Data from QuickBooks).
 //
@@ -34,6 +35,7 @@ export function DefaultTaxRateForm({
   return (
     <form
       className="mt-2 flex flex-wrap items-center gap-2"
+      onSubmit={saveScrollPosition}
       action={async (formData) => {
         await action(formData);
         // The server action redirects; this line only matters if it ever

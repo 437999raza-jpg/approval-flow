@@ -15,6 +15,8 @@ import { InlineSelectSave } from "@/components/InlineSelectSave";
 import { InlineTextSave } from "@/components/InlineTextSave";
 import { SubmitButton } from "@/components/SubmitButton";
 import { DefaultTaxRateForm } from "@/components/DefaultTaxRateForm";
+import { ScrollPreserveForm } from "@/components/ScrollPreserveForm";
+import { ScrollRestorer } from "@/components/ScrollRestorer";
 import type { Database } from "@/lib/supabase/types";
 
 type OrgRole =
@@ -505,6 +507,10 @@ export default async function SettingsPage({
             {org.name} · you are {ROLE_LABELS[org.role]}
           </p>
 
+          {/* Puts the page back where you were after a sync/save button
+              press (those redirect, and redirects scroll to the top). */}
+          <ScrollRestorer />
+
           {searchParams.error && (
             <div className="mt-4 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
               {SETTINGS_ERRORS[searchParams.error] ??
@@ -664,11 +670,11 @@ export default async function SettingsPage({
                   </div>
                   <span className="flex-1" />
                   {isAdmin && qboConnection && (
-                    <form action={refreshQboData}>
+                    <ScrollPreserveForm action={refreshQboData}>
                       <SubmitButton className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">
                         Refresh data
                       </SubmitButton>
-                    </form>
+                    </ScrollPreserveForm>
                   )}
                 </div>
                 <p className="mt-1 text-sm text-slate-500">
@@ -686,11 +692,11 @@ export default async function SettingsPage({
                       Tax
                     </span>
                     {isAdmin && (
-                      <form action={syncQboTaxes}>
+                      <ScrollPreserveForm action={syncQboTaxes}>
                         <SubmitButton className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">
                           Sync taxes from QuickBooks
                         </SubmitButton>
-                      </form>
+                      </ScrollPreserveForm>
                     )}
                   </div>
                   <p className="mt-1 text-xs text-slate-500">
@@ -738,11 +744,11 @@ export default async function SettingsPage({
                       Classes
                     </span>
                     {isAdmin && (
-                      <form action={syncQboClasses}>
+                      <ScrollPreserveForm action={syncQboClasses}>
                         <SubmitButton className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">
                           Sync classes from QuickBooks
                         </SubmitButton>
-                      </form>
+                      </ScrollPreserveForm>
                     )}
                   </div>
                   <p className="mt-1 text-xs text-slate-500">
@@ -782,11 +788,11 @@ export default async function SettingsPage({
                       Projects
                     </span>
                     {isAdmin && (
-                      <form action={syncQboProjects}>
+                      <ScrollPreserveForm action={syncQboProjects}>
                         <SubmitButton className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">
                           Sync projects from QuickBooks
                         </SubmitButton>
-                      </form>
+                      </ScrollPreserveForm>
                     )}
                   </div>
                   <p className="mt-1 text-xs text-slate-500">
@@ -827,11 +833,11 @@ export default async function SettingsPage({
                       Suppliers
                     </span>
                     {isAdmin && (
-                      <form action={syncQboSuppliers}>
+                      <ScrollPreserveForm action={syncQboSuppliers}>
                         <SubmitButton className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">
                           Sync suppliers from QuickBooks
                         </SubmitButton>
-                      </form>
+                      </ScrollPreserveForm>
                     )}
                     <span className="flex-1" />
                     <Link
@@ -881,11 +887,11 @@ export default async function SettingsPage({
                       Categories
                     </span>
                     {isAdmin && (
-                      <form action={syncQboCategories}>
+                      <ScrollPreserveForm action={syncQboCategories}>
                         <SubmitButton className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">
                           Sync categories from QuickBooks
                         </SubmitButton>
-                      </form>
+                      </ScrollPreserveForm>
                     )}
                   </div>
                   <p className="mt-1 text-xs text-slate-500">

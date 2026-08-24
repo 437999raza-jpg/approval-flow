@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { SubmitButton } from "./SubmitButton";
+import { saveScrollPosition } from "./ScrollPreserveForm";
 
 interface RoleOption {
   value: string;
@@ -52,6 +53,7 @@ export function AddUsersModal({
                 await inviteAction(formData);
                 setOpen(false);
               }}
+              onSubmit={saveScrollPosition}
               className="space-y-3 p-6"
             >
               <div>
