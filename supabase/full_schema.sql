@@ -1,4 +1,4 @@
--- Approval Flow: COMPLETE schema bundle (0001-0043), for a FRESH production
+-- Approval Flow: COMPLETE schema bundle (0001-0048), for a FRESH production
 -- Supabase project only. Do NOT run on an existing database.
 -- Generated 2026-08-21. Paste into the SQL editor and run once.
 
@@ -2473,7 +2473,7 @@ alter table supplier_defaults add constraint supplier_defaults_org_vendor_name_u
   unique (organization_id, vendor_name_normalized);
 
 --------------------------------------------------------------------
--- >>> supabase/migrations/0043_default_tax_and_totals_note.sql
+-- >>> supabase/migrations/0048_default_tax_and_totals_note.sql
 --------------------------------------------------------------------
 -- 0043: per-org default tax rate for new invoices, and a totals-discrepancy
 -- note on invoices.

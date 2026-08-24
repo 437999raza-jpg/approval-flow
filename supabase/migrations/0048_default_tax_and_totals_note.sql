@@ -1,4 +1,4 @@
--- 0043: per-org default tax rate for new invoices, and a totals-discrepancy
+-- 0048: per-org default tax rate for new invoices, and a totals-discrepancy
 -- note on invoices.
 --
 -- 1. organizations.default_tax_rate — the tax rate applied to every new
