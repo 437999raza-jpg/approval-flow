@@ -205,6 +205,7 @@ export async function POST(request: Request) {
     subject,
     attachment_count: invoiceIds.length + pendingSplitIds.length,
     invoice_ids: invoiceIds,
+    pending_split_ids: pendingSplitIds,
     processed: invoiceIds.length > 0 || pendingSplitIds.length > 0,
     error: errors.length > 0 ? errors.join("; ") : null,
   });

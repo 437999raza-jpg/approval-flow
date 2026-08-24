@@ -1,4 +1,4 @@
--- Approval Flow: COMPLETE schema bundle (0001-0051), for a FRESH production
+-- Approval Flow: COMPLETE schema bundle (0001-0052), for a FRESH production
 -- Supabase project only. Do NOT run on an existing database.
 -- Generated 2026-08-21. Paste into the SQL editor and run once.
 
@@ -2598,3 +2598,13 @@ alter table organizations add constraint organizations_inbound_email_local_forma
 
 create unique index if not exists organizations_inbound_email_local_unique
   on organizations (inbound_email_local) where inbound_email_local is not null;
+
+--------------------------------------------------------------------
+-- >>> supabase/migrations/0052_email_log_pending_splits.sql
+--------------------------------------------------------------------
+-- 0052: track which pending-split reviews an inbound email produced, so the
+-- Email queue page can link "split review" emails straight to the review
+-- instead of only counting them.
+-- Run via `supabase db push` or paste into the Supabase SQL editor.
+
+alter table inbound_email_log add column if not exists pending_split_ids uuid[] not null default '{}';

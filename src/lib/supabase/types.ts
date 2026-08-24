@@ -587,6 +587,7 @@ export interface Database {
           subject: string | null;
           attachment_count: number;
           invoice_ids: string[];
+          pending_split_ids: string[];
           processed: boolean;
           error: string | null;
           created_at: string;
