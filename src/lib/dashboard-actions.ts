@@ -22,7 +22,7 @@ import { getQboConnection, listCategories, listTaxRates, listTaxCodes, listClass
 import { fetchAllQboSuppliers } from "@/lib/qbo-all";
 import { buildQboAttachmentBundle } from "@/lib/qbo-attachments";
 import { pdfPageCount, reorderPdfPages } from "@/lib/merge-documents";
-import { qboTag } from "@/lib/org-cache";
+import { qboTag, INVOICES_TAG } from "@/lib/org-cache";
 
 // Server actions for the dashboard (moved out of the page component so
 // the page stays render-only). Authored by Araza.
@@ -192,6 +192,7 @@ export async function decide(
           updated_at: new Date().toISOString(),
         })
         .eq("id", invoiceId);
+      revalidateTag(INVOICES_TAG);
       revalidatePath("/dashboard", "layout");
       return;
     }
@@ -277,6 +278,8 @@ export async function decide(
     actor_id: user.id,
     action: `invoice.${decision}`,
   });
+
+  revalidateTag(INVOICES_TAG);
 
   revalidatePath("/dashboard", "layout");
 }
@@ -371,6 +374,8 @@ export async function addComment(invoiceId: string, formData: FormData) {
     );
   }
 
+  revalidateTag(INVOICES_TAG);
+
   revalidatePath("/dashboard", "layout");
 }
 
@@ -420,6 +425,8 @@ export async function addDocument(invoiceId: string, formData: FormData) {
     metadata: { file_name: file.name },
   });
 
+  revalidateTag(INVOICES_TAG);
+
   revalidatePath("/dashboard", "layout");
 }
 
@@ -461,6 +468,8 @@ export async function saveAccountingInstructions(
     action: "invoice.accounting_instruction_added",
     metadata: { instructions },
   });
+
+  revalidateTag(INVOICES_TAG);
 
   revalidatePath("/dashboard", "layout");
 }
@@ -570,6 +579,8 @@ export async function saveBill(invoiceId: string, formData: FormData) {
       metadata: { changes },
     });
   }
+
+  revalidateTag(INVOICES_TAG);
 
   revalidatePath("/dashboard", "layout");
 }
@@ -692,6 +703,8 @@ export async function saveSupplierDefaults(
     action: "supplier_defaults.saved",
     metadata: { vendor_name: vendorName },
   });
+
+  revalidateTag(INVOICES_TAG);
 
   revalidatePath("/dashboard", "layout");
   revalidatePath("/settings/suppliers");
@@ -817,6 +830,8 @@ export async function reviewComplete(invoiceId: string) {
     action: "invoice.review_done",
   });
 
+  revalidateTag(INVOICES_TAG);
+
   revalidatePath("/dashboard", "layout");
 }
 
@@ -861,6 +876,8 @@ export async function holdInvoice(invoiceId: string) {
     actor_id: user.id,
     action: "invoice.held",
   });
+
+  revalidateTag(INVOICES_TAG);
 
   revalidatePath("/dashboard", "layout");
 }
@@ -912,6 +929,8 @@ export async function unholdInvoice(invoiceId: string) {
     action: "invoice.unheld",
   });
 
+  revalidateTag(INVOICES_TAG);
+
   revalidatePath("/dashboard", "layout");
 }
 
@@ -957,6 +976,8 @@ export async function backToReview(invoiceId: string) {
     action: "invoice.back_to_review",
   });
 
+  revalidateTag(INVOICES_TAG);
+
   revalidatePath("/dashboard", "layout");
 }
 
@@ -1000,6 +1021,8 @@ export async function cancelInvoice(invoiceId: string) {
     actor_id: user.id,
     action: "invoice.cancelled",
   });
+
+  revalidateTag(INVOICES_TAG);
 
   revalidatePath("/dashboard", "layout");
 }
@@ -1053,6 +1076,8 @@ export async function deleteInvoiceAction(invoiceId: string) {
 
   await supabase.storage.from("invoices").remove(filePaths);
 
+  revalidateTag(INVOICES_TAG);
+
   revalidatePath("/dashboard", "layout");
   redirect("/dashboard");
 }
@@ -1095,6 +1120,8 @@ export async function reassignApprover(invoiceId: string, formData: FormData) {
     action: "invoice.reassigned",
     metadata: { approver_id: approverId },
   });
+
+  revalidateTag(INVOICES_TAG);
 
   revalidatePath("/dashboard", "layout");
 }
@@ -1161,6 +1188,8 @@ export async function overrideStatus(invoiceId: string, formData: FormData) {
     action: "invoice.admin_override_status",
     metadata: { from: invoice.status, to: newStatus },
   });
+
+  revalidateTag(INVOICES_TAG);
 
   revalidatePath("/dashboard", "layout");
 }
@@ -1275,6 +1304,8 @@ export async function saveLineItem(
     });
   }
 
+  revalidateTag(INVOICES_TAG);
+
   revalidatePath("/dashboard", "layout");
 }
 
@@ -1314,6 +1345,8 @@ export async function deleteLineItem(invoiceId: string, lineItemId: string) {
       amount: item?.amount ?? null,
     },
   });
+
+  revalidateTag(INVOICES_TAG);
 
   revalidatePath("/dashboard", "layout");
 }
@@ -1377,6 +1410,8 @@ export async function cloneLineItem(invoiceId: string, lineItemId: string) {
       cloned: true,
     },
   });
+
+  revalidateTag(INVOICES_TAG);
 
   revalidatePath("/dashboard", "layout");
 }
@@ -1484,6 +1519,7 @@ export async function reExtract(invoiceId: string) {
   if (!user) redirect("/login");
 
   await reExtractInvoiceCore(supabase, invoiceId, user.id);
+  revalidateTag(INVOICES_TAG);
   revalidatePath("/dashboard", "layout");
 }
 
@@ -1581,6 +1617,8 @@ export async function reorderInvoicePages(
 
   // Re-extract from the new page order.
   await reExtractInvoiceCore(supabase, invoiceId, user.id);
+
+  revalidateTag(INVOICES_TAG);
 
   revalidatePath("/dashboard", "layout");
   return { ok: true };
@@ -1705,6 +1743,7 @@ export async function saveInboundEmailLocal(
   });
 
   revalidatePath("/settings");
+  revalidateTag(INVOICES_TAG);
   revalidatePath("/dashboard", "layout");
   return { ok: true };
 }
@@ -2317,6 +2356,7 @@ export async function syncToQbo(invoiceId: string) {
     await fail(
       "This bill cannot sync to QuickBooks yet — it must complete every step of the approval workflow and be released by an admin."
     );
+    revalidateTag(INVOICES_TAG);
     revalidatePath("/dashboard", "layout");
     revalidatePath("/settings");
     return;
@@ -2325,6 +2365,7 @@ export async function syncToQbo(invoiceId: string) {
   const conn = await getQboConnection(supabase, inv.organization_id);
   if (!conn) {
     await fail("QuickBooks is not connected — connect it in Settings.");
+    revalidateTag(INVOICES_TAG);
     revalidatePath("/dashboard", "layout");
     revalidatePath("/settings");
     return;
@@ -2344,6 +2385,7 @@ export async function syncToQbo(invoiceId: string) {
       await fail(
         `Vendor "${inv.vendor_name}" does not exactly match any QuickBooks supplier. Pick the correct supplier from the Vendor list on the bill (or add it in QuickBooks and run Refresh data in Settings), then try again.`
       );
+      revalidateTag(INVOICES_TAG);
       revalidatePath("/dashboard", "layout");
       revalidatePath("/settings");
       return;
@@ -2356,6 +2398,7 @@ export async function syncToQbo(invoiceId: string) {
       .maybeSingle();
     if (!matchedVendor) {
       await fail(`Could not resolve the QBO supplier id for "${matchedName}".`);
+      revalidateTag(INVOICES_TAG);
       revalidatePath("/dashboard", "layout");
       revalidatePath("/settings");
       return;
@@ -2514,6 +2557,8 @@ export async function syncToQbo(invoiceId: string) {
     await fail(e instanceof Error ? e.message : String(e));
   }
 
+  revalidateTag(INVOICES_TAG);
+
   revalidatePath("/dashboard", "layout");
   revalidatePath("/settings");
 }
@@ -2544,6 +2589,8 @@ export async function clearQboError(invoiceId: string) {
       updated_at: new Date().toISOString(),
     })
     .eq("id", invoiceId);
+
+  revalidateTag(INVOICES_TAG);
 
   revalidatePath("/dashboard", "layout");
   revalidatePath("/settings");
@@ -2594,6 +2641,8 @@ export async function clearQboSync(invoiceId: string) {
     action: "invoice.qbo_sync_cleared",
     metadata: { previous_qbo_bill_id: inv.qbo_bill_id },
   });
+
+  revalidateTag(INVOICES_TAG);
 
   revalidatePath("/dashboard", "layout");
   revalidatePath("/settings");

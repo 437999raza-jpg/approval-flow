@@ -3,10 +3,12 @@
 export const maxDuration = 60;
 
 import { NextResponse } from "next/server";
+import { revalidateTag } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { InvoiceIngestError } from "@/lib/invoices";
 import { ingestInvoiceFile } from "@/lib/invoice-ingest";
 import { mergeDocuments } from "@/lib/merge-documents";
+import { INVOICES_TAG } from "@/lib/org-cache";
 
 // Inbound email path (Resend — the same vendor as outbound notifications):
 //
@@ -206,6 +208,10 @@ export async function POST(request: Request) {
     .eq("organization_id", org.id)
     .lt("created_at", new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString())
     .then((r) => r.error && console.error("inbound_email_log cleanup:", r.error));
+
+  if (invoiceIds.length > 0 || pendingSplitIds.length > 0) {
+    revalidateTag(INVOICES_TAG); // new invoices/splits from email
+  }
 
   return NextResponse.json({ ok: true, invoiceIds, pendingSplitIds, errors });
 }

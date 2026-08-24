@@ -1,6 +1,9 @@
 import { unstable_cache } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { fetchAllQboSuppliers } from "@/lib/qbo-all";
+import type { Database } from "@/lib/supabase/types";
+
+type InvoiceRow = Database["public"]["Tables"]["invoices"]["Row"];
 
 // Org-level "static" data caching for the dashboard (and anything else that
 // renders the QBO mirrors / member roster). QBO data changes rarely — only
@@ -15,6 +18,10 @@ import { fetchAllQboSuppliers } from "@/lib/qbo-all";
 
 export const qboTag = (orgId: string) => `org-qbo-${orgId}`;
 export const membersTag = (orgId: string) => `org-members-${orgId}`;
+// Global tag (not per-org): ANY invoice mutation invalidates the cached
+// list. Over-invalidation across orgs is harmless — just a refetch — and it
+// keeps every mutating action one line instead of needing org lookups.
+export const INVOICES_TAG = "invoices-list";
 
 const TTL_SECONDS = 60 * 60; // 1h safety net; syncs invalidate sooner
 
@@ -110,6 +117,50 @@ export async function getCachedMemberRoster(orgId: string) {
       profileRows: (profileRows ?? []) as {
         id: string;
         full_name: string | null;
+      }[],
+    };
+  });
+}
+
+// The dashboard's invoice list + the two org-wide lookups derived from it
+// (approved-pairs for badges, line-item class/category for filters and
+// matching). Invalidated by every invoice-mutating action via INVOICES_TAG,
+// plus a 10-minute safety TTL.
+export async function getCachedInvoiceList(orgId: string) {
+  return cached([`invoice-list`, orgId], [INVOICES_TAG], async () => {
+    const supabase = createAdminClient();
+    const { data: invoices } = await supabase
+      .from("invoices")
+      .select("*")
+      .eq("organization_id", orgId)
+      .order("created_at", { ascending: false });
+    const invoiceIds = (invoices ?? []).map((i) => i.id);
+    const { data: approvedPairs } =
+      invoiceIds.length > 0
+        ? await supabase
+            .from("invoice_approvals")
+            .select("invoice_id, approver_id")
+            .in("invoice_id", invoiceIds)
+            .eq("decision", "approved")
+        : { data: [] };
+    const { data: lineItemRows } =
+      invoiceIds.length > 0
+        ? await supabase
+            .from("invoice_line_items")
+            .select("invoice_id, class, category, project_id")
+            .in("invoice_id", invoiceIds)
+        : { data: [] };
+    return {
+      invoices: (invoices ?? []) as InvoiceRow[],
+      approvedPairs: (approvedPairs ?? []) as {
+        invoice_id: string;
+        approver_id: string;
+      }[],
+      lineItemRows: (lineItemRows ?? []) as {
+        invoice_id: string;
+        class: string | null;
+        category: string | null;
+        project_id: string | null;
       }[],
     };
   });

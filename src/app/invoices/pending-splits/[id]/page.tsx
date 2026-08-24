@@ -1,10 +1,11 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
-import { revalidatePath } from "next/cache";
+import { revalidatePath, revalidateTag } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentOrg } from "@/lib/current-org";
 import { createInvoiceFromFile, InvoiceIngestError } from "@/lib/invoices";
 import { extractPdfPageRange, renderPdfPagesToPngDataUrls } from "@/lib/invoice-split";
+import { INVOICES_TAG } from "@/lib/org-cache";
 import { ConfirmSubmitButton } from "@/components/ConfirmSubmitButton";
 import { SubmitButton } from "@/components/SubmitButton";
 
@@ -68,6 +69,7 @@ async function confirmSplit(pendingSplitId: string) {
   // its own document from createInvoiceFromFile.
   await supabase.storage.from(INVOICE_BUCKET).remove([pending.file_path]);
 
+  revalidateTag(INVOICES_TAG);
   revalidatePath("/dashboard", "layout");
   revalidatePath("/invoices/pending-splits", "layout");
   redirect(

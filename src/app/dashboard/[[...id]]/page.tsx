@@ -14,6 +14,7 @@ import {
   getCachedQboTaxRates,
   getCachedQboTaxCodes,
   getCachedMemberRoster,
+  getCachedInvoiceList,
 } from "@/lib/org-cache";
 import { InvoiceStatusBadge } from "@/components/InvoiceStatusBadge";
 import { SearchInput } from "@/components/SearchInput";
@@ -173,7 +174,6 @@ export default async function DashboardPage({
   const q = searchParams.q?.trim().toLowerCase() ?? "";
 
   const [
-    { data: invoices },
     { data: workflows },
     { data: projects },
     qboCategoryRows,
@@ -184,11 +184,6 @@ export default async function DashboardPage({
     pendingSplitsRes,
     unreadNotificationsRes,
   ] = await Promise.all([
-    supabase
-      .from("invoices")
-      .select("*")
-      .eq("organization_id", org.id)
-      .order("created_at", { ascending: false }),
     supabase
       .from("approval_workflows")
       .select("id")
@@ -217,6 +212,15 @@ export default async function DashboardPage({
       .eq("user_id", user.id)
       .eq("read", false),
   ]);
+
+  // The invoice list (+ the approved-pairs and line-item lookups derived
+  // from it) is cached per-org and invalidated by every invoice-mutating
+  // action — so clicking between invoices doesn't re-download everything.
+  const {
+    invoices,
+    approvedPairs: approvedRows,
+    lineItemRows,
+  } = await getCachedInvoiceList(org.id);
   const pendingSplitsCount = pendingSplitsRes.count ?? 0;
   const unreadNotificationsCount = unreadNotificationsRes.count ?? 0;
 
@@ -265,8 +269,6 @@ export default async function DashboardPage({
 
   const [
     { data: allStepApprovers },
-    { data: approvedRows },
-    { data: lineItemRows },
   ] = await Promise.all([
     stepIds.length > 0
       ? supabase
@@ -274,19 +276,6 @@ export default async function DashboardPage({
           .select("*")
           .in("step_id", stepIds)
           .order("row_order", { ascending: true })
-      : Promise.resolve({ data: [] }),
-    invoiceIds.length > 0
-      ? supabase
-          .from("invoice_approvals")
-          .select("invoice_id, approver_id")
-          .in("invoice_id", invoiceIds)
-          .eq("decision", "approved")
-      : Promise.resolve({ data: [] }),
-    invoiceIds.length > 0
-      ? supabase
-          .from("invoice_line_items")
-          .select("invoice_id, class, category, project_id")
-          .in("invoice_id", invoiceIds)
       : Promise.resolve({ data: [] }),
   ]);
 

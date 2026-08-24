@@ -3,11 +3,13 @@
 export const maxDuration = 60;
 
 import { NextResponse } from "next/server";
+import { revalidateTag } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentOrg } from "@/lib/current-org";
 import { InvoiceIngestError } from "@/lib/invoices";
 import { ingestInvoiceFile } from "@/lib/invoice-ingest";
+import { INVOICES_TAG } from "@/lib/org-cache";
 import type { Database } from "@/lib/supabase/types";
 
 // Manual upload path: signed-in user clicks "Add invoice" / drags a file in.
@@ -99,12 +101,14 @@ export async function POST(request: Request) {
         status: "split",
         pending_split_id: result.pendingSplitId,
       });
+      revalidateTag(INVOICES_TAG); // new split pending review
       return NextResponse.json(
         { pendingSplitId: result.pendingSplitId, groupCount: result.groupCount },
         { status: 202 }
       );
     }
     await finish({ status: "done", invoice_id: result.invoice.id });
+    revalidateTag(INVOICES_TAG); // new invoice in the queue
     return NextResponse.json({ invoice: result.invoice }, { status: 201 });
   } catch (err) {
     if (err instanceof InvoiceIngestError) {
