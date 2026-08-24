@@ -1110,6 +1110,12 @@ export default async function DashboardPage({
             activeCount={activeFilterCount}
           />
           <div className="flex-1" />
+          <Link
+            href="/emails"
+            className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"
+          >
+            Email queue
+          </Link>
           {!isAuditor && (
             <Link
               href="/invoices/new"
