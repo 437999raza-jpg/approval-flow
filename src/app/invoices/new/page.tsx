@@ -23,8 +23,9 @@ export default async function NewInvoicePage() {
       </Link>
       <h1 className="mt-2 text-xl font-semibold">Add invoice</h1>
       <p className="mt-1 text-sm text-slate-500">
-        Uploads land as a new invoice in the &quot;Pending&quot; status and enter the
-        default approval workflow.
+        Drop one or more invoices — each appears in the queue below as it&apos;s
+        processed, then lands as a new invoice in &quot;Pending Review&quot; and enters
+        the default approval workflow.
       </p>
       <div className="mt-6">
         <InvoiceUploadDropzone />
