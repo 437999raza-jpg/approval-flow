@@ -6,6 +6,7 @@ import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { InvoiceIngestError } from "@/lib/invoices";
 import { ingestInvoiceFile } from "@/lib/invoice-ingest";
+import { mergeDocuments } from "@/lib/merge-documents";
 
 // Inbound email path (Resend — the same vendor as outbound notifications):
 //
@@ -23,6 +24,12 @@ import { ingestInvoiceFile } from "@/lib/invoice-ingest";
 // {local or token}@{INBOUND_EMAIL_DOMAIN} is attributed to that org — the
 // ApprovalMax/Dext model: the address lives on OUR domain, clients change
 // nothing.
+//
+// When an email carries several PDF/image attachments (an invoice plus a
+// backup and a certificate copy, say), they're merged into ONE document and
+// ingested as a single invoice — no manual Preview merging needed. If the
+// merged document contains several actual invoices, the existing
+// split-review flow catches it.
 export async function POST(request: Request) {
   const url = new URL(request.url);
   if (
@@ -114,23 +121,56 @@ export async function POST(request: Request) {
     };
     const attachments = listJson.data ?? [];
 
+    // Download every PDF/image attachment first.
+    const documents: { name: string; type: string; bytes: Uint8Array }[] = [];
     for (const attachment of attachments) {
       const filename = attachment.filename ?? "attachment";
       const contentType = attachment.content_type ?? "";
       if (!isPdfOrImage(filename, contentType) || !attachment.download_url) {
         continue;
       }
-
       const dl = await fetch(attachment.download_url);
       if (!dl.ok) {
         errors.push(`Could not download attachment "${filename}"`);
         continue;
       }
-      const bytes = new Uint8Array(await dl.arrayBuffer());
-      const file = new File([bytes], filename, {
+      documents.push({
+        name: filename,
         type: contentType || "application/octet-stream",
+        bytes: new Uint8Array(await dl.arrayBuffer()),
       });
+    }
 
+    // Clients often email an invoice PLUS supporting files (backup,
+    // certificate) as separate attachments. Merge them into one PDF (in
+    // attachment order, invoice pages first) so the email becomes ONE
+    // invoice — the same thing a human does in Preview before forwarding.
+    // If the merged document actually contains several invoices, the
+    // existing split-review flow catches it and asks the reviewer to pick
+    // page ranges.
+    let ingestList = documents;
+    if (documents.length > 1) {
+      const merged = await mergeDocuments(documents);
+      if (merged) {
+        const stem = documents[0].name.replace(/\.[^.]+$/, "") || "attachment";
+        ingestList = [
+          {
+            name: `${stem}-merged.pdf`,
+            type: "application/pdf",
+            bytes: merged,
+          },
+        ];
+      } else {
+        errors.push(
+          "Could not merge the attachments into one document — ingesting them separately."
+        );
+      }
+    }
+
+    for (const doc of ingestList) {
+      const file = new File([new Uint8Array(doc.bytes)], doc.name, {
+        type: doc.type || "application/octet-stream",
+      });
       try {
         const result = await ingestInvoiceFile({
           supabase,
@@ -148,7 +188,7 @@ export async function POST(request: Request) {
         errors.push(
           err instanceof InvoiceIngestError
             ? err.message
-            : `Unknown ingest error for "${filename}"`
+            : `Unknown ingest error for "${doc.name}"`
         );
       }
     }
