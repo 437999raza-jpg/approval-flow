@@ -104,22 +104,11 @@ export async function POST(request: Request) {
 
   try {
     // List the email's attachments (metadata + signed download URLs).
-    const listRes = await fetch(
-      `https://api.resend.com/emails/${email_id}/attachments`,
-      { headers: { Authorization: `Bearer ${apiKey}` } }
-    );
-    if (!listRes.ok) {
-      throw new Error(`Resend attachments list failed (${listRes.status})`);
-    }
-    const listJson = (await listRes.json()) as {
-      data?: {
-        id?: string;
-        filename?: string;
-        content_type?: string;
-        download_url?: string;
-      }[];
-    };
-    const attachments = listJson.data ?? [];
+    // Resend can still be indexing the email for a moment after the
+    // webhook fires, so retry a few times with a short backoff; on final
+    // failure include the raw response so the queue log shows what Resend
+    // actually said.
+    const attachments = await listResendAttachments(apiKey, email_id);
 
     // Download every PDF/image attachment first.
     const documents: { name: string; type: string; bytes: Uint8Array }[] = [];
@@ -256,4 +245,34 @@ function isPdfOrImage(filename: string, contentType: string) {
     contentType.startsWith("image/") ||
     /\.(png|jpe?g|gif|webp)$/.test(name)
   );
+}
+
+// Resend's attachments list for a received email. The email may still be
+// indexing for a moment after the webhook fires, so retry with backoff; on
+// final failure include the raw response so the queue log shows what Resend
+// actually said.
+async function listResendAttachments(apiKey: string, emailId: string) {
+  type AttachmentMeta = {
+    id?: string;
+    filename?: string;
+    content_type?: string;
+    download_url?: string;
+  };
+  let lastErr: string | null = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const res = await fetch(
+      `https://api.resend.com/emails/${emailId}/attachments`,
+      { headers: { Authorization: `Bearer ${apiKey}` } }
+    );
+    if (res.ok) {
+      const json = (await res.json()) as { data?: AttachmentMeta[] };
+      return json.data ?? [];
+    }
+    const body = (await res.text()).slice(0, 300);
+    lastErr = `Resend attachments list failed (${res.status}): ${body} (email_id ${emailId})`;
+    if (attempt < 2) {
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+  }
+  throw new Error(lastErr ?? "Resend attachments list failed");
 }
