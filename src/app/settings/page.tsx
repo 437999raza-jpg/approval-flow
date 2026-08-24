@@ -5,7 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentOrg } from "@/lib/current-org";
 import { SignOutButton } from "@/components/SignOutButton";
-import { disconnectQbo, refreshQboData, saveDefaultTaxRate, syncQboTaxes, syncQboClasses, syncQboCategories, syncQboSuppliers, syncQboProjects } from "@/lib/dashboard-actions";
+import { disconnectQbo, refreshQboData, saveDefaultTaxRate, saveInboundEmailLocal, syncQboTaxes, syncQboClasses, syncQboCategories, syncQboSuppliers, syncQboProjects } from "@/lib/dashboard-actions";
 import { qboEnv } from "@/lib/qbo";
 import { Avatar } from "@/components/Avatar";
 import { AvatarUploadForm } from "@/components/AvatarUploadForm";
@@ -15,6 +15,7 @@ import { InlineSelectSave } from "@/components/InlineSelectSave";
 import { InlineTextSave } from "@/components/InlineTextSave";
 import { SubmitButton } from "@/components/SubmitButton";
 import { DefaultTaxRateForm } from "@/components/DefaultTaxRateForm";
+import { InboundEmailForm } from "@/components/InboundEmailForm";
 import { ScrollPreserveForm } from "@/components/ScrollPreserveForm";
 import { ScrollRestorer } from "@/components/ScrollRestorer";
 import type { Database } from "@/lib/supabase/types";
@@ -407,6 +408,9 @@ export default async function SettingsPage({
 
   const rate = Number(process.env.BILLING_RATE_PER_INVOICE || 5);
   const suggestedCharge = usageTotal * rate;
+
+  const inboundEmailDomain =
+    process.env.INBOUND_EMAIL_DOMAIN ?? "invoices.example.com";
 
   const [{ data: members }, { data: projects }] = await Promise.all([
     supabase
@@ -933,6 +937,37 @@ export default async function SettingsPage({
                   )}
                 </div>
               </div>
+            </div>
+
+            {/* Invoice email — inbound capture address on our domain
+                (ApprovalMax/Dext model: {companyname}@ourdomain, clients
+                change nothing) */}
+            <div className="mt-3 rounded-lg border border-slate-200 bg-white p-4 text-sm">
+              <div className="text-xs font-bold uppercase tracking-wide text-slate-400">
+                Invoice email
+              </div>
+              <p className="mt-1 text-xs text-slate-500">
+                Invoices emailed to your capture address land in the app
+                automatically. The address is on our domain — your suppliers
+                just send to it, and there is nothing to set up on your side.
+              </p>
+              {isAdmin ? (
+                <InboundEmailForm
+                  domain={inboundEmailDomain}
+                  currentLocal={org.inbound_email_local}
+                  currentToken={org.inbound_email_token}
+                  action={saveInboundEmailLocal}
+                />
+              ) : (
+                <p className="mt-2 text-xs text-slate-500">
+                  Your capture address is{" "}
+                  <span className="font-mono font-semibold text-slate-800">
+                    {org.inbound_email_local ?? org.inbound_email_token}@
+                    {inboundEmailDomain}
+                  </span>
+                  .
+                </p>
+              )}
             </div>
           </section>
 

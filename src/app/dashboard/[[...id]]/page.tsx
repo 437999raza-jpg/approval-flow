@@ -940,8 +940,8 @@ export default async function DashboardPage({
       <Sidebar>
         <div className="border-b border-slate-200 p-4">
           <div className="text-sm font-semibold">{org.name}</div>
-          <div className="mt-0.5 truncate text-xs text-slate-400" title={`${org.inbound_email_token}@${process.env.INBOUND_EMAIL_DOMAIN}`}>
-            {org.inbound_email_token}@{process.env.INBOUND_EMAIL_DOMAIN}
+          <div className="mt-0.5 truncate text-xs text-slate-400" title={`${org.inbound_email_local ?? org.inbound_email_token}@${process.env.INBOUND_EMAIL_DOMAIN}`}>
+            {org.inbound_email_local ?? org.inbound_email_token}@{process.env.INBOUND_EMAIL_DOMAIN}
           </div>
         </div>
         <nav className="flex-1 space-y-0.5 p-2">

@@ -25,7 +25,7 @@ gaps.
 | Database / Auth / Storage | Supabase (Postgres + `@supabase/ssr`) | One backend for data, auth, and file storage; Row Level Security for multi-tenancy |
 | Styling | Tailwind CSS | Fast iteration, no component library |
 | Invoice field extraction | OpenRouter (any model, default `anthropic/claude-sonnet-4.5`) | Currently how extraction quality gets **tested** across models — not a locked-in production choice. Swap `OPENROUTER_MODEL` to compare. |
-| Email ingestion | SendGrid Inbound Parse (webhook) | Forwards email attachments to our API as multipart form data |
+| Email ingestion | Resend Receiving (webhook + Attachments API) | `email.received` webhook → pull attachments via the Resend API; capture addresses on our domain like ApprovalMax/Dext |
 | Outbound email | Resend (HTTP API, no SDK) | @mention notification emails — optional, best-effort (see [Dashboard UI](#dashboard-ui)) |
 
 ---
@@ -41,7 +41,7 @@ gaps.
                                     (src/lib/invoice-ingest.ts)
                                                 │  ├─ classifyMultiPageInvoice() — multiple
   Forwarded email ─▶┌──────────────────────┐   │  │  invoices stapled together? → pending_invoice_splits,
-  (SendGrid parse)   │/api/webhooks/        │──┘  │  stop here for human review. Otherwise ↓
+  (Resend receiving) │/api/webhooks/        │──┘  │  stop here for human review. Otherwise ↓
                       │inbound-email        │      │
                       └──────────────────────┘      ▼
                                           createInvoiceFromFile()
@@ -196,14 +196,14 @@ Copy `.env.example` → `.env.local` and fill in:
 | `NEXT_PUBLIC_SUPABASE_URL` | Yes | Supabase → Project Settings → API → Project URL |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Yes | Same page → **Publishable key** (new naming) / anon key (legacy naming) — safe to expose client-side |
 | `SUPABASE_SERVICE_ROLE_KEY` | Yes | Same page → **Secret key** (new naming) / service_role key (legacy) — **server-only, full admin access, never expose to the client** |
-| `INBOUND_EMAIL_WEBHOOK_SECRET` | Yes (for email ingestion) | Any random string you choose; appended as `?token=` on the webhook URL you give SendGrid |
-| `INBOUND_EMAIL_DOMAIN` | Yes (for email ingestion) | A subdomain you control, e.g. `invoices.yourapp.com` |
+| `INBOUND_EMAIL_WEBHOOK_SECRET` | Yes (for email ingestion) | Any random string you choose; appended as `?token=` on the webhook URL you give Resend |
+| `INBOUND_EMAIL_DOMAIN` | Yes (for email ingestion) | The receiving domain added to Resend, e.g. `flow.ufirst.co` |
 | `OPENROUTER_API_KEY` | For extraction | openrouter.ai — required for invoice field/line-item extraction (without it, extraction silently no-ops rather than failing ingestion) |
 | `OPENROUTER_MODEL` | No | Any OpenRouter model id, e.g. `anthropic/claude-sonnet-4.5`, `openai/gpt-4o`, `google/gemini-2.0-flash-001` — defaults to `anthropic/claude-sonnet-4.5`. This is the knob for testing extraction quality across models. |
 | `QBO_CLIENT_ID` | For QBO sync | Intuit Developer app client id (developer.intuit.com) |
 | `QBO_CLIENT_SECRET` | For QBO sync | Intuit Developer app client secret |
 | `QBO_REDIRECT_URI` | For QBO sync | Must match the app's registered Redirect URI exactly, e.g. `http://localhost:3210/api/qbo/callback` |
-| `RESEND_API_KEY` | No | resend.com — @mention notification emails; without it, mentions still create the in-app `notifications` row, just no email |
+| `RESEND_API_KEY` | Yes (for email ingestion + mentions) | resend.com — required for inbound attachments and for @mention notification emails; without it, inbound ingestion can't fetch attachments and mentions still create the in-app `notifications` row, just no email |
 | `RESEND_FROM_EMAIL` | No (required if `RESEND_API_KEY` is set) | Must be a verified sender/domain in your Resend account |
 
 Supabase renamed its API keys at some point — you may see either
@@ -238,7 +238,7 @@ cp .env.example .env.local   # then fill in the values above
 
 The dev server is pinned to a **fixed port, 3210**, via
 [`.claude/launch.json`](.claude/launch.json) (`next dev -p 3210`). This
-matters because Supabase magic-link/password redirects, and the SendGrid
+matters because Supabase magic-link/password redirects, and the Resend
 webhook URL you register, all hardcode an origin — a random port on every
 restart would break those. If you're not using the Claude Code preview
 tooling, just run:
@@ -416,30 +416,49 @@ review at `/invoices/pending-splits`, confirm the page ranges, and create
 the resulting invoices (or dismiss it as a false positive). Applies to
 both manual upload and email ingestion.
 
-### Email ingestion (SendGrid Inbound Parse)
+### Email ingestion (Resend Receiving)
 
-Each org has a unique `inbound_email_token`; mail sent to
-`{token}@{INBOUND_EMAIL_DOMAIN}` is attributed to that org. Shown on the
-dashboard sidebar.
+The ApprovalMax/Dext model: every org gets a capture address **on our
+domain** — `{friendly}@{INBOUND_EMAIL_DOMAIN}`, e.g. `fluid@flow.ufirst.co`
+— and the client changes nothing (no DNS, no MX, nothing). They tell
+suppliers to email invoices to that address and log in at our app to manage
+them.
 
-**Setup:**
-1. In SendGrid: Settings → Inbound Parse → Add Host & URL.
-2. **Subdomain**: the value of `INBOUND_EMAIL_DOMAIN` (e.g. `invoices.yourapp.com`).
-3. Add an MX record for that subdomain pointing to `mx.sendgrid.net` (priority 10), per SendGrid's instructions.
-4. **Destination URL**: `https://<your-domain>/api/webhooks/inbound-email?token=<INBOUND_EMAIL_WEBHOOK_SECRET>`.
-5. Forwarding/CC'ing an email to an org's inbound address creates one invoice per PDF/image attachment (or queues it for split review — see above — if a single attachment looks like several stapled-together invoices).
-6. Every hit (matched or not, invoice created or not) is logged to `inbound_email_log` for debugging.
+- Each org has a unique `inbound_email_token`; admins can set a friendly
+  `inbound_email_local` in Settings → Integrations → Invoice email. Both the
+  friendly local part and the token resolve to the org.
+- The webhook (`src/app/api/webhooks/inbound-email/route.ts`) receives
+  Resend's `email.received` JSON event (metadata only), then pulls the
+  attachments through the Resend API (`GET /emails/{email_id}/attachments`,
+  each with a signed `download_url`) and ingests every PDF/image.
 
-**Testing the webhook locally without SendGrid** — simulate the POST with curl:
+**Setup (one-time, on the SaaS side — clients do nothing):**
+1. Resend → **Domains → Add domain** with the value of `INBOUND_EMAIL_DOMAIN`
+   (e.g. `flow.ufirst.co`) and **enable Receiving** for it.
+2. Add the MX and verification records Resend shows at your DNS provider
+   (a subdomain like `invoices.flow.ufirst.co` is safest — it never touches
+   the root domain's mail).
+3. Resend → Domains → {domain} → **Receiving → Webhook URL**:
+   `https://<your-domain>/api/webhooks/inbound-email?token=<INBOUND_EMAIL_WEBHOOK_SECRET>`.
+4. Set `RESEND_API_KEY` (required for inbound now, not just outbound) and
+   `INBOUND_EMAIL_DOMAIN` in Vercel and `.env.local`.
+5. Forwarding/CC'ing an email to an org's inbound address creates one
+   invoice per PDF/image attachment (or queues it for split review — see
+   above — if a single attachment looks like several stapled-together
+   invoices).
+6. Every hit (matched or not, invoice created or not) is logged to
+   `inbound_email_log` for debugging.
+
+**Testing the webhook locally** — simulate Resend's JSON event with curl:
 
 ```bash
 curl -X POST "http://localhost:3210/api/webhooks/inbound-email?token=<INBOUND_EMAIL_WEBHOOK_SECRET>" \
-  -F "to=<org_inbound_token>@<INBOUND_EMAIL_DOMAIN>" \
-  -F "from=vendor@supplier.com" \
-  -F "subject=Invoice for August services" \
-  -F "attachments=1" \
-  -F "attachment1=@/path/to/invoice.pdf;type=application/pdf"
+  -H "Content-Type: application/json" \
+  -d '{"type":"email.received","data":{"email_id":"<a-real-resend-email-id>","from":"vendor@supplier.com","to":["<org_inbound_local_or_token>@<INBOUND_EMAIL_DOMAIN>"],"subject":"Invoice for August services"}}'
 ```
+
+(Full ingestion of attachments requires a real Resend `email_id` — the
+metadata-only event is the production path.)
 
 ### Field extraction (OpenRouter, model-agnostic)
 
@@ -794,7 +813,7 @@ yet rebuilt against line items.
 
 1. Push this repo to GitHub, import it in Vercel.
 2. Add the same env vars from `.env.local` in Vercel's Project Settings → Environment Variables (production values — a separate Supabase project from your local/dev one is strongly recommended).
-3. Point the SendGrid Inbound Parse destination URL at your production domain.
+3. Point the Resend Receiving webhook URL at your production domain.
 4. Update `INBOUND_EMAIL_DOMAIN` to match whatever subdomain's MX you actually configure for production.
 
 ---

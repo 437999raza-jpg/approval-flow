@@ -1520,6 +1520,77 @@ export async function saveDefaultTaxRate(formData: FormData) {
 }
 
 
+// Set (or clear) the org's friendly inbound-email local part — the
+// ApprovalMax/Dext model: clients email invoices to
+// {local}@{INBOUND_EMAIL_DOMAIN} (e.g. fluid@flow.ufirst.co) on OUR domain,
+// with nothing to set up on their side. Admin only. Returns a result object
+// so the form can show inline errors (uniqueness/format) without a page
+// navigation.
+export async function saveInboundEmailLocal(
+  formData: FormData
+): Promise<{ ok: boolean; error?: string }> {
+  "use server";
+
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Not signed in." };
+
+  const org = await getCurrentOrg(supabase);
+  if (!org || org.role !== "admin") {
+    return { ok: false, error: "Only the org admin can change this." };
+  }
+
+  const raw = String(formData.get("inbound_email_local") ?? "")
+    .trim()
+    .toLowerCase();
+  const value = raw === "" ? null : raw;
+
+  if (value && !/^[a-z0-9][a-z0-9._-]{0,63}$/.test(value)) {
+    return {
+      ok: false,
+      error:
+        'Use lowercase letters, numbers, dashes, dots or underscores — e.g. "fluidconstruction".',
+    };
+  }
+
+  if (value) {
+    const { data: existing } = await supabase
+      .from("organizations")
+      .select("id")
+      .eq("inbound_email_local", value)
+      .neq("id", org.id)
+      .maybeSingle();
+    if (existing) {
+      return {
+        ok: false,
+        error: `"${value}@${process.env.INBOUND_EMAIL_DOMAIN ?? "…"}" is already taken by another company.`,
+      };
+    }
+  }
+
+  const { error: updateError } = await supabase
+    .from("organizations")
+    .update({ inbound_email_local: value })
+    .eq("id", org.id);
+  if (updateError) {
+    console.error("saveInboundEmailLocal failed:", updateError);
+    return { ok: false, error: "Could not save — please try again." };
+  }
+
+  await supabase.from("audit_log").insert({
+    organization_id: org.id,
+    actor_id: user.id,
+    action: "org.inbound_email_local_saved",
+    metadata: { inbound_email_local: value },
+  });
+
+  revalidatePath("/settings");
+  revalidatePath("/dashboard", "layout");
+  return { ok: true };
+}
+
 // Record when a QBO mirror section was last synced — Settings shows
 // "N on File. Last synced on <time>" per section and lists only the items
 // that are NEW in the most recent sync (rows whose first_seen_at is >= this

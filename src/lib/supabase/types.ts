@@ -43,6 +43,7 @@ export interface Database {
           name: string;
           slug: string;
           inbound_email_token: string;
+          inbound_email_local: string | null;
           default_tax_rate: number | null;
           created_at: string;
         };
