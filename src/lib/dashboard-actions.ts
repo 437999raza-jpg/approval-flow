@@ -1591,7 +1591,7 @@ export async function saveInboundEmailLocal(
   return { ok: true };
 }
 
-// Remove a bad message from the Email queue (spam, tests, wrong recipient).
+// Remove a bad message from the Queue (spam, tests, wrong recipient).
 // Admin only — the page shows the button only to admins, and this action
 // re-checks.
 export async function deleteInboundEmailLog(id: string): Promise<void> {
@@ -1613,14 +1613,11 @@ export async function deleteInboundEmailLog(id: string): Promise<void> {
     .eq("organization_id", org.id);
   if (error) console.error("deleteInboundEmailLog failed:", error);
 
-  revalidatePath("/emails");
+  revalidatePath("/queue");
 }
 
-// Admin bulk cleanup for the Email queue: removes all COMPLETED entries
-// (processed → invoice or split review) so the queue stays short. Failed /
-// unmatched / unprocessed entries stay visible for attention (remove those
-// individually with the ✕ button).
-export async function clearProcessedInboundEmails(): Promise<void> {
+// Remove a bad upload entry from the Queue. Admin only.
+export async function deleteUploadLogEntry(id: string): Promise<void> {
   "use server";
 
   const supabase = createClient();
@@ -1633,13 +1630,46 @@ export async function clearProcessedInboundEmails(): Promise<void> {
   if (!org || org.role !== "admin") return;
 
   const { error } = await supabase
-    .from("inbound_email_log")
+    .from("upload_log")
     .delete()
-    .eq("organization_id", org.id)
-    .eq("processed", true);
-  if (error) console.error("clearProcessedInboundEmails failed:", error);
+    .eq("id", id)
+    .eq("organization_id", org.id);
+  if (error) console.error("deleteUploadLogEntry failed:", error);
 
-  revalidatePath("/emails");
+  revalidatePath("/queue");
+}
+
+// Admin bulk cleanup for the Queue: removes all COMPLETED entries (emails
+// that became invoices/split reviews, uploads that finished) so the queue
+// stays short. Failed / unmatched entries stay visible for attention.
+export async function clearCompletedQueue(): Promise<void> {
+  "use server";
+
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
+  const org = await getCurrentOrg(supabase);
+  if (!org || org.role !== "admin") return;
+
+  const [emailRes, uploadRes] = await Promise.all([
+    supabase
+      .from("inbound_email_log")
+      .delete()
+      .eq("organization_id", org.id)
+      .eq("processed", true),
+    supabase
+      .from("upload_log")
+      .delete()
+      .eq("organization_id", org.id)
+      .in("status", ["done", "split"]),
+  ]);
+  if (emailRes.error) console.error("clearCompletedQueue emails:", emailRes.error);
+  if (uploadRes.error) console.error("clearCompletedQueue uploads:", uploadRes.error);
+
+  revalidatePath("/queue");
 }
 
 // Record when a QBO mirror section was last synced — Settings shows

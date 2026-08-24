@@ -969,10 +969,10 @@ export default async function DashboardPage({
           ))}
           <div className="mt-2 border-t border-slate-100 pt-2">
             <Link
-              href="/emails"
+              href="/queue"
               className="flex items-center rounded-md px-3 py-2 text-sm text-slate-600 hover:bg-slate-100"
             >
-              Email queue
+              Queue
             </Link>
           </div>
         </nav>
@@ -1111,10 +1111,10 @@ export default async function DashboardPage({
           />
           <div className="flex-1" />
           <Link
-            href="/emails"
-            className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"
+            href="/queue"
+            className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
           >
-            Email queue
+            Queue
           </Link>
           {!isAuditor && (
             <Link
