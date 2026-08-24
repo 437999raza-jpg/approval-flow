@@ -6,7 +6,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentOrg } from "@/lib/current-org";
 import { fetchAllQboSuppliers } from "@/lib/qbo-all";
 import { SignOutButton } from "@/components/SignOutButton";
-import { disconnectQbo, refreshQboData, syncQboTaxes, syncQboClasses, syncQboCategories, syncQboSuppliers, syncQboProjects } from "@/lib/dashboard-actions";
+import { disconnectQbo, refreshQboData, saveDefaultTaxRate, syncQboTaxes, syncQboClasses, syncQboCategories, syncQboSuppliers, syncQboProjects } from "@/lib/dashboard-actions";
 import { qboEnv } from "@/lib/qbo";
 import { Avatar } from "@/components/Avatar";
 import { AvatarUploadForm } from "@/components/AvatarUploadForm";
@@ -248,7 +248,7 @@ async function deleteProject(projectId: string) {
 export default async function SettingsPage({
   searchParams,
 }: {
-  searchParams: { error?: string; q?: string; qbo?: string; count?: string };
+  searchParams: { error?: string; q?: string; qbo?: string; count?: string; taxdefault?: string; rate?: string };
 }) {
   const supabase = createClient();
 
@@ -500,6 +500,22 @@ export default async function SettingsPage({
                 Synced {searchParams.count ?? 0} projects from QuickBooks (read-only).
               </div>
             )}
+            {searchParams.taxdefault === "saved" && (
+              <div className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+                Default tax rate saved: {searchParams.rate}%.
+              </div>
+            )}
+            {searchParams.taxdefault === "cleared" && (
+              <div className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+                Default tax rate cleared — new invoices will use extraction
+                or supplier rules.
+              </div>
+            )}
+            {searchParams.taxdefault === "error" && (
+              <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                Could not save the default tax rate.
+              </div>
+            )}
             {searchParams.qbo === "error" && (
               <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
                 The QuickBooks connection failed. If you cancelled the
@@ -623,6 +639,43 @@ export default async function SettingsPage({
                     </p>
                   )}
                 </div>
+
+                {/* Default tax rate for new invoices */}
+                {isAdmin && qboTaxCodes && qboTaxCodes.length > 0 && (
+                  <div className="mt-3 border-t border-slate-100 pt-3">
+                    <div className="text-xs font-bold uppercase tracking-wide text-slate-400">
+                      Default tax rate for new invoices
+                    </div>
+                    <p className="mt-1 text-xs text-slate-500">
+                      Applied to every incoming invoice when the supplier has
+                      no rule of their own. Choose one of the synced rates.
+                    </p>
+                    <form action={saveDefaultTaxRate} className="mt-2 flex flex-wrap items-center gap-2">
+                      <select
+                        name="default_tax_rate"
+                        defaultValue={org.default_tax_rate?.toString() ?? ""}
+                        className="rounded-md border border-slate-300 px-3 py-1.5 text-sm focus:border-blue-500 focus:outline-none"
+                      >
+                        <option value="">— none —</option>
+                        {[...new Set((qboTaxCodes ?? []).map((c) => c.rate_value))]
+                          .sort((a, b) => a - b)
+                          .map((rate) => (
+                            <option key={rate} value={rate}>
+                              {rate}%
+                            </option>
+                          ))}
+                      </select>
+                      <SubmitButton className="rounded-md bg-slate-800 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-700">
+                        Save
+                      </SubmitButton>
+                    </form>
+                    {org.default_tax_rate != null && (
+                      <p className="mt-1.5 text-xs text-emerald-700">
+                        Current default: {org.default_tax_rate}%
+                      </p>
+                    )}
+                  </div>
+                )}
 
                 {/* Classes */}
                 <div className="mt-3 border-t border-slate-100 pt-3">

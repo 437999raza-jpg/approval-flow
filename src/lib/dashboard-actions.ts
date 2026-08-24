@@ -1469,6 +1469,50 @@ export async function reExtract(invoiceId: string) {
 }
 
 
+// Save the org's default tax rate for new invoices. Admin only. The value
+// is one of the synced QBO tax code rates (e.g. 13 for H 13%); applied at
+// ingestion when the supplier has no rule of their own.
+export async function saveDefaultTaxRate(formData: FormData) {
+  "use server";
+
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
+  const org = await getCurrentOrg(supabase);
+  if (!org || org.role !== "admin") {
+    redirect("/settings?taxdefault=error");
+  }
+
+  const raw = String(formData.get("default_tax_rate") ?? "").trim();
+  const rate = raw === "" ? null : Number(raw);
+  if (raw !== "" && (!Number.isFinite(rate!) || rate! <= 0)) {
+    redirect("/settings?taxdefault=error");
+  }
+
+  await supabase
+    .from("organizations")
+    .update({ default_tax_rate: rate })
+    .eq("id", org.id);
+
+  await supabase.from("audit_log").insert({
+    organization_id: org.id,
+    actor_id: user.id,
+    action: "org.default_tax_rate_saved",
+    metadata: { default_tax_rate: rate },
+  });
+
+  revalidatePath("/settings");
+  redirect(
+    rate != null
+      ? `/settings?taxdefault=saved&rate=${rate}`
+      : "/settings?taxdefault=cleared"
+  );
+}
+
+
 // Pull QuickBooks tax RATES (the % applied to bills) into the app.
 // READ-ONLY against QBO — nothing is ever written to QuickBooks here.
 // Admin only. Rates are deduped by percentage (e.g. GST 5%, HST 13%).

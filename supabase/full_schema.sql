@@ -1,4 +1,4 @@
--- Approval Flow: COMPLETE schema bundle (0001-0042), for a FRESH production
+-- Approval Flow: COMPLETE schema bundle (0001-0043), for a FRESH production
 -- Supabase project only. Do NOT run on an existing database.
 -- Generated 2026-08-21. Paste into the SQL editor and run once.
 
@@ -2471,3 +2471,22 @@ alter table supplier_defaults add column vendor_name_normalized text generated a
 ) stored;
 alter table supplier_defaults add constraint supplier_defaults_org_vendor_name_unique
   unique (organization_id, vendor_name_normalized);
+
+--------------------------------------------------------------------
+-- >>> supabase/migrations/0043_default_tax_and_totals_note.sql
+--------------------------------------------------------------------
+-- 0043: per-org default tax rate for new invoices, and a totals-discrepancy
+-- note on invoices.
+--
+-- 1. organizations.default_tax_rate — the tax rate applied to every new
+--    invoice when the supplier has no rule of their own. Set in Settings
+--    (below the tax sync section); the value is one of the synced QBO tax
+--    code rates (e.g. 13 for H 13%).
+-- 2. invoices.totals_note — set at ingestion when the document's printed
+--    total disagrees with the line-item derivation. The DOCUMENT total wins
+--    ("matches at all costs"); this note tells the reviewer what happened.
+-- Run via `supabase db push` or paste into the Supabase SQL editor.
+
+alter table organizations add column if not exists default_tax_rate numeric;
+
+alter table invoices add column if not exists totals_note text;

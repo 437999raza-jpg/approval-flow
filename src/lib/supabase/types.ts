@@ -43,6 +43,7 @@ export interface Database {
           name: string;
           slug: string;
           inbound_email_token: string;
+          default_tax_rate: number | null;
           created_at: string;
         };
         Insert: Partial<
@@ -232,6 +233,7 @@ export interface Database {
           qbo_error: string | null;
           qbo_vendor_matched: boolean;
           has_cos_or_extras: boolean;
+          totals_note: string | null;
           created_at: string;
           updated_at: string;
         };

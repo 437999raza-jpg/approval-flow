@@ -722,6 +722,9 @@ export function BillPanel({
                   readOnly
                 />
               </div>
+              {invoice.totals_note && (
+                <p className="pt-2 text-xs text-amber-700">{invoice.totals_note}</p>
+              )}
             </div>
           </div>
         </div>

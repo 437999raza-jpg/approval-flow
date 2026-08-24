@@ -137,6 +137,15 @@ export async function createInvoiceFromFile({
     vendorName
   );
 
+  // Org-wide default tax rate (Settings → Data from QuickBooks). Applied to
+  // line items that have no supplier rule and no rate from extraction.
+  const { data: org } = await supabase
+    .from("organizations")
+    .select("default_tax_rate")
+    .eq("id", organizationId)
+    .single();
+  const orgDefaultTaxRate = org?.default_tax_rate ?? null;
+
   // Project detection from the PO number: suppliers commonly put their job
   // number on the PO ("2022-589-PO-1234" starts with project code 2022-58).
   // Project is always a per-bill choice (a supplier can work on many jobs),
@@ -170,9 +179,13 @@ export async function createInvoiceFromFile({
     ? extracted!.line_items.map((li) => ({
         description: li.description,
         amount: li.amount,
-        tax_rate: supplierDefaults?.tax_rate ?? li.tax_rate,
+        // Supplier rule > org default > what extraction guessed.
+        tax_rate:
+          supplierDefaults?.tax_rate ??
+          orgDefaultTaxRate ??
+          li.tax_rate,
         category: hbPayableCategoryFor(li) ?? supplierDefaults?.category ?? li.category,
-        class: supplierDefaults?.class ?? li.class,
+        class: li.class,
         project_id: projectId,
       }))
     : supplierDefaults
@@ -180,7 +193,7 @@ export async function createInvoiceFromFile({
           {
             description: null,
             amount: extracted?.total_amount ?? null,
-            tax_rate: supplierDefaults.tax_rate,
+            tax_rate: supplierDefaults.tax_rate ?? orgDefaultTaxRate,
             category: supplierDefaults.category,
             class: supplierDefaults.class,
             project_id: projectId,
@@ -188,12 +201,27 @@ export async function createInvoiceFromFile({
         ]
       : [];
 
-  const computedAmount = hasLineItems
-    ? computeLineItemTotals(finalLineItems).total
-    : (extracted?.total_amount ?? null);
-  const computedTax = hasLineItems
-    ? computeLineItemTotals(finalLineItems).tax
-    : (extracted?.tax_amount ?? null);
+  // Totals: derive from the final line items, then reconcile against the
+  // DOCUMENT's own printed totals. The printed total is ground truth — when
+  // it disagrees with the line-item sum, the document wins ("the total must
+  // match at all costs"), and a note is recorded so the reviewer can see
+  // what happened.
+  const derived = computeLineItemTotals(finalLineItems);
+  let computedAmount = hasLineItems ? derived.total : (extracted?.total_amount ?? null);
+  let computedTax = hasLineItems ? derived.tax : (extracted?.tax_amount ?? null);
+  let totalsNote: string | null = null;
+
+  if (hasLineItems) {
+    const printedTotal = extracted?.total_amount ?? null;
+    if (
+      printedTotal != null &&
+      Math.abs(printedTotal - derived.total) > 0.01
+    ) {
+      computedAmount = printedTotal; // the document wins
+      if (extracted?.tax_amount != null) computedTax = extracted.tax_amount;
+      totalsNote = `Document total ${printedTotal.toFixed(2)} differs from line items (${derived.total.toFixed(2)}). The document total was used.`;
+    }
+  }
 
   // Route the invoice to the first workflow whose items all match; fall
   // back to the org's default workflow.
@@ -233,6 +261,7 @@ export async function createInvoiceFromFile({
       file_name: file.name,
       vendor_name: vendorName,
       qbo_vendor_matched: qboVendorMatched,
+      totals_note: totalsNote,
       invoice_number: extracted?.invoice_number ?? null,
       amount: computedAmount,
       currency: supplierDefaults?.currency ?? extracted?.currency ?? "USD",
