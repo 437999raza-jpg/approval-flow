@@ -7,7 +7,14 @@ import { clsx } from "clsx";
 import { notFound, redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentOrg } from "@/lib/current-org";
-import { fetchAllQboSuppliers } from "@/lib/qbo-all";
+import {
+  getCachedQboCategories,
+  getCachedQboSuppliers,
+  getCachedQboClasses,
+  getCachedQboTaxRates,
+  getCachedQboTaxCodes,
+  getCachedMemberRoster,
+} from "@/lib/org-cache";
 import { InvoiceStatusBadge } from "@/components/InvoiceStatusBadge";
 import { SearchInput } from "@/components/SearchInput";
 import { SignOutButton } from "@/components/SignOutButton";
@@ -169,11 +176,11 @@ export default async function DashboardPage({
     { data: invoices },
     { data: workflows },
     { data: projects },
-    { data: qboCategoryRows },
+    qboCategoryRows,
     qboSupplierRows,
-    { data: qboClassRows },
-    { data: qboTaxRateRows },
-    { data: qboTaxCodeRows },
+    qboClassRows,
+    qboTaxRateRows,
+    qboTaxCodeRows,
     pendingSplitsRes,
     unreadNotificationsRes,
   ] = await Promise.all([
@@ -192,31 +199,13 @@ export default async function DashboardPage({
       .eq("organization_id", org.id)
       .eq("active", true)
       .order("name", { ascending: true }),
-    supabase
-      .from("qbo_categories")
-      .select("name, acct_num")
-      .eq("organization_id", org.id)
-      .eq("active", true)
-      .order("name", { ascending: true })
-      .limit(1000),
-    fetchAllQboSuppliers(supabase, org.id),
-    supabase
-      .from("qbo_classes")
-      .select("name")
-      .eq("organization_id", org.id)
-      .eq("active", true)
-      .order("name", { ascending: true })
-      .limit(1000),
-    supabase
-      .from("qbo_tax_rates")
-      .select("name, rate_value")
-      .eq("organization_id", org.id)
-      .order("rate_value", { ascending: true }),
-    supabase
-      .from("qbo_tax_codes")
-      .select("qbo_tax_code_id, name, rate_value")
-      .eq("organization_id", org.id)
-      .order("name", { ascending: true }),
+    // QBO mirrors are cached per-org (org-cache.ts) — they only change when
+    // an admin syncs, so don't refetch 2,000+ rows on every navigation.
+    getCachedQboCategories(org.id),
+    getCachedQboSuppliers(org.id),
+    getCachedQboClasses(org.id),
+    getCachedQboTaxRates(org.id),
+    getCachedQboTaxCodes(org.id),
     supabase
       .from("pending_invoice_splits")
       .select("id", { count: "exact", head: true })
@@ -276,7 +265,6 @@ export default async function DashboardPage({
 
   const [
     { data: allStepApprovers },
-    { data: memberRows },
     { data: approvedRows },
     { data: lineItemRows },
   ] = await Promise.all([
@@ -287,10 +275,6 @@ export default async function DashboardPage({
           .in("step_id", stepIds)
           .order("row_order", { ascending: true })
       : Promise.resolve({ data: [] }),
-    supabase
-      .from("organization_members")
-      .select("user_id")
-      .eq("organization_id", org.id),
     invoiceIds.length > 0
       ? supabase
           .from("invoice_approvals")
@@ -306,6 +290,8 @@ export default async function DashboardPage({
       : Promise.resolve({ data: [] }),
   ]);
 
+  const { memberUserIds, profileRows } = await getCachedMemberRoster(org.id);
+
   const stepApproverIds = (allStepApprovers ?? []).map((a) => a.id);
   const { data: allStepConditions } =
     stepApproverIds.length > 0
@@ -315,13 +301,8 @@ export default async function DashboardPage({
           .in("step_approver_id", stepApproverIds)
       : { data: [] };
 
-  const memberUserIds = [...new Set((memberRows ?? []).map((m) => m.user_id))];
-  const { data: memberProfiles } =
-    memberUserIds.length > 0
-      ? await supabase.from("profiles").select("id, full_name").in("id", memberUserIds)
-      : { data: [] };
   const memberNameById = new Map(
-    (memberProfiles ?? []).map((p) => [p.id, p.full_name ?? "Team member"])
+    (profileRows ?? []).map((p) => [p.id, p.full_name ?? "Team member"])
   );
   const memberOptions: MultiSelectOption[] = memberUserIds
     .map((id) => ({ id, label: memberNameById.get(id) ?? "Team member" }))

@@ -1,7 +1,7 @@
 "use server";
 
 import { redirect } from "next/navigation";
-import { revalidatePath } from "next/cache";
+import { revalidatePath, revalidateTag } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentOrg } from "@/lib/current-org";
@@ -22,6 +22,7 @@ import { getQboConnection, listCategories, listTaxRates, listTaxCodes, listClass
 import { fetchAllQboSuppliers } from "@/lib/qbo-all";
 import { buildQboAttachmentBundle } from "@/lib/qbo-attachments";
 import { pdfPageCount, reorderPdfPages } from "@/lib/merge-documents";
+import { qboTag } from "@/lib/org-cache";
 
 // Server actions for the dashboard (moved out of the page component so
 // the page stays render-only). Authored by Araza.
@@ -1878,6 +1879,7 @@ export async function syncQboTaxes() {
   // NOTE: redirect() throws internally — it must live OUTSIDE the try/catch
   // above, or the catch swallows it and every sync shows the error banner
   // even when it succeeded.
+  revalidateTag(qboTag(org.id)); // invalidate the cached QBO mirrors
   revalidatePath("/settings");
   redirect(`/settings?qbo=tax_synced&count=${rates.length + codes.length}`);
 }
@@ -1932,6 +1934,7 @@ export async function syncQboClasses() {
 
   // redirect() throws internally — keep it OUTSIDE the try/catch so a
   // successful sync doesn't get mislabeled as a failure.
+  revalidateTag(qboTag(org.id)); // invalidate the cached QBO mirrors
   revalidatePath("/settings");
   redirect(`/settings?qbo=classes_synced&count=${classes.length}`);
 }
@@ -1993,6 +1996,7 @@ export async function syncQboCategories() {
 
   // redirect() throws internally — keep it OUTSIDE the try/catch so a
   // successful sync doesn't get mislabeled as a failure.
+  revalidateTag(qboTag(org.id)); // invalidate the cached QBO mirrors
   revalidatePath("/settings");
   redirect(`/settings?qbo=categories_synced&count=${categories.length}`);
 }
@@ -2050,6 +2054,7 @@ export async function syncQboSuppliers() {
 
   // redirect() throws internally — keep it OUTSIDE the try/catch so a
   // successful sync doesn't get mislabeled as a failure.
+  revalidateTag(qboTag(org.id)); // invalidate the cached QBO mirrors
   revalidatePath("/settings");
   redirect(`/settings?qbo=suppliers_synced&count=${suppliers.length}`);
 }
@@ -2103,6 +2108,7 @@ export async function syncQboProjects() {
 
   // redirect() throws internally — keep it OUTSIDE the try/catch so a
   // successful sync doesn't get mislabeled as a failure.
+  revalidateTag(qboTag(org.id)); // invalidate the cached QBO mirrors
   revalidatePath("/settings");
   redirect(`/settings?qbo=projects_synced&count=${projects.length}`);
 }
@@ -2243,6 +2249,7 @@ export async function refreshQboData() {
 
     const total =
       rates.length + suppliers.length + classes.length + categories.length + projects.length;
+    revalidateTag(qboTag(org.id)); // invalidate the cached QBO mirrors
     revalidatePath("/settings");
     redirect(`/settings?qbo=refresh_done&count=${total}`);
   } catch (e) {

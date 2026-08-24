@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { revalidatePath } from "next/cache";
+import { revalidatePath, revalidateTag } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentOrg } from "@/lib/current-org";
@@ -18,6 +18,7 @@ import { DefaultTaxRateForm } from "@/components/DefaultTaxRateForm";
 import { InboundEmailForm } from "@/components/InboundEmailForm";
 import { ScrollPreserveForm } from "@/components/ScrollPreserveForm";
 import { ScrollRestorer } from "@/components/ScrollRestorer";
+import { membersTag } from "@/lib/org-cache";
 import type { Database } from "@/lib/supabase/types";
 
 type OrgRole =
@@ -84,6 +85,7 @@ async function inviteMember(orgId: string, formData: FormData) {
     .insert({ organization_id: orgId, user_id: userId, role });
   if (memberError) redirect("/settings?error=already-member");
 
+  revalidateTag(membersTag(orgId)); // cached member roster changed
   revalidatePath("/settings");
   redirect("/settings");
 }
@@ -159,11 +161,20 @@ async function updateMemberRole(membershipId: string, formData: FormData) {
   const role = String(formData.get("role") ?? "") as OrgRole;
   if (!ROLES.includes(role)) return;
 
+  const { data: membership } = await supabase
+    .from("organization_members")
+    .select("organization_id")
+    .eq("id", membershipId)
+    .single();
+
   await supabase
     .from("organization_members")
     .update({ role })
     .eq("id", membershipId);
 
+  if (membership?.organization_id) {
+    revalidateTag(membersTag(membership.organization_id));
+  }
   revalidatePath("/settings");
 }
 
@@ -179,13 +190,16 @@ async function removeMember(membershipId: string) {
   // Can't remove yourself.
   const { data: member } = await supabase
     .from("organization_members")
-    .select("user_id")
+    .select("user_id, organization_id")
     .eq("id", membershipId)
     .single();
   if (!member || member.user_id === user.id) return;
 
   await supabase.from("organization_members").delete().eq("id", membershipId);
 
+  if (member.organization_id) {
+    revalidateTag(membersTag(member.organization_id));
+  }
   revalidatePath("/settings");
 }
 
