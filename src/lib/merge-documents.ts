@@ -56,3 +56,52 @@ export async function mergeDocuments(
     return null;
   }
 }
+
+// Rebuild a PDF with its pages in a new order (1-based page numbers).
+// Returns the reordered PDF bytes, or null if the order isn't a valid
+// permutation of 1..N or anything fails.
+export async function reorderPdfPages(
+  bytes: Uint8Array,
+  order: number[]
+): Promise<Uint8Array | null> {
+  try {
+    const doc = mupdf.Document.openDocument(bytes, "application/pdf");
+    try {
+      const pdf = doc.asPDF();
+      if (!pdf) return null;
+      const n = pdf.countPages();
+      const valid =
+        order.length === n &&
+        new Set(order).size === n &&
+        order.every((p) => Number.isInteger(p) && p >= 1 && p <= n);
+      if (!valid) return null;
+
+      const out = new mupdf.PDFDocument();
+      for (const page of order) {
+        out.graftPage(out.countPages(), pdf, page - 1);
+      }
+      const outBytes = out.saveToBuffer().asUint8Array();
+      return outBytes.length > 0 ? new Uint8Array(outBytes) : null;
+    } finally {
+      doc.destroy();
+    }
+  } catch (err) {
+    console.error("reorderPdfPages failed:", err);
+    return null;
+  }
+}
+
+// Page count of a PDF (used by the Reorder pages UI).
+export function pdfPageCount(bytes: Uint8Array): number {
+  try {
+    const doc = mupdf.Document.openDocument(bytes, "application/pdf");
+    try {
+      return doc.countPages();
+    } finally {
+      doc.destroy();
+    }
+  } catch (err) {
+    console.error("pdfPageCount failed:", err);
+    return 0;
+  }
+}

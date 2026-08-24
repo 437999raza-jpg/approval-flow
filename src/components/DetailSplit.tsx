@@ -70,6 +70,11 @@ export interface BillData {
   deleteLineItem: (lineItemId: string) => Promise<void>;
   cloneLineItem: (lineItemId: string) => Promise<void>;
   reExtract: () => Promise<void>;
+  getPageCount: (invoiceId: string) => Promise<number | null>;
+  reorderPages: (
+    invoiceId: string,
+    order: number[]
+  ) => Promise<{ ok: boolean; error?: string }>;
   backToReview: () => Promise<void>;
   canReview: boolean;
   readOnly: boolean;
@@ -363,6 +368,8 @@ export function DetailSplit({
             deleteLineItem={bill.deleteLineItem}
             cloneLineItem={bill.cloneLineItem}
             reExtract={bill.reExtract}
+            getPageCount={bill.getPageCount}
+            reorderPages={bill.reorderPages}
             backToReview={bill.backToReview}
             canReview={bill.canReview}
             readOnly={bill.readOnly}

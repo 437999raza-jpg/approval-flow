@@ -8,6 +8,7 @@ import { InlineSelectSave } from "./InlineSelectSave";
 import { ConfirmSubmitButton } from "./ConfirmSubmitButton";
 import { SubmitButton } from "./SubmitButton";
 import { InstructionsBox } from "./InstructionsBox";
+import { ReorderPagesModal } from "./ReorderPagesModal";
 import { InvoiceStatusBadge } from "./InvoiceStatusBadge";
 import type { Database } from "@/lib/supabase/types";
 import { computeLineItemTotals } from "@/lib/invoice-totals";
@@ -110,6 +111,8 @@ export function BillPanel({
   deleteLineItem,
   cloneLineItem,
   reExtract,
+  getPageCount,
+  reorderPages,
   backToReview,
   canReview,
   readOnly,
@@ -155,6 +158,11 @@ export function BillPanel({
   deleteLineItem: (lineItemId: string) => Promise<void>;
   cloneLineItem: (lineItemId: string) => Promise<void>;
   reExtract: () => Promise<void>;
+  getPageCount: (invoiceId: string) => Promise<number | null>;
+  reorderPages: (
+    invoiceId: string,
+    order: number[]
+  ) => Promise<{ ok: boolean; error?: string }>;
   backToReview: () => Promise<void>;
   canReview: boolean;
   readOnly: boolean;
@@ -745,6 +753,14 @@ export function BillPanel({
               </SubmitButton>
             </form>
           )}
+          {!readOnly &&
+            invoice.file_name?.toLowerCase().endsWith(".pdf") && (
+              <ReorderPagesModal
+                invoiceId={invoice.id}
+                getPageCount={getPageCount}
+                reorder={reorderPages}
+              />
+            )}
         </div>
 
         {/* QuickBooks Online sync */}

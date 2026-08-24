@@ -21,6 +21,7 @@ import type { Database, InvoiceStatus } from "@/lib/supabase/types";
 import { getQboConnection, listCategories, listTaxRates, listTaxCodes, listClasses, listSuppliers, listProjects, matchSupplier, createBill, attachDocuments, loadCategoryAccountCache, resolveCategoryAccount, loadTaxCodeCache, resolveTaxCode, loadClassCache, resolveClass } from "@/lib/qbo";
 import { fetchAllQboSuppliers } from "@/lib/qbo-all";
 import { buildQboAttachmentBundle } from "@/lib/qbo-attachments";
+import { pdfPageCount, reorderPdfPages } from "@/lib/merge-documents";
 
 // Server actions for the dashboard (moved out of the page component so
 // the page stays render-only). Authored by Araza.
@@ -1379,27 +1380,26 @@ export async function cloneLineItem(invoiceId: string, lineItemId: string) {
   revalidatePath("/dashboard", "layout");
 }
 
-// Re-run extraction on the invoice's primary document and replace the
-// mapped fields + line items (Dext-style "re-process"). Best-effort.
-export async function reExtract(invoiceId: string) {
-
-  const supabase = createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
-
+// Shared core of re-extraction: downloads the invoice's primary document,
+// re-runs extraction, replaces the mapped fields + line items. Used by the
+// Re-extract button and by page reordering (which re-extracts after the
+// pages are rearranged). Best-effort — returns false on any failure.
+async function reExtractInvoiceCore(
+  supabase: ReturnType<typeof createClient>,
+  invoiceId: string,
+  actorId: string
+): Promise<boolean> {
   const { data: invoice } = await supabase
     .from("invoices")
     .select("id, organization_id, file_path, file_name, has_cos_or_extras")
     .eq("id", invoiceId)
     .single();
-  if (!invoice) return;
+  if (!invoice) return false;
 
   const { data: blob, error: downloadError } = await supabase.storage
     .from("invoices")
     .download(invoice.file_path);
-  if (downloadError || !blob) return;
+  if (downloadError || !blob) return false;
 
   const ext = invoice.file_name.split(".").pop()?.toLowerCase() ?? "";
   const mime =
@@ -1415,7 +1415,7 @@ export async function reExtract(invoiceId: string) {
   const file = new File([blob], invoice.file_name, { type: mime });
 
   const extracted = await extractInvoiceFields(file);
-  if (!extracted) return;
+  if (!extracted) return false;
 
   await supabase
     .from("invoices")
@@ -1448,8 +1448,7 @@ export async function reExtract(invoiceId: string) {
     // different). The only exception: an invoice already flagged as
     // CO/Extras keeps its line class "Extras" (that flag is locked once
     // decided, so the class stays with it through re-extraction).
-    const lineClass =
-      invoice.has_cos_or_extras === true ? "Extras" : null;
+    const lineClass = invoice.has_cos_or_extras === true ? "Extras" : null;
     await supabase.from("invoice_line_items").insert(
       extracted.line_items.map((li, i) => ({
         invoice_id: invoiceId,
@@ -1467,11 +1466,123 @@ export async function reExtract(invoiceId: string) {
   await supabase.from("audit_log").insert({
     organization_id: invoice.organization_id,
     invoice_id: invoiceId,
-    actor_id: user.id,
+    actor_id: actorId,
     action: "invoice.re_extracted",
   });
 
+  return true;
+}
+
+// Re-run extraction on the invoice's primary document and replace the
+// mapped fields + line items (Dext-style "re-process"). Best-effort.
+export async function reExtract(invoiceId: string) {
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
+  await reExtractInvoiceCore(supabase, invoiceId, user.id);
   revalidatePath("/dashboard", "layout");
+}
+
+// How many pages the invoice's primary document has (for the Reorder pages
+// UI). Returns null for non-PDFs or on failure.
+export async function getInvoicePageCount(
+  invoiceId: string
+): Promise<number | null> {
+  "use server";
+
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return null;
+
+  const { data: invoice } = await supabase
+    .from("invoices")
+    .select("id, organization_id, file_path, file_name")
+    .eq("id", invoiceId)
+    .single();
+  if (!invoice) return null;
+  if (!invoice.file_name.toLowerCase().endsWith(".pdf")) return null;
+
+  const { data: blob, error: downloadError } = await supabase.storage
+    .from("invoices")
+    .download(invoice.file_path);
+  if (downloadError || !blob) return null;
+
+  return pdfPageCount(new Uint8Array(await blob.arrayBuffer())) || null;
+}
+
+// Reorder the pages of the invoice's primary PDF (1-based page numbers, a
+// full permutation of 1..N), re-upload it, and re-extract the fields from
+// the new page order — the in-app replacement for merging/ordering pages in
+// an external tool. Admin/reviewer only.
+export async function reorderInvoicePages(
+  invoiceId: string,
+  order: number[]
+): Promise<{ ok: boolean; error?: string }> {
+  "use server";
+
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Not signed in." };
+  if (!(await canReview(supabase))) {
+    return { ok: false, error: "Only the reviewer can reorder pages." };
+  }
+
+  const { data: invoice } = await supabase
+    .from("invoices")
+    .select("id, organization_id, file_path, file_name")
+    .eq("id", invoiceId)
+    .single();
+  if (!invoice) return { ok: false, error: "Invoice not found." };
+  if (!invoice.file_name.toLowerCase().endsWith(".pdf")) {
+    return { ok: false, error: "Only PDF documents can be reordered." };
+  }
+
+  const { data: blob, error: downloadError } = await supabase.storage
+    .from("invoices")
+    .download(invoice.file_path);
+  if (downloadError || !blob) return { ok: false, error: "Could not read the document." };
+
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  const reordered = await reorderPdfPages(bytes, order);
+  if (!reordered) {
+    return {
+      ok: false,
+      error: "Invalid page order — it must be every page exactly once (e.g. 2, 1, 3).",
+    };
+  }
+
+  // Replace the document in place (same path, so the document row and audit
+  // references stay valid).
+  const { error: uploadError } = await supabase.storage
+    .from("invoices")
+    .upload(invoice.file_path, reordered, {
+      contentType: "application/pdf",
+      upsert: true,
+    });
+  if (uploadError) {
+    return { ok: false, error: `Could not save the reordered document: ${uploadError.message}` };
+  }
+
+  await supabase.from("audit_log").insert({
+    organization_id: invoice.organization_id,
+    invoice_id: invoiceId,
+    actor_id: user.id,
+    action: "invoice.pages_reordered",
+    metadata: { order },
+  });
+
+  // Re-extract from the new page order.
+  await reExtractInvoiceCore(supabase, invoiceId, user.id);
+
+  revalidatePath("/dashboard", "layout");
+  return { ok: true };
 }
 
 
