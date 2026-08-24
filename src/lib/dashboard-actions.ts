@@ -1391,7 +1391,7 @@ export async function reExtract(invoiceId: string) {
 
   const { data: invoice } = await supabase
     .from("invoices")
-    .select("id, organization_id, file_path, file_name")
+    .select("id, organization_id, file_path, file_name, has_cos_or_extras")
     .eq("id", invoiceId)
     .single();
   if (!invoice) return;
@@ -1444,6 +1444,12 @@ export async function reExtract(invoiceId: string) {
     .delete()
     .eq("invoice_id", invoiceId);
   if (extracted.line_items.length > 0) {
+    // Class NEVER comes from the document (the org's classes are totally
+    // different). The only exception: an invoice already flagged as
+    // CO/Extras keeps its line class "Extras" (that flag is locked once
+    // decided, so the class stays with it through re-extraction).
+    const lineClass =
+      invoice.has_cos_or_extras === true ? "Extras" : null;
     await supabase.from("invoice_line_items").insert(
       extracted.line_items.map((li, i) => ({
         invoice_id: invoiceId,
@@ -1451,7 +1457,7 @@ export async function reExtract(invoiceId: string) {
         amount: li.amount,
         tax_rate: li.tax_rate,
         category: li.category,
-        class: li.class,
+        class: lineClass,
         project_id: projectByOrder.get(i + 1) ?? null,
         line_order: i + 1,
       }))

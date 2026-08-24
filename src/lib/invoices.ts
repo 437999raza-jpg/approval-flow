@@ -185,7 +185,10 @@ export async function createInvoiceFromFile({
           orgDefaultTaxRate ??
           li.tax_rate,
         category: hbPayableCategoryFor(li) ?? supplierDefaults?.category ?? li.category,
-        class: li.class,
+        // Class NEVER comes from the document — the org's classes are
+        // totally different from whatever the supplier prints. Only a
+        // supplier rule (app-side config) or a human can set it.
+        class: supplierDefaults?.class ?? null,
         project_id: projectId,
       }))
     : supplierDefaults
@@ -220,6 +223,11 @@ export async function createInvoiceFromFile({
       computedAmount = printedTotal; // the document wins
       if (extracted?.tax_amount != null) computedTax = extracted.tax_amount;
       totalsNote = `Document total ${printedTotal.toFixed(2)} differs from line items (${derived.total.toFixed(2)}). The document total was used.`;
+    } else if (printedTotal == null) {
+      // The printed total couldn't be read at all — the number shown is
+      // derived from line items and was never verified against the
+      // document, so say so instead of silently presenting it as the total.
+      totalsNote = `The document's printed total could not be read — the amount shown (${derived.total.toFixed(2)}) was derived from the line items. Please verify it against the invoice.`;
     }
   }
 
