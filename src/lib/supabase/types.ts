@@ -635,6 +635,30 @@ export interface Database {
         >;
         Relationships: [];
       };
+      upload_log: {
+        Row: {
+          id: string;
+          organization_id: string;
+          user_id: string | null;
+          filename: string;
+          file_type: string | null;
+          file_size_bytes: number | null;
+          status: "done" | "split" | "error";
+          invoice_id: string | null;
+          pending_split_id: string | null;
+          error: string | null;
+          source: "manual" | "email";
+          created_at: string;
+          processed_at: string | null;
+        };
+        Insert: Partial<
+          Database["public"]["Tables"]["upload_log"]["Row"]
+        > & { organization_id: string; filename: string; status: string };
+        Update: Partial<
+          Database["public"]["Tables"]["upload_log"]["Row"]
+        >;
+        Relationships: [];
+      };
     };
   };
 }

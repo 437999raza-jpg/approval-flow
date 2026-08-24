@@ -210,6 +210,14 @@ export async function POST(request: Request) {
     error: errors.length > 0 ? errors.join("; ") : null,
   });
 
+  // Keep the queue short: drop log rows older than 90 days (best-effort).
+  await supabase
+    .from("inbound_email_log")
+    .delete()
+    .eq("organization_id", org.id)
+    .lt("created_at", new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString())
+    .then((r) => r.error && console.error("inbound_email_log cleanup:", r.error));
+
   return NextResponse.json({ ok: true, invoiceIds, pendingSplitIds, errors });
 }
 

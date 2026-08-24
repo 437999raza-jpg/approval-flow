@@ -1591,6 +1591,57 @@ export async function saveInboundEmailLocal(
   return { ok: true };
 }
 
+// Remove a bad message from the Email queue (spam, tests, wrong recipient).
+// Admin only — the page shows the button only to admins, and this action
+// re-checks.
+export async function deleteInboundEmailLog(id: string): Promise<void> {
+  "use server";
+
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
+  const org = await getCurrentOrg(supabase);
+  if (!org || org.role !== "admin") return;
+
+  const { error } = await supabase
+    .from("inbound_email_log")
+    .delete()
+    .eq("id", id)
+    .eq("organization_id", org.id);
+  if (error) console.error("deleteInboundEmailLog failed:", error);
+
+  revalidatePath("/emails");
+}
+
+// Admin bulk cleanup for the Email queue: removes all COMPLETED entries
+// (processed → invoice or split review) so the queue stays short. Failed /
+// unmatched / unprocessed entries stay visible for attention (remove those
+// individually with the ✕ button).
+export async function clearProcessedInboundEmails(): Promise<void> {
+  "use server";
+
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
+  const org = await getCurrentOrg(supabase);
+  if (!org || org.role !== "admin") return;
+
+  const { error } = await supabase
+    .from("inbound_email_log")
+    .delete()
+    .eq("organization_id", org.id)
+    .eq("processed", true);
+  if (error) console.error("clearProcessedInboundEmails failed:", error);
+
+  revalidatePath("/emails");
+}
+
 // Record when a QBO mirror section was last synced — Settings shows
 // "N on File. Last synced on <time>" per section and lists only the items
 // that are NEW in the most recent sync (rows whose first_seen_at is >= this

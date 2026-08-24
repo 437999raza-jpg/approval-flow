@@ -2,6 +2,8 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentOrg } from "@/lib/current-org";
+import { deleteInboundEmailLog, clearProcessedInboundEmails } from "@/lib/dashboard-actions";
+import { RemoveEmailButton } from "@/components/RemoveEmailButton";
 import { clsx } from "clsx";
 
 // Email queue — every email received at the org's capture address
@@ -21,6 +23,7 @@ export default async function EmailsPage({
 
   const org = await getCurrentOrg(supabase);
   if (!org) redirect("/dashboard");
+  const isAdmin = org.role === "admin";
 
   const filter = ["all", "pending", "processed", "failed"].includes(
     searchParams.f ?? ""
@@ -107,7 +110,7 @@ export default async function EmailsPage({
         — and what happened to it.
       </p>
 
-      <div className="mt-4 flex flex-wrap gap-1.5">
+      <div className="mt-4 flex flex-wrap items-center gap-1.5">
         {tabs.map((t) => (
           <Link
             key={t.key}
@@ -122,6 +125,17 @@ export default async function EmailsPage({
             {t.label} ({t.n})
           </Link>
         ))}
+        <span className="flex-1" />
+        {isAdmin && (
+          <form action={clearProcessedInboundEmails}>
+            <button
+              type="submit"
+              className="rounded-md border border-slate-300 px-3 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
+            >
+              Clear completed
+            </button>
+          </form>
+        )}
       </div>
 
       {!emails || emails.length === 0 ? (
@@ -144,6 +158,12 @@ export default async function EmailsPage({
                     {e.subject || "(no subject)"}
                   </span>
                   <StatusChip status={status} />
+                  {isAdmin && (
+                    <RemoveEmailButton
+                      id={e.id}
+                      action={deleteInboundEmailLog}
+                    />
+                  )}
                 </div>
                 <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
                   <span className="truncate" title={e.from_address ?? ""}>
