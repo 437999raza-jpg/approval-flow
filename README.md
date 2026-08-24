@@ -184,6 +184,138 @@ written to be idempotent (safe to re-run). Roughly:
 | 0040 | `qbo_tax_codes.rate_value` — stores each tax code's resolved purchase-side rate (H → 13%). |
 | 0041 | `invoices.qbo_vendor_matched` — flags invoices whose OCR'd vendor did NOT exactly match a QBO supplier (visible warning; can't sync until fixed). |
 | 0042 | `invoices.has_cos_or_extras` — CO/Extras flag decided by an approver and LOCKED once set; line items get class "Extras". |
+| 0043 | (user) `invoices.qbo_tax_liability_account` — QBO tax liability account on the bill; superseded by 0044. |
+| 0044 | (user) Drops the tax liability account column from 0043. |
+| 0045 | (user) `invoice_line_items.qbo_tax_code_id` — line-level QBO tax code for the bill sync. |
+| 0046 | (user) Supplier settings: `product_service` on `supplier_defaults`, `integration` on `qbo_suppliers`. |
+| 0047 | (user) Fixes `supplier_defaults.vendor_name_normalized` — dropped/re-added with an extra outer `trim()` to match `normalizeForMatching()` exactly. |
+| 0048 | `organizations.default_tax_rate` (ingest fallback when the supplier has no rule) + `invoices.totals_note` (document-vs-line-items reconciliation note). |
+| 0049 | `qbo_sync_log` (per-org per-section "last synced" times) + `first_seen_at` on `qbo_classes`/`qbo_categories`/`qbo_suppliers`/`projects` (identifies items new in the latest sync). |
+| 0050 | `organizations` UPDATE policy for admins — without it RLS silently rejected the default-tax-rate save (the action also now checks the update result). |
+| 0051 | `organizations.inbound_email_local` — friendly per-org capture-address local part (`fluid@flow.ufirst.co` instead of a token), unique + validated. |
+| 0052 | `inbound_email_log.pending_split_ids` — links an email to the split-review it produced. |
+| 0053 | `inbound_email_log` DELETE policy for admins (✕ per entry on the Queue page). |
+| 0054 | `upload_log` — durable record of every manual upload (outcome, invoice/split link, error, `created_at → processed_at` timing) for the Recent uploads list and future OCR/queue reporting; 90-day auto-cleanup. |
+
+---
+
+## Session log — 2026-08-24 (handoff notes)
+
+Everything below was done in one long working session (user + AI pair). The
+DB is LIVE (Supabase project `dmndiltwospjeeydmwxd`, org Ufirst
+`9554c95f-03f3-4a67-a784-7a138510be7b`); the app deploys automatically from
+GitHub `main` (Vercel). **Migrations 0049–0054 are all APPLIED to the live
+DB.** This section is the continuation handoff — read it before changing
+anything.
+
+### Config state (Vercel production env + `.env.local`)
+
+| Variable | Value / note |
+|---|---|
+| `INBOUND_EMAIL_DOMAIN` | `flow.ufirst.co` (the Resend receiving domain) |
+| `INBOUND_EMAIL_WEBHOOK_SECRET` | random hex (`6ffe5524e8…` on 2026-08-24) — **must match** the `?token=` in the Resend webhook URL |
+| `RESEND_API_KEY` | **Full access** key (receiving scope needed) created in the SAME Resend account that owns `flow.ufirst.co` receiving |
+| QBO vars | Production Intuit app credentials + `QBO_REDIRECT_URI=https://flow.ufirst.co/api/qbo/callback` — do NOT overwrite with the localhost dev keys in `.env.local` |
+
+Resend receiving is fully wired: domain `flow.ufirst.co` verified for send +
+receive, MX record `inbound-smtp.us-east-1.amazonaws.com` priority 10 (added
+via the Resend↔Cloudflare integration), and a **Webhooks** entry (not a
+"Receiving" section — that's where Resend puts it) for the `email.received`
+event POSTing to
+`https://flow.ufirst.co/api/webhooks/inbound-email?token=<INBOUND_EMAIL_WEBHOOK_SECRET>`.
+
+### Inbound email (Resend) — the critical path gotcha
+
+The webhook is **Resend-format, not SendGrid**: it receives a JSON
+`email.received` event (metadata only — no bodies/attachments), then pulls
+attachments from the Resend API. **The received-email APIs live under
+`/emails/receiving/{email_id}/attachments`** — the plain `/emails/{id}` path
+is for SENT emails and returns `404 Email not found` for received ones (that
+bug cost a long debugging session). `listResendAttachments()` in the webhook
+also retries 3× with 2s backoff and logs the raw response + email_id on
+failure, because Resend can still be indexing the email when the webhook
+fires. Resend receives **any** address at `flow.ufirst.co`; attribution is by
+local part = `organizations.inbound_email_local` (friendly, e.g. `fluid`)
+or the fallback `inbound_email_token`.
+
+### Queue / reporting system (new)
+
+- **Queue page** (`/queue`) — one newest-first list of everything that came
+  in: manual uploads (`upload_log`) and inbound emails
+  (`inbound_email_log`), with status chips (Processed / Split review /
+  Unmatched / Failed / No invoice), invoice links, filter tabs (Pending
+  default / All / Processed / Failed), and admin controls (✕ per entry +
+  **Clear completed**). Dashboard header has a solid-blue **Queue** button
+  next to **+ Add invoice**; sidebar has a Queue link.
+- **Add invoice page** — live upload queue (multi-file, sequential) with
+  per-file status (Waiting/Processing/Done/Split review/Rejected + reason),
+  no auto-redirect, plus a DB-backed **Recent uploads** list (last 20).
+- **`upload_log`** records every upload outcome + processing time (future
+  OCR/queue metrics). **90-day auto-cleanup** runs opportunistically in the
+  upload route and email webhook; admin ✕ / Clear completed keep queues short.
+- Queue cleanup actions (`clearCompletedQueue`, `deleteInboundEmailLog`,
+  `deleteUploadLogEntry`) are admin-only and rely on the 0052/0053/0054 RLS
+  policies.
+
+### Email-attachment merge
+
+An email with several PDF/image attachments is **merged into ONE document**
+(in attachment order) and ingested as a single invoice — the in-app
+replacement for merging files in macOS Preview (`src/lib/merge-documents.ts`,
+mupdf `graftPage`; images convert to PDF pages). If the merged document
+actually contains several invoices, the existing split-review flow catches it.
+Merge failure falls back to per-file ingestion with a logged note.
+
+### Page reorder (no external tool)
+
+Bill panel → **Reorder pages…** opens a modal (page list with ↑/↓) → Apply
+rebuilds the PDF via mupdf (`reorderPdfPages`), re-uploads in place, and
+re-extracts from the new page order. Actions: `getInvoicePageCount`,
+`reorderInvoicePages` (admin/reviewer only). Invalid orders (non-permutations)
+are rejected.
+
+### Totals + class rules (hard rules, enforced at ingest and re-extract)
+
+- **Document total wins** — when line items exist and differ from the
+  printed total, the printed total is used + amber `totals_note`. NEW: when
+  the printed total **couldn't be read at all**, an amber note says the
+  amount was derived from line items and must be verified (this catches
+  invoices like Stephenson's where `total_amount` came back null).
+- **Class NEVER comes from the document** — line items ingest with a blank
+  class (`supplierDefaults?.class ?? null`); re-extract also strips document
+  classes, preserving only "Extras" when `has_cos_or_extras` is locked.
+
+### Performance: org-static caching (do not break the invalidation contract)
+
+`src/lib/org-cache.ts` wraps org-static reads in `unstable_cache` (admin
+client inside, keyed by org id, 1h safety TTL):
+
+- `getCachedQboCategories/Suppliers/Classes/TaxRates/TaxCodes` — tag
+  `qboTag(orgId)`, invalidated by the six sync actions + `refreshQboData`
+  (`revalidateTag(qboTag(org.id))`).
+- `getCachedMemberRoster` — tag `membersTag(orgId)`, invalidated by
+  invite/remove/role-change in the settings page.
+- `getCachedInvoiceList` (invoices + approved-pairs + line-item
+  class/category lookups) — **global tag `INVOICES_TAG`** invalidated by
+  EVERY invoice-mutating action: all 28 `revalidatePath("/dashboard")`
+  sites in `dashboard-actions.ts`, the upload route, the email webhook, and
+  pending-split confirmation. **Any new code that creates/edits invoices
+  MUST `revalidateTag(INVOICES_TAG)` or the list will be stale up to 10 min.**
+
+### Pending / next (in rough order)
+
+1. **Async extraction (the big one, "item #1")** — move OpenRouter field
+   extraction off the request path so uploads/emails return instantly and
+   nothing blocks on a 20–60s AI call (also removes the Vercel Hobby
+   one-function-at-a-time pileup). Design decided: `ingest_jobs` queue table
+   + a Hobby-friendly poll-worker (`/api/process` endpoint the UI polls;
+   each call processes one job), with the table shaped so swapping in Vercel
+   Cron (Pro) or Inngest later is a one-file change. ~3–6h of work.
+2. Invoice-list pagination/virtualization once past a few thousand rows.
+3. Re-extract should recompute the `totals_note` (today the note logic only
+   runs at ingest).
+4. Settings page could use the org-cache getters too (it still fetches tax
+   codes fresh).
 
 ---
 
@@ -842,9 +974,11 @@ This is groundwork, not a finished product. In priority-ish order:
   there's no UI prompt to capture *why* at reject time.
 - **Auto-sync on approval** — bills reach QBO Ready automatically; the
   final push to QBO is still a manual admin button per bill (no queue /
-  scheduled auto-sync yet).
-- **Inbound email** — ingestion is upload-first; the email path is stubbed
-  but not wired to a real inbound receiver.
+  scheduled auto-sync yet). This is also a deliberate hard rule, not just a
+  gap: nothing reaches QBO until an admin presses the final button.
+- **Async extraction** — uploads/emails still wait inline on the 20–60s
+  OpenRouter call; moving that to a background queue is the planned "item
+  #1" (see the [session log](#session-log--2026-08-24-handoff-notes)).
 
 ---
 
