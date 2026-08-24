@@ -1492,17 +1492,24 @@ export async function saveDefaultTaxRate(formData: FormData) {
     redirect("/settings?taxdefault=error");
   }
 
-  await supabase
+  // Never claim success when the write didn't land (e.g. RLS denied it) —
+  // otherwise Settings shows the banner while the rate stays unsaved.
+  const { error: updateError } = await supabase
     .from("organizations")
     .update({ default_tax_rate: rate })
     .eq("id", org.id);
+  if (updateError) {
+    console.error("saveDefaultTaxRate failed:", updateError);
+    redirect("/settings?taxdefault=error");
+  }
 
-  await supabase.from("audit_log").insert({
+  const { error: auditError } = await supabase.from("audit_log").insert({
     organization_id: org.id,
     actor_id: user.id,
     action: "org.default_tax_rate_saved",
     metadata: { default_tax_rate: rate },
   });
+  if (auditError) console.error("saveDefaultTaxRate audit failed:", auditError);
 
   revalidatePath("/settings");
   redirect(

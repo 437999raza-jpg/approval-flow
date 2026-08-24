@@ -783,7 +783,7 @@ export default async function SettingsPage({
                     </span>
                     {isAdmin && (
                       <form action={syncQboProjects}>
-                        <SubmitButton className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">
+                        <SubmitButton className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">
                           Sync projects from QuickBooks
                         </SubmitButton>
                       </form>
@@ -826,20 +826,20 @@ export default async function SettingsPage({
                     <span className="text-sm font-semibold text-slate-800">
                       Suppliers
                     </span>
+                    {isAdmin && (
+                      <form action={syncQboSuppliers}>
+                        <SubmitButton className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">
+                          Sync suppliers from QuickBooks
+                        </SubmitButton>
+                      </form>
+                    )}
+                    <span className="flex-1" />
                     <Link
                       href="/settings/suppliers"
                       className="text-xs font-medium text-blue-600 hover:underline"
                     >
                       Manage suppliers →
                     </Link>
-                    <span className="flex-1" />
-                    {isAdmin && (
-                      <form action={syncQboSuppliers}>
-                        <SubmitButton className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">
-                          Sync suppliers from QuickBooks
-                        </SubmitButton>
-                      </form>
-                    )}
                   </div>
                   <p className="mt-1 text-xs text-slate-500">
                     Read-only from QuickBooks — Flow never creates suppliers.
@@ -882,7 +882,7 @@ export default async function SettingsPage({
                     </span>
                     {isAdmin && (
                       <form action={syncQboCategories}>
-                        <SubmitButton className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">
+                        <SubmitButton className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">
                           Sync categories from QuickBooks
                         </SubmitButton>
                       </form>
