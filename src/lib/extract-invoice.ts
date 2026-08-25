@@ -79,7 +79,12 @@ Rules:
   supporting pages). Include the invoice's line items AND any change-order
   line items as separate rows in line_items — never duplicate the same item
   across pages. The printed total_amount covers the whole invoice,
-  including change orders.`;
+  including change orders.
+- Preserve the sign of amounts. A deduction (e.g. "less 10% holdback") is a
+  NEGATIVE number and belongs as its own line item with "holdback" in the
+  description — never fold it into the subtotal or another line item. The
+  subtotal is the sum before deductions; total_amount is the printed final
+  figure. Report the printed numbers — do not compute or estimate them.`;
 
 type ContentPart =
   | { type: "image_url"; image_url: { url: string } }

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { SupplierRulesModal, type SupplierDefaultsValues } from "./SupplierRulesModal";
 import { Combobox } from "./Combobox";
 import { CollapsibleSection } from "./CollapsibleSection";
@@ -1030,13 +1030,19 @@ function LineItemRow({
   // the whole thing, not just what fits on one line.
   const descCls = "w-full resize-none overflow-hidden whitespace-pre-wrap break-words border-b border-transparent bg-transparent px-0 py-1.5 text-xs text-slate-800 hover:border-slate-200 focus:border-blue-500 focus:outline-none disabled:text-slate-400";
 
-  const autoResizeDesc = () => {
+  const autoResizeDesc = useCallback(() => {
     const el = descRef.current;
     if (!el) return;
     el.style.height = "auto";
     el.style.height = `${el.scrollHeight}px`;
-  };
-  useEffect(autoResizeDesc, []);
+  }, []);
+  // Resize after the grid layout settles (requestAnimationFrame) AND
+  // whenever the description changes (extraction, save, edits) — the mount-
+  // only resize left long pre-filled descriptions clipped by overflow-hidden.
+  useEffect(() => {
+    const raf = requestAnimationFrame(autoResizeDesc);
+    return () => cancelAnimationFrame(raf);
+  }, [defaults.description, autoResizeDesc]);
 
   // Existing rows save automatically when a field loses focus (no Save
   // button). The blank "add line" row keeps an explicit button. In
