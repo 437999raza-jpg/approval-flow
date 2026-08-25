@@ -1610,6 +1610,7 @@ export async function reorderInvoicePages(
 
   // Replace the document in place (same path, so the document row and audit
   // references stay valid).
+  const saveStartedAt = Date.now();
   const { error: uploadError } = await supabase.storage
     .from("invoices")
     .upload(invoice.file_path, reordered, {
@@ -1627,6 +1628,14 @@ export async function reorderInvoicePages(
     action: "invoice.pages_reordered",
     metadata: { order },
   });
+
+  // Storage can lag a moment behind a write — give the save a settle window
+  // sized from how long the upload itself took (a fast save waits the
+  // remainder of ~1s; a slow one is already settled), before re-extracting.
+  const settleMs = Math.max(0, 1000 - (Date.now() - saveStartedAt));
+  if (settleMs > 0) {
+    await new Promise((r) => setTimeout(r, settleMs));
+  }
 
   // Re-extract from the new page order. If that doesn't complete, say so
   // instead of leaving the fields silently stale.
