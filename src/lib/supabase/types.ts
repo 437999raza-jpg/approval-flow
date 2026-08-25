@@ -214,6 +214,7 @@ export interface Database {
           vendor_name: string | null;
           invoice_number: string | null;
           amount: number | null;
+          document_total: number | null;
           currency: string;
           bill_date: string | null;
           due_date: string | null;

@@ -13,6 +13,7 @@ import {
 import { selectWorkflowForInvoice } from "@/lib/workflow-routing";
 import { computeLineItemTotals } from "@/lib/invoice-totals";
 import { normalizeForMatching } from "@/lib/matching";
+import { holdbackCategoryFor } from "@/lib/invoices";
 import {
   effectiveApproversForStep,
   stepDecisionState,
@@ -508,9 +509,33 @@ export async function recomputeInvoiceTotals(
     .select("amount, tax_rate")
     .eq("invoice_id", invoiceId);
   const { total, tax } = computeLineItemTotals(items ?? []);
+
+  // Re-run the "document total wins" reconciliation: the printed total
+  // (document_total) is ground truth. If the line items now match it, the
+  // amber note CLEARS; if they still disagree, the document total stays and
+  // the note stays. Fixing the lines to match the total makes the warning
+  // disappear — that was the bug (the note was never recomputed on edits).
+  const { data: invoice } = await supabase
+    .from("invoices")
+    .select("document_total")
+    .eq("id", invoiceId)
+    .single();
+  const printedTotal = invoice?.document_total ?? null;
+  let amount = total;
+  let totalsNote: string | null = null;
+  if (printedTotal != null && Math.abs(printedTotal - total) > 0.01) {
+    amount = printedTotal;
+    totalsNote = `Document total ${printedTotal.toFixed(2)} differs from line items (${total.toFixed(2)}). The document total was used.`;
+  }
+
   await supabase
     .from("invoices")
-    .update({ amount: total, tax_amount: tax, updated_at: new Date().toISOString() })
+    .update({
+      amount,
+      tax_amount: tax,
+      totals_note: totalsNote,
+      updated_at: new Date().toISOString(),
+    })
     .eq("id", invoiceId);
 }
 
@@ -1502,9 +1527,12 @@ async function reExtractInvoiceCore(
       extracted.line_items.map((li, i) => ({
         invoice_id: invoiceId,
         description: li.description,
-        amount: li.amount,
+        amount:
+          holdbackCategoryFor(li) && (li.amount ?? 0) > 0
+            ? -(li.amount ?? 0)
+            : li.amount,
         tax_rate: li.tax_rate,
-        category: li.category,
+        category: holdbackCategoryFor(li) ?? li.category,
         class: lineClass,
         project_id: projectByOrder.get(i + 1) ?? null,
         line_order: i + 1,
@@ -1841,6 +1869,51 @@ export async function deleteUploadLogEntry(id: string): Promise<void> {
 // Admin bulk cleanup for the Queue: removes all COMPLETED entries (emails
 // that became invoices/split reviews, uploads that finished) so the queue
 // stays short. Failed / unmatched entries stay visible for attention.
+// Re-run a failed / "no invoice data" ingest job from the Queue — re-queues
+// it (the staging file is kept for exactly this) and resets its display row
+// so the poller picks it up with the current logic. Admin only.
+export async function reprocessIngestJob(jobId: string): Promise<void> {
+  "use server";
+
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
+  const org = await getCurrentOrg(supabase);
+  if (!org || org.role !== "admin") return;
+
+  const { data: job } = await supabase
+    .from("ingest_jobs")
+    .select("id, organization_id, upload_log_id, inbound_email_log_id, status")
+    .eq("id", jobId)
+    .single();
+  if (!job || job.organization_id !== org.id) return;
+
+  const now = new Date().toISOString();
+  await supabase
+    .from("ingest_jobs")
+    .update({ status: "queued", attempt_count: 0, last_error: null, processed_at: null, updated_at: now })
+    .eq("id", jobId);
+
+  if (job.upload_log_id) {
+    await supabase
+      .from("upload_log")
+      .update({ status: "queued", error: null, processed_at: null })
+      .eq("id", job.upload_log_id);
+  }
+  if (job.inbound_email_log_id) {
+    await supabase
+      .from("inbound_email_log")
+      .update({ processing: true, processed: false, error: null })
+      .eq("id", job.inbound_email_log_id);
+  }
+
+  revalidateTag(INVOICES_TAG);
+  revalidatePath("/queue");
+}
+
 export async function clearCompletedQueue(): Promise<void> {
   "use server";
 

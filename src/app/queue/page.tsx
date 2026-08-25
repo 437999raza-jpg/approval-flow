@@ -6,8 +6,10 @@ import {
   deleteInboundEmailLog,
   deleteUploadLogEntry,
   clearCompletedQueue,
+  reprocessIngestJob,
 } from "@/lib/dashboard-actions";
 import { RemoveQueueEntryButton } from "@/components/RemoveQueueEntryButton";
+import { ReprocessQueueButton } from "@/components/ReprocessQueueButton";
 import { ExtractionPoller } from "@/components/ExtractionPoller";
 import { LocalTime } from "@/components/LocalTime";
 import { clsx } from "clsx";
@@ -25,6 +27,7 @@ type QueueRow = {
   status: "processing" | "processed" | "split" | "unmatched" | "no_invoice" | "failed" | "received";
   invoiceIds: string[];
   error: string | null;
+  jobId: string | null;
 };
 
 export default async function QueuePage({
@@ -50,20 +53,38 @@ export default async function QueuePage({
     ? (searchParams.f as string)
     : "all";
 
-  const [{ data: emails }, { data: uploads }] = await Promise.all([
-    supabase
-      .from("inbound_email_log")
-      .select("*")
-      .eq("organization_id", org.id)
-      .order("created_at", { ascending: false })
-      .limit(100),
-    supabase
-      .from("upload_log")
-      .select("*")
-      .eq("organization_id", org.id)
-      .order("created_at", { ascending: false })
-      .limit(100),
-  ]);
+  const [{ data: emails }, { data: uploads }, { data: jobs }] =
+    await Promise.all([
+      supabase
+        .from("inbound_email_log")
+        .select("*")
+        .eq("organization_id", org.id)
+        .order("created_at", { ascending: false })
+        .limit(100),
+      supabase
+        .from("upload_log")
+        .select("*")
+        .eq("organization_id", org.id)
+        .order("created_at", { ascending: false })
+        .limit(100),
+      supabase
+        .from("ingest_jobs")
+        .select("id, upload_log_id, inbound_email_log_id, status")
+        .eq("organization_id", org.id)
+        .limit(200),
+    ]);
+
+  // Map display rows to their ingest job (for the Reprocess button).
+  const jobByUploadLog = new Map(
+    (jobs ?? [])
+      .filter((j) => j.upload_log_id)
+      .map((j) => [j.upload_log_id, j.id])
+  );
+  const jobByEmailLog = new Map(
+    (jobs ?? [])
+      .filter((j) => j.inbound_email_log_id)
+      .map((j) => [j.inbound_email_log_id, j.id])
+  );
 
   // Merge both sources into one newest-first list.
   const rows: QueueRow[] = [
@@ -78,16 +99,18 @@ export default async function QueuePage({
       status: emailStatus(e),
       invoiceIds: e.invoice_ids ?? [],
       error: e.error,
+      jobId: jobByEmailLog.get(e.id) ?? null,
     })),
     ...(uploads ?? []).map((u) => ({
       id: u.id,
       kind: "upload" as const,
       createdAt: u.created_at,
       title: u.filename,
-      detail: u.status === "error" ? "Manual upload" : "Manual upload",
+      detail: "Manual upload",
       status: uploadStatus(u),
       invoiceIds: u.invoice_id ? [u.invoice_id] : [],
       error: u.error,
+      jobId: jobByUploadLog.get(u.id) ?? null,
     })),
   ].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
 
@@ -213,6 +236,14 @@ export default async function QueuePage({
                     uploadAction={deleteUploadLogEntry}
                   />
                 )}
+                {isAdmin &&
+                  r.jobId &&
+                  (r.status === "no_invoice" || r.status === "failed") && (
+                    <ReprocessQueueButton
+                      jobId={r.jobId}
+                      action={reprocessIngestJob}
+                    />
+                  )}
               </div>
               <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
                 <span className="truncate" title={r.detail}>

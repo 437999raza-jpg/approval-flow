@@ -85,12 +85,23 @@ export async function POST(request: Request) {
     );
   }
 
-  // Keep the queue short: drop log/job rows older than 90 days (best-effort).
+  // Keep the queue short: drop log/job rows older than 90 days (best-effort)
+  // and remove their staging files (failed/no-invoice jobs keep staging for
+  // the Reprocess button until it ages out here).
   const cutoff = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
   const admin = createAdminClient();
   await admin.from("upload_log").delete().eq("organization_id", org.id).lt("created_at", cutoff);
   await admin.from("inbound_email_log").delete().eq("organization_id", org.id).lt("created_at", cutoff);
+  const { data: oldJobs } = await admin
+    .from("ingest_jobs")
+    .select("staging_path")
+    .eq("organization_id", org.id)
+    .lt("created_at", cutoff);
   await admin.from("ingest_jobs").delete().eq("organization_id", org.id).lt("created_at", cutoff);
+  const stalePaths = (oldJobs ?? []).map((j) => j.staging_path);
+  if (stalePaths.length > 0) {
+    await admin.storage.from("invoices").remove(stalePaths);
+  }
 
   revalidateTag(INVOICES_TAG); // a queued upload will become an invoice/split
   return NextResponse.json({ jobId }, { status: 202 });

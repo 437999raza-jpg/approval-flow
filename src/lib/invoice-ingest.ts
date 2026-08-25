@@ -16,6 +16,7 @@ interface IngestArgs {
   source: InvoiceSource;
   submittedBy?: string;
   sourceEmail?: string;
+  extraContext?: string; // e.g. the inbound email subject
 }
 
 // Entry point for BOTH manual upload and inbound email: classifies a PDF
@@ -26,7 +27,7 @@ interface IngestArgs {
 // instead lands in pending_invoice_splits for a human to review and
 // confirm — see src/app/invoices/pending-splits. Authored by Araza.
 export async function ingestInvoiceFile(args: IngestArgs): Promise<IngestResult> {
-  const { supabase, organizationId, file, source, submittedBy, sourceEmail } = args;
+  const { supabase, organizationId, file, source, submittedBy, sourceEmail, extraContext } = args;
 
   if (file.type === "application/pdf") {
     let bytes: Uint8Array | null = null;
@@ -80,6 +81,7 @@ export async function ingestInvoiceFile(args: IngestArgs): Promise<IngestResult>
     source,
     submittedBy,
     sourceEmail,
+    extraContext,
   });
   return { kind: "invoice", invoice };
 }

@@ -117,9 +117,8 @@ export async function runNextIngestJob(
         updated_at: new Date().toISOString(),
       })
       .eq("id", job.id);
-    if (terminal) {
-      await supabase.storage.from(STAGING_BUCKET).remove([job.staging_path]);
-    }
+    // Keep the staging file on terminal failure so the Queue's Reprocess
+    // button can re-run the job (90-day cleanup removes stale files).
     // Reflect the failure in the display tables.
     if (job.upload_log_id) {
       await supabase
@@ -155,6 +154,18 @@ export async function runNextIngestJob(
       type: job.mime_type || "application/octet-stream",
     });
 
+    // Email subject as extra extraction context (e.g. "Invoice 26-2400" —
+    // a number that appears only in the subject can help the model).
+    let extraContext: string | undefined;
+    if (job.inbound_email_log_id) {
+      const { data: emailRow } = await supabase
+        .from("inbound_email_log")
+        .select("subject")
+        .eq("id", job.inbound_email_log_id)
+        .maybeSingle();
+      extraContext = emailRow?.subject ?? undefined;
+    }
+
     const result = await ingestInvoiceFile({
       supabase,
       organizationId,
@@ -162,6 +173,7 @@ export async function runNextIngestJob(
       source: job.source === "email" ? "email" : "manual",
       submittedBy: job.submitted_by ?? undefined,
       sourceEmail: job.source_email ?? undefined,
+      extraContext,
     });
 
     const processedAt = new Date().toISOString();
@@ -242,7 +254,8 @@ export async function runNextIngestJob(
         .from("ingest_jobs")
         .update({ status: "done", last_error: message, processed_at: now, updated_at: now })
         .eq("id", job.id);
-      await supabase.storage.from(STAGING_BUCKET).remove([job.staging_path]);
+      // Keep the staging file so the Queue's Reprocess button can re-run
+      // this document (90-day cleanup removes stale files).
       if (job.upload_log_id) {
         await supabase
           .from("upload_log")

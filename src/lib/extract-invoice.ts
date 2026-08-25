@@ -91,7 +91,8 @@ type ContentPart =
   | { type: "text"; text: string };
 
 export async function extractInvoiceFields(
-  file: File
+  file: File,
+  extraContext?: string
 ): Promise<ExtractedInvoiceData | null> {
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) return null;
@@ -150,6 +151,9 @@ export async function extractInvoiceFields(
       type: "text",
       text:
         "Extract the invoice fields from this document now." +
+        (extraContext
+          ? `\n\nContext (email subject the document arrived with): ${extraContext}`
+          : "") +
         (textContext
           ? `\n\nOCR text for reference (may contain errors):\n${textContext}`
           : ""),
@@ -315,6 +319,7 @@ export function mapExtractionToInvoice(
     bill_date: extracted.bill_date ?? null,
     due_date: extracted.due_date ?? null,
     amount: finalAmount,
+    document_total: extracted.total_amount ?? null,
     currency: extracted.currency ?? "USD",
     tax_amount: finalTax,
     totals_note: totalsNote,

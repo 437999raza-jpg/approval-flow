@@ -226,12 +226,27 @@ export async function POST(request: Request) {
     .eq("organization_id", org.id)
     .lt("created_at", new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString())
     .then((r) => r.error && console.error("inbound_email_log cleanup:", r.error));
+  // Prune old ingest jobs + their staging files (staging is kept for the
+  // Reprocess button until it ages out here).
+  const cutoff = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
+  const { data: oldJobs } = await supabase
+    .from("ingest_jobs")
+    .select("staging_path")
+    .eq("organization_id", org.id)
+    .lt("created_at", cutoff);
   await supabase
     .from("ingest_jobs")
     .delete()
     .eq("organization_id", org.id)
-    .lt("created_at", new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString())
+    .lt("created_at", cutoff)
     .then((r) => r.error && console.error("ingest_jobs cleanup:", r.error));
+  const stalePaths = (oldJobs ?? []).map((j) => j.staging_path);
+  if (stalePaths.length > 0) {
+    await supabase.storage
+      .from("invoices")
+      .remove(stalePaths)
+      .then((r) => r.error && console.error("staging cleanup:", r.error));
+  }
 
   return NextResponse.json({ ok: true, queued: true });
 }

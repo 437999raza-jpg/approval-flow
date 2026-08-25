@@ -24,6 +24,39 @@ export class InvoiceIngestError extends Error {}
 export const NO_INVOICE_DATA_ERROR =
   "No invoice data found — this document does not look like an invoice.";
 
+// A successful extraction counts as "empty" only when the model found
+// NOTHING at all — no vendor, number, total, subtotal, tax, dates, PO,
+// customer, description, or line items. Any single recognized field (even a
+// vendor read from a logo) means the document gets created and the reviewer
+// handles quality.
+function isEmptyExtraction(extracted: {
+  vendor_name: string | null;
+  invoice_number: string | null;
+  total_amount: number | null;
+  subtotal: number | null;
+  tax_amount: number | null;
+  bill_date: string | null;
+  due_date: string | null;
+  po_number: string | null;
+  customer: string | null;
+  description: string | null;
+  line_items: unknown[];
+}): boolean {
+  return (
+    !extracted.vendor_name &&
+    !extracted.invoice_number &&
+    extracted.total_amount == null &&
+    extracted.subtotal == null &&
+    extracted.tax_amount == null &&
+    !extracted.bill_date &&
+    !extracted.due_date &&
+    !extracted.po_number &&
+    !extracted.customer &&
+    !extracted.description &&
+    extracted.line_items.length === 0
+  );
+}
+
 interface SupplierDefaults {
   category: string | null;
   class: string | null;
@@ -57,20 +90,18 @@ function addDays(dateStr: string, days: number): string {
   return d.toISOString().slice(0, 10);
 }
 
-// Business rule: when a line item's description mentions a holdback (HB)
-// and the amount is negative, the category is almost always HB Payable
-// (2-1031 in QBO). Returns the display name, or null when the rule doesn't
-// apply so the normal category chain (supplier rule → extraction) is used.
-function hbPayableCategoryFor(li: {
+// Business rule: when a line item's description mentions a holdback (HB),
+// the category is HB Payable (2-1031 in QBO) — regardless of sign. The
+// caller also negates a positive holdback amount (the model sometimes reads
+// the deduction as positive), so the bill math stays correct. Matches
+// "HB", "hold back", "hold-back", "holdback", "less 10%", "10% hold".
+export function holdbackCategoryFor(li: {
   description: string | null;
-  amount: number | null;
 }): string | null {
   const desc = (li.description ?? "").toLowerCase();
-  const amount = li.amount ?? 0;
-  const mentionsHb =
-    /\bhb\b|holdback|hold back|less\s*10\s*%/.test(desc);
-  if (mentionsHb && amount < 0) return "2-1031 - HB Payable";
-  return null;
+  return /\bhb\b|hold\s*-?\s*back|less\s*10\s*%|10\s*%\s*hold/.test(desc)
+    ? "2-1031 - HB Payable"
+    : null;
 }
 
 interface CreateInvoiceArgs {
@@ -80,6 +111,7 @@ interface CreateInvoiceArgs {
   source: InvoiceSource;
   submittedBy?: string; // profile id, for manual uploads
   sourceEmail?: string; // sender address, for email uploads
+  extraContext?: string; // e.g. the inbound email subject, to help extraction
 }
 
 // Single entry point for turning a file into an invoice record, regardless
@@ -93,6 +125,7 @@ export async function createInvoiceFromFile({
   source,
   submittedBy,
   sourceEmail,
+  extraContext,
 }: CreateInvoiceArgs) {
   if (file.size === 0) {
     throw new InvoiceIngestError("File is empty");
@@ -111,23 +144,29 @@ export async function createInvoiceFromFile({
     supabase.storage
       .from(INVOICE_BUCKET)
       .upload(filePath, file, { contentType: file.type, upsert: false }),
-    extractInvoiceFields(file),
+    extractInvoiceFields(file, extraContext),
   ]);
 
   if (uploadError) {
     throw new InvoiceIngestError(`Upload failed: ${uploadError.message}`);
   }
 
-  // "Not an invoice" guard: if the document yielded no invoice number, no
-  // printed total, and no line items, don't create an invoice row for it
-  // (forwarded drawings/photo scans merge into PDFs with no invoice data).
-  // The caller surfaces this as "No invoice data found" in the Queue so the
-  // admin can delete it, instead of silently creating a junk invoice.
-  if (
-    !extracted?.invoice_number &&
-    extracted?.total_amount == null &&
-    (extracted?.line_items ?? []).length === 0
-  ) {
+  // A failed extraction call is RETRYABLE, never "not an invoice" — a
+  // transient OpenRouter hiccup must not permanently reject a real invoice.
+  if (!extracted) {
+    await supabase.storage.from(INVOICE_BUCKET).remove([filePath]);
+    throw new InvoiceIngestError(
+      "Extraction returned no result — retrying."
+    );
+  }
+
+  // "Not an invoice" guard: only a SUCCESSFUL extraction that found
+  // literally nothing (no vendor, number, total, subtotal, tax, dates, PO,
+  // customer, description, or line items) is skipped. Invoices come in all
+  // shapes — a logo-only supplier name is enough to create one and let the
+  // reviewer handle quality. The caller surfaces this as "No invoice data
+  // found" in the Queue instead of creating a junk invoice.
+  if (isEmptyExtraction(extracted)) {
     await supabase.storage.from(INVOICE_BUCKET).remove([filePath]);
     throw new InvoiceIngestError(NO_INVOICE_DATA_ERROR);
   }
@@ -196,21 +235,27 @@ export async function createInvoiceFromFile({
   // per-bill choice, detected from the PO number above instead).
   const hasLineItems = !!extracted && extracted.line_items.length > 0;
   const finalLineItems = hasLineItems
-    ? extracted!.line_items.map((li) => ({
-        description: li.description,
-        amount: li.amount,
-        // Supplier rule > org default > what extraction guessed.
-        tax_rate:
-          supplierDefaults?.tax_rate ??
-          orgDefaultTaxRate ??
-          li.tax_rate,
-        category: hbPayableCategoryFor(li) ?? supplierDefaults?.category ?? li.category,
-        // Class NEVER comes from the document — the org's classes are
-        // totally different from whatever the supplier prints. Only a
-        // supplier rule (app-side config) or a human can set it.
-        class: supplierDefaults?.class ?? null,
-        project_id: projectId,
-      }))
+    ? extracted!.line_items.map((li) => {
+        // A holdback read as a positive amount is still a deduction — negate
+        // it so the bill math stays right (the category rule matches it).
+        const hbCat = holdbackCategoryFor(li);
+        return {
+          description: li.description,
+          amount:
+            hbCat && (li.amount ?? 0) > 0 ? -(li.amount ?? 0) : li.amount,
+          // Supplier rule > org default > what extraction guessed.
+          tax_rate:
+            supplierDefaults?.tax_rate ??
+            orgDefaultTaxRate ??
+            li.tax_rate,
+          category: hbCat ?? supplierDefaults?.category ?? li.category,
+          // Class NEVER comes from the document — the org's classes are
+          // totally different from whatever the supplier prints. Only a
+          // supplier rule (app-side config) or a human can set it.
+          class: supplierDefaults?.class ?? null,
+          project_id: projectId,
+        };
+      })
     : supplierDefaults
       ? [
           {
@@ -292,11 +337,12 @@ export async function createInvoiceFromFile({
       totals_note: totalsNote,
       invoice_number: extracted?.invoice_number ?? null,
       amount: computedAmount,
+      document_total: extracted?.total_amount ?? null,
       currency: supplierDefaults?.currency ?? extracted?.currency ?? "USD",
       bill_date: billDate,
       due_date: dueDate,
       tax_amount: computedTax,
-      extraction: (extracted ?? null) as Record<string, unknown> | null,
+      extraction: extracted ? (extracted as unknown as Record<string, unknown>) : null,
     })
     .select()
     .single();
