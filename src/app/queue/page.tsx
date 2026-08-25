@@ -22,7 +22,7 @@ type QueueRow = {
   createdAt: string;
   title: string;
   detail: string;
-  status: "processing" | "processed" | "split" | "unmatched" | "failed" | "received";
+  status: "processing" | "processed" | "split" | "unmatched" | "no_invoice" | "failed" | "received";
   invoiceIds: string[];
   error: string | null;
 };
@@ -94,6 +94,7 @@ export default async function QueuePage({
   const isPending = (r: QueueRow) =>
     r.status === "processing" ||
     r.status === "unmatched" ||
+    r.status === "no_invoice" ||
     r.status === "failed" ||
     r.status === "received";
   const isProcessed = (r: QueueRow) =>
@@ -282,6 +283,8 @@ function emailStatus(e: {
   if (e.processed && (e.pending_split_ids ?? []).length > 0) return "split";
   if (!e.processed && e.error?.includes("No organization found"))
     return "unmatched";
+  if (!e.processed && e.error?.includes("No invoice data"))
+    return "no_invoice";
   if (!e.processed && e.error) return "failed";
   return "received";
 }
@@ -292,6 +295,7 @@ function uploadStatus(u: {
   if (u.status === "queued" || u.status === "processing") return "processing";
   if (u.status === "done") return "processed";
   if (u.status === "split") return "split";
+  if (u.status === "no_invoice") return "no_invoice";
   return "failed";
 }
 
@@ -301,6 +305,7 @@ function StatusChip({ status }: { status: QueueRow["status"] }) {
     processed: { label: "Processed", cls: "bg-emerald-50 text-emerald-700" },
     split: { label: "Split review", cls: "bg-amber-50 text-amber-700" },
     unmatched: { label: "Unmatched", cls: "bg-slate-100 text-slate-500" },
+    no_invoice: { label: "No invoice data", cls: "bg-slate-100 text-slate-500" },
     failed: { label: "Failed", cls: "bg-rose-50 text-rose-700" },
     received: { label: "No invoice", cls: "bg-slate-100 text-slate-500" },
   };

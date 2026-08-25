@@ -676,7 +676,7 @@ export interface Database {
           filename: string;
           file_type: string | null;
           file_size_bytes: number | null;
-          status: "queued" | "processing" | "done" | "split" | "error";
+          status: "queued" | "processing" | "done" | "split" | "error" | "no_invoice";
           invoice_id: string | null;
           pending_split_id: string | null;
           error: string | null;

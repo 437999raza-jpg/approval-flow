@@ -1,4 +1,4 @@
--- Approval Flow: COMPLETE schema bundle (0001-0056), for a FRESH production
+-- Approval Flow: COMPLETE schema bundle (0001-0057), for a FRESH production
 -- Supabase project only. Do NOT run on an existing database.
 -- Generated 2026-08-21. Paste into the SQL editor and run once.
 
@@ -2772,3 +2772,19 @@ create policy "invoice files: members can update" on storage.objects
     bucket_id = 'invoices'
     and is_org_member((storage.foldername(name))[1]::uuid)
   );
+
+--------------------------------------------------------------------
+-- >>> supabase/migrations/0057_upload_log_no_invoice.sql
+--------------------------------------------------------------------
+-- 0057: upload_log gains a 'no_invoice' outcome — for documents that merge
+-- into a PDF but yield NO invoice data at all (no number, no total, no line
+-- items), the app does NOT create an invoice and marks the queue entry as
+-- "No invoice data found" instead of a retryable failure. Blank/unnumbered
+-- pages inside a real invoice are never affected (the guard looks at the
+-- whole document, and only documents with literally no invoice data are
+-- skipped).
+-- Run via `supabase db push` or paste into the Supabase SQL editor.
+
+alter table upload_log drop constraint if exists upload_log_status_check;
+alter table upload_log add constraint upload_log_status_check
+  check (status in ('queued', 'processing', 'done', 'split', 'error', 'no_invoice'));

@@ -110,6 +110,11 @@ export default async function NewInvoicePage() {
                       </Link>
                     </>
                   )}
+                  {u.status === "no_invoice" && (
+                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-500">
+                      No invoice data
+                    </span>
+                  )}
                   {u.status === "error" && (
                     <span className="rounded-full bg-rose-50 px-2 py-0.5 text-xs font-medium text-rose-700">
                       Rejected

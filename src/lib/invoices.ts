@@ -18,6 +18,12 @@ const ALLOWED_TYPES = new Set([
 
 export class InvoiceIngestError extends Error {}
 
+// Thrown by createInvoiceFromFile when the document clearly isn't an
+// invoice (no invoice number, no total, no line items) — the Queue shows
+// these as "No invoice data found" instead of creating a junk invoice.
+export const NO_INVOICE_DATA_ERROR =
+  "No invoice data found — this document does not look like an invoice.";
+
 interface SupplierDefaults {
   category: string | null;
   class: string | null;
@@ -110,6 +116,20 @@ export async function createInvoiceFromFile({
 
   if (uploadError) {
     throw new InvoiceIngestError(`Upload failed: ${uploadError.message}`);
+  }
+
+  // "Not an invoice" guard: if the document yielded no invoice number, no
+  // printed total, and no line items, don't create an invoice row for it
+  // (forwarded drawings/photo scans merge into PDFs with no invoice data).
+  // The caller surfaces this as "No invoice data found" in the Queue so the
+  // admin can delete it, instead of silently creating a junk invoice.
+  if (
+    !extracted?.invoice_number &&
+    extracted?.total_amount == null &&
+    (extracted?.line_items ?? []).length === 0
+  ) {
+    await supabase.storage.from(INVOICE_BUCKET).remove([filePath]);
+    throw new InvoiceIngestError(NO_INVOICE_DATA_ERROR);
   }
 
   // RULE: Flow never creates suppliers in QuickBooks. Match the OCR'd

@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/types";
 import { ingestInvoiceFile } from "@/lib/invoice-ingest";
+import { NO_INVOICE_DATA_ERROR } from "@/lib/invoices";
 
 // Async ingestion queue. Uploads/emails no longer wait inline on the 20-60s
 // OpenRouter extraction: the route/webhook uploads the bytes to a staging
@@ -230,9 +231,33 @@ export async function runNextIngestJob(
 
     return { ran: true, pending: await queuedCount(supabase, organizationId) };
   } catch (err) {
-    await fail(
-      err instanceof Error ? err.message : "Unknown ingest error"
-    );
+    const message =
+      err instanceof Error ? err.message : "Unknown ingest error";
+    if (message === NO_INVOICE_DATA_ERROR) {
+      // The document clearly isn't an invoice — not a retryable failure.
+      // Surface it as "No invoice data found" in the queue so the admin can
+      // delete it; never create a junk invoice (see createInvoiceFromFile).
+      const now = new Date().toISOString();
+      await supabase
+        .from("ingest_jobs")
+        .update({ status: "done", last_error: message, processed_at: now, updated_at: now })
+        .eq("id", job.id);
+      await supabase.storage.from(STAGING_BUCKET).remove([job.staging_path]);
+      if (job.upload_log_id) {
+        await supabase
+          .from("upload_log")
+          .update({ status: "no_invoice", error: message, processed_at: now })
+          .eq("id", job.upload_log_id);
+      }
+      if (job.inbound_email_log_id) {
+        await supabase
+          .from("inbound_email_log")
+          .update({ processing: false, processed: false, error: message })
+          .eq("id", job.inbound_email_log_id);
+      }
+    } else {
+      await fail(message);
+    }
     return { ran: true, pending: await queuedCount(supabase, organizationId) };
   }
 }
