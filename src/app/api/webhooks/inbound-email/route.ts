@@ -3,9 +3,13 @@
 export const maxDuration = 60;
 
 import { NextResponse } from "next/server";
+import { revalidateTag } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { InvoiceIngestError } from "@/lib/invoices";
+import { ingestInvoiceFile } from "@/lib/invoice-ingest";
 import { mergeDocuments } from "@/lib/merge-documents";
 import { enqueueIngestJob } from "@/lib/ingest-queue";
+import { INVOICES_TAG } from "@/lib/org-cache";
 
 // Inbound email path (Resend — the same vendor as outbound notifications):
 //
@@ -25,10 +29,16 @@ import { enqueueIngestJob } from "@/lib/ingest-queue";
 // nothing.
 //
 // When an email carries several PDF/image attachments (an invoice plus a
-// backup and a certificate copy, say), they're merged into ONE document and
-// ingested as a single invoice — no manual Preview merging needed. If the
-// merged document contains several actual invoices, the existing
-// split-review flow catches it.
+// Attachments are processed INLINE here (no browser needed — emails never
+// wait for the app's poller). How they're interpreted follows a subject
+// code the office stamps at the start of the subject:
+//   [N1]  → all attachments = ONE invoice (combine, e.g. invoice + backup +
+//          certificate)
+//   [1M]  → one PDF contains multiple invoices (force split review)
+//   [NM]  → every PDF contains multiple invoices (each goes to split review)
+//   none  → each PDF is its own invoice (industry default — never merge)
+// Persistent failures fall back to the ingest_jobs queue so they auto-retry
+// and stay Reprocessable from the Queue page.
 export async function POST(request: Request) {
   const url = new URL(request.url);
   if (
@@ -127,15 +137,21 @@ export async function POST(request: Request) {
       });
     }
 
-    // Clients often email an invoice PLUS supporting files (backup,
-    // certificate) as separate attachments. Merge them into one PDF (in
-    // attachment order, invoice pages first) so the email becomes ONE
-    // invoice — the same thing a human does in Preview before forwarding.
-    // If the merged document actually contains several invoices, the
-    // existing split-review flow catches it and asks the reviewer to pick
-    // page ranges.
+    // Subject code convention (office stamps it when forwarding):
+    //   [N1]  → all attachments = ONE invoice (combine)
+    //   [1M]  → one PDF contains multiple invoices (force split review)
+    //   [NM]  → every PDF contains multiple invoices (each goes to split)
+    //   none  → each PDF is its OWN invoice (industry default — never merge)
+    // The code only decides; the attachments are always processed inline.
+    const code = parseSubjectCode(subject);
+    if (code && code.count !== documents.length) {
+      console.error(
+        `Subject code said [${code.count}${code.kind === "merge" ? "1" : "M"}] but ${documents.length} attachment(s) arrived.`
+      );
+    }
+
     let ingestList = documents;
-    if (documents.length > 1) {
+    if (code?.kind === "merge" && documents.length > 1) {
       const merged = await mergeDocuments(documents);
       if (merged) {
         const stem = documents[0].name.replace(/\.[^.]+$/, "") || "attachment";
@@ -148,15 +164,15 @@ export async function POST(request: Request) {
         ];
       } else {
         errors.push(
-          "Could not merge the attachments into one document — ingesting them separately."
+          "Could not combine the attachments into one document — ingesting them separately."
         );
       }
     }
+    const forceSplitEach = code?.kind === "split";
 
     // Record the email immediately (processing=true so the Queue shows it
-    // in flight) and enqueue one job per document. Extraction + invoice
-    // creation happen in the background (/api/ingest/process poller), so
-    // this webhook returns in seconds instead of waiting 20-60s per email.
+    // in flight), then process inline — an email should never wait for a
+    // browser to be open.
     const { data: logRow, error: logInsertError } = await supabase
       .from("inbound_email_log")
       .insert({
@@ -175,33 +191,90 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: true, errors: ["Could not log the email."] });
     }
 
-    const enqueued: string[] = [];
-    const enqueueErrors: string[] = [];
+    // Emails are processed INLINE right here — the 20–60s wait for THIS
+    // email is fine; only persistent failures fall back to the ingest_jobs
+    // queue so they auto-retry / stay Reprocessable.
+    const invoiceIds: string[] = [];
+    const pendingSplitIds: string[] = [];
+    const ingestErrors: string[] = [];
+    let retryJobQueued = false;
+
     for (const doc of ingestList) {
-      const jobId = await enqueueIngestJob({
-        supabase,
-        organizationId: org.id,
-        file: { name: doc.name, type: doc.type, size: doc.bytes.length, bytes: doc.bytes },
-        source: "email",
-        sourceEmail: from,
-        inboundEmailLogId: logRow.id,
+      const file = new File([new Uint8Array(doc.bytes)], doc.name, {
+        type: doc.type || "application/octet-stream",
       });
-      if (jobId) {
-        enqueued.push(jobId);
-      } else {
-        enqueueErrors.push(`Could not queue "${doc.name}"`);
+      try {
+        // One inline retry for transient extraction failures before giving
+        // up to the queue.
+        let result;
+        try {
+          result = await ingestInvoiceFile({
+            supabase,
+            organizationId: org.id,
+            file,
+            source: "email",
+            sourceEmail: from,
+            extraContext: subject,
+            forceSplit: forceSplitEach,
+          });
+        } catch {
+          result = await ingestInvoiceFile({
+            supabase,
+            organizationId: org.id,
+            file,
+            source: "email",
+            sourceEmail: from,
+            extraContext: subject,
+            forceSplit: forceSplitEach,
+          });
+        }
+        if (result.kind === "pending_split") {
+          pendingSplitIds.push(result.pendingSplitId);
+        } else {
+          invoiceIds.push(result.invoice.id);
+        }
+      } catch (err) {
+        const message =
+          err instanceof InvoiceIngestError
+            ? err.message
+            : err instanceof Error
+              ? err.message
+              : "Unknown ingest error";
+        ingestErrors.push(message);
+        // Queue a retry job (staging kept) so the poller can retry and the
+        // Queue's Reprocess button works — no re-forwarding needed.
+        const jobId = await enqueueIngestJob({
+          supabase,
+          organizationId: org.id,
+          file: { name: doc.name, type: doc.type, size: doc.bytes.length, bytes: doc.bytes },
+          source: "email",
+          sourceEmail: from,
+          inboundEmailLogId: logRow.id,
+        });
+        if (jobId) retryJobQueued = true;
       }
     }
 
-    if (enqueueErrors.length > 0) {
-      await supabase
-        .from("inbound_email_log")
-        .update({
-          error:
-            (errors.length > 0 ? errors.join("; ") + "; " : "") +
-            enqueueErrors.join("; "),
-        })
-        .eq("id", logRow.id);
+    await supabase
+      .from("inbound_email_log")
+      .update({
+        // Stays "processing" when a retry job is queued — the worker
+        // completes the row with the outcome; otherwise settle it now.
+        processing: retryJobQueued,
+        invoice_ids: invoiceIds,
+        pending_split_ids: pendingSplitIds,
+        processed: invoiceIds.length > 0 || pendingSplitIds.length > 0,
+        error:
+          retryJobQueued && invoiceIds.length === 0
+            ? null
+            : ingestErrors.length > 0
+              ? ingestErrors.join("; ")
+              : null,
+      })
+      .eq("id", logRow.id);
+
+    if (invoiceIds.length > 0 || pendingSplitIds.length > 0) {
+      revalidateTag(INVOICES_TAG); // new invoices/splits from email
     }
   } catch (err) {
     errors.push(
@@ -286,6 +359,22 @@ function isPdfOrImage(filename: string, contentType: string) {
     contentType.startsWith("image/") ||
     /\.(png|jpe?g|gif|webp)$/.test(name)
   );
+}
+
+// Subject-code convention (office stamps it at the START of the subject):
+//   [N1]  → all attachments = ONE invoice (combine)
+//   [1M]  → one PDF contains multiple invoices (force split review)
+//   [NM]  → every PDF contains multiple invoices (each goes to split)
+// No code → each PDF is its own invoice.
+function parseSubjectCode(
+  subject: string
+): { kind: "merge" | "split"; count: number } | null {
+  const m = subject.match(/^\s*\[(\d+)(M|1)\]\s*/i);
+  if (!m) return null;
+  return {
+    kind: m[2].toUpperCase() === "M" ? "split" : "merge",
+    count: Number(m[1]),
+  };
 }
 
 // Resend's attachments list for a received email. The email may still be

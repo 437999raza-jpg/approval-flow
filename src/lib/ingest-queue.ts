@@ -84,6 +84,40 @@ export async function runNextIngestJob(
   supabase: Supabase,
   organizationId: string
 ): Promise<ProcessResult> {
+  // Reset email rows stuck in "processing" (an inline webhook attempt timed
+  // out past the function cap and never completed) so they don't show as
+  // Processing forever — EXCEPT rows that have a queued/processing job
+  // actively retrying them.
+  try {
+    const { data: activeJobRows } = await supabase
+      .from("ingest_jobs")
+      .select("inbound_email_log_id")
+      .eq("organization_id", organizationId)
+      .in("status", ["queued", "processing"]);
+    const activeEmailIds = new Set(
+      (activeJobRows ?? [])
+        .map((j) => j.inbound_email_log_id)
+        .filter((id): id is string => !!id)
+    );
+    const staleCutoff = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+    let query = supabase
+      .from("inbound_email_log")
+      .update({
+        processing: false,
+        processed: false,
+        error: "Processing timed out — please re-forward the email.",
+      })
+      .eq("organization_id", organizationId)
+      .eq("processing", true)
+      .lt("created_at", staleCutoff);
+    if (activeEmailIds.size > 0) {
+      query = query.not("id", "in", [...activeEmailIds]);
+    }
+    await query;
+  } catch (err) {
+    console.error("stale-processing reset failed:", err);
+  }
+
   const { data: job } = await supabase
     .from("ingest_jobs")
     .select("*")
