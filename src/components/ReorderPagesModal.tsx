@@ -30,19 +30,25 @@ export function ReorderPagesModal({
   const [warning, setWarning] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  async function refreshPages() {
+    const n = await getPageCount(invoiceId);
+    setPageCount(n);
+    if (n && n > 1) {
+      setOrder(Array.from({ length: n }, (_, i) => i + 1));
+    } else {
+      setOrder([]);
+    }
+    return n;
+  }
+
   async function openModal() {
     setOpen(true);
     setError(null);
+    setWarning(null);
     setLoading(true);
-    const n = await getPageCount(invoiceId);
+    const n = await refreshPages();
     setLoading(false);
-    if (!n || n <= 1) {
-      setPageCount(n);
-      setOrder([]);
-      return;
-    }
-    setPageCount(n);
-    setOrder(Array.from({ length: n }, (_, i) => i + 1));
+    if (!n || n <= 1) return;
   }
 
   function move(index: number, dir: -1 | 1) {
@@ -66,11 +72,16 @@ export function ReorderPagesModal({
     const res = await reorder(invoiceId, order);
     setBusy(false);
     if (!res.ok) {
+      // The document may have changed (or storage lagged behind a previous
+      // reorder) — reload the actual page count and reset the list so the
+      // user works against the real document, then show the error.
       setError(res.error ?? "Could not reorder the pages.");
+      void refreshPages();
       return;
     }
     if (res.warning) {
       setWarning(res.warning);
+      void refreshPages(); // doc was rebuilt — sync the list to the new pages
       return; // keep the modal open so the warning is visible
     }
     setOpen(false);

@@ -1557,10 +1557,23 @@ export async function getInvoicePageCount(
   if (!invoice) return null;
   if (!invoice.file_name.toLowerCase().endsWith(".pdf")) return null;
 
-  const { data: blob, error: downloadError } = await supabase.storage
-    .from("invoices")
-    .download(invoice.file_path);
-  if (downloadError || !blob) return null;
+  // Retry the download briefly — storage can lag a moment behind a
+  // just-finished reorder, and a stale page count is what breaks the
+  // Reorder/delete modal's page list.
+  let blob: Blob | null = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const res = await supabase.storage
+      .from("invoices")
+      .download(invoice.file_path);
+    if (res.data) {
+      blob = res.data;
+      break;
+    }
+    if (attempt < 2) {
+      await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
+    }
+  }
+  if (!blob) return null;
 
   return pdfPageCount(new Uint8Array(await blob.arrayBuffer())) || null;
 }
@@ -1602,10 +1615,10 @@ export async function reorderInvoicePages(
   const bytes = new Uint8Array(await blob.arrayBuffer());
   const reordered = await reorderPdfPages(bytes, order);
   if (!reordered) {
+    const currentPages = pdfPageCount(bytes);
     return {
       ok: false,
-      error:
-        "Invalid page list — keep at least one page, each listed once, within the document's page range (e.g. 2, 1).",
+      error: `Invalid page list — the document currently has ${currentPages} page${currentPages === 1 ? "" : "s"}; list the pages you want to keep, in order, each once (e.g. 2, 1).`,
     };
   }
 
