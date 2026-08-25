@@ -57,9 +57,12 @@ export async function mergeDocuments(
   }
 }
 
-// Rebuild a PDF with its pages in a new order (1-based page numbers).
-// Returns the reordered PDF bytes, or null if the order isn't a valid
-// permutation of 1..N or anything fails.
+// Rebuild a PDF keeping only the listed pages, in the given order (1-based
+// page numbers). Omitting a page DELETES it — the list may be any non-empty
+// subset of 1..N in any order, so this supports both reordering and
+// deleting unwanted pages (e.g. trimming a 10-page merged scan down to the
+// 2 real invoice pages). Returns the rebuilt PDF bytes, or null if the
+// page list isn't valid (empty, duplicated, or out of range).
 export async function reorderPdfPages(
   bytes: Uint8Array,
   order: number[]
@@ -71,8 +74,8 @@ export async function reorderPdfPages(
       if (!pdf) return null;
       const n = pdf.countPages();
       const valid =
-        order.length === n &&
-        new Set(order).size === n &&
+        order.length >= 1 &&
+        new Set(order).size === order.length &&
         order.every((p) => Number.isInteger(p) && p >= 1 && p <= n);
       if (!valid) return null;
 

@@ -1604,7 +1604,8 @@ export async function reorderInvoicePages(
   if (!reordered) {
     return {
       ok: false,
-      error: "Invalid page order — it must be every page exactly once (e.g. 2, 1, 3).",
+      error:
+        "Invalid page list — keep at least one page, each listed once, within the document's page range (e.g. 2, 1).",
     };
   }
 

@@ -4,10 +4,11 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { clsx } from "clsx";
 
-// Reorder pages inside an invoice's merged PDF — the in-app replacement for
-// merging/reordering pages in Preview or another external tool. Opens a
-// small modal listing the pages with ↑/↓ arrows; Apply rebuilds the PDF in
-// the new order and re-extracts the fields.
+// Reorder AND delete pages inside an invoice's merged PDF — the in-app
+// replacement for merging/reordering/trimming pages in Preview or another
+// external tool. Each page has ↑/↓ to move it and ✕ to remove it; Apply
+// rebuilds the PDF with only the kept pages (in the new order) and
+// re-extracts the fields.
 export function ReorderPagesModal({
   invoiceId,
   getPageCount,
@@ -54,6 +55,10 @@ export function ReorderPagesModal({
     });
   }
 
+  function removePage(page: number) {
+    setOrder((prev) => prev.filter((p) => p !== page));
+  }
+
   async function apply() {
     setBusy(true);
     setError(null);
@@ -73,8 +78,10 @@ export function ReorderPagesModal({
   }
 
   const isOriginalOrder = pageCount
-    ? order.every((p, i) => p === i + 1)
+    ? order.length === pageCount &&
+      order.every((p, i) => p === i + 1)
     : true;
+  const nothingLeft = order.length === 0;
 
   return (
     <>
@@ -96,7 +103,7 @@ export function ReorderPagesModal({
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between border-b border-slate-200 px-5 py-3">
-              <h2 className="text-sm font-semibold">Reorder pages</h2>
+              <h2 className="text-sm font-semibold">Rearrange or delete pages</h2>
               <button
                 type="button"
                 onClick={() => setOpen(false)}
@@ -119,8 +126,8 @@ export function ReorderPagesModal({
               ) : (
                 <>
                   <p className="mb-2 text-xs text-slate-500">
-                    Move the pages into the order you want. The invoice should
-                    come first.
+                    Move pages into the order you want, and use ✕ to remove
+                    pages you don&apos;t need. The invoice should come first.
                   </p>
                   <ul className="space-y-1">
                     {order.map((page, i) => (
@@ -150,9 +157,22 @@ export function ReorderPagesModal({
                         >
                           ↓
                         </button>
+                        <button
+                          type="button"
+                          onClick={() => removePage(page)}
+                          className="rounded px-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600"
+                          title="Delete this page"
+                        >
+                          ✕
+                        </button>
                       </li>
                     ))}
                   </ul>
+                  {nothingLeft && (
+                    <p className="mt-2 text-xs text-rose-600">
+                      At least one page must remain.
+                    </p>
+                  )}
                   {error && <p className="mt-2 text-xs text-rose-600">{error}</p>}
                   {warning && <p className="mt-2 text-xs text-amber-700">{warning}</p>}
                   <div className="mt-4 flex justify-end gap-2">
@@ -166,15 +186,15 @@ export function ReorderPagesModal({
                     <button
                       type="button"
                       onClick={apply}
-                      disabled={isOriginalOrder || busy}
+                      disabled={isOriginalOrder || nothingLeft || busy}
                       className={clsx(
                         "rounded-md px-3 py-1.5 text-xs font-medium",
-                        isOriginalOrder || busy
+                        isOriginalOrder || nothingLeft || busy
                           ? "cursor-default bg-slate-100 text-slate-400"
                           : "bg-blue-600 text-white hover:bg-blue-700"
                       )}
                     >
-                      {busy ? "Applying…" : "Apply new order"}
+                      {busy ? "Applying…" : "Apply changes"}
                     </button>
                   </div>
                 </>
