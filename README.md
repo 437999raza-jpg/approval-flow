@@ -196,6 +196,8 @@ written to be idempotent (safe to re-run). Roughly:
 | 0052 | `inbound_email_log.pending_split_ids` — links an email to the split-review it produced. |
 | 0053 | `inbound_email_log` DELETE policy for admins (✕ per entry on the Queue page). |
 | 0054 | `upload_log` — durable record of every manual upload (outcome, invoice/split link, error, `created_at → processed_at` timing) for the Recent uploads list and future OCR/queue reporting; 90-day auto-cleanup. |
+| 0055 | `ingest_jobs` — async ingestion queue (staging file, status, 3-try retry); `upload_log` gains `queued`/`processing` statuses; `inbound_email_log.processing` for in-flight display. |
+| 0056 | Storage UPDATE policy on the `invoices` bucket — fixes "new row violates row-level security policy" when Reorder pages replaces the stored PDF in place. |
 
 ---
 
