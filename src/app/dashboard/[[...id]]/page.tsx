@@ -942,14 +942,16 @@ export default async function DashboardPage({
               </span>
             </Link>
           ))}
-          <div className="mt-2 border-t border-slate-100 pt-2">
-            <Link
-              href="/queue"
-              className="flex items-center rounded-md px-3 py-2 text-sm text-slate-600 hover:bg-slate-100"
-            >
-              Queue
-            </Link>
-          </div>
+          {canReviewNow && (
+            <div className="mt-2 border-t border-slate-100 pt-2">
+              <Link
+                href="/queue"
+                className="flex items-center rounded-md px-3 py-2 text-sm text-slate-600 hover:bg-slate-100"
+              >
+                Queue
+              </Link>
+            </div>
+          )}
         </nav>
         <div className="border-t border-slate-200 p-2">
           {unreadNotificationsCount > 0 && (
@@ -1085,12 +1087,14 @@ export default async function DashboardPage({
             activeCount={activeFilterCount}
           />
           <div className="flex-1" />
-          <Link
-            href="/queue"
-            className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
-          >
-            Queue
-          </Link>
+          {canReviewNow && (
+            <Link
+              href="/queue"
+              className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+            >
+              Queue
+            </Link>
+          )}
           {!isAuditor && (
             <Link
               href="/invoices/new"

@@ -40,7 +40,9 @@ export default async function QueuePage({
 
   const org = await getCurrentOrg(supabase);
   if (!org) redirect("/dashboard");
-  const isAdmin = org.role === "admin";
+  // The Queue (uploads + emails + outcomes) is an admin tool.
+  if (org.role !== "admin") redirect("/dashboard");
+  const isAdmin = true;
 
   const filter = ["all", "pending", "processed", "failed"].includes(
     searchParams.f ?? ""
