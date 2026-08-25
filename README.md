@@ -302,16 +302,37 @@ client inside, keyed by org id, 1h safety TTL):
   pending-split confirmation. **Any new code that creates/edits invoices
   MUST `revalidateTag(INVOICES_TAG)` or the list will be stale up to 10 min.**
 
+### Async ingestion (0055) — done 2026-08-24
+
+Extraction moved OFF the request path:
+
+- **`ingest_jobs`** queue table (staging file + status queued/processing/
+  done/error + attempt_count, 3-try retry back to `queued`).
+- **Uploads return instantly** (`202 { jobId }`): file → staging → queued
+  row + `upload_log` row (`queued`/`processing` → worker completes it to
+  done/split/error).
+- **Emails return instantly too**: webhook downloads + merges, records
+  `inbound_email_log` with `processing=true`, enqueues, returns. Worker
+  completes the log row (invoice/split ids, processed, error).
+- **Worker** = `src/lib/ingest-queue.ts` `runNextIngestJob()` called by the
+  UI's `ExtractionPoller` (mounted on dashboard, Add invoice, Queue) via
+  `GET /api/ingest/process` — one job per call, then `router.refresh()`.
+  Jobs wait while nobody has the app open (accepted Hobby tradeoff);
+  swapping in Vercel Cron / Inngest = call `runNextIngestJob` from a
+  scheduled job. `revalidateTag(INVOICES_TAG)` after each job.
+- The Queue / Recent uploads show "Processing" chips for in-flight items.
+- **Still sync (noted follow-ups):** split-confirmation and the manual
+  Re-extract / Reorder-pages actions still run extraction inline.
+
 ### Pending / next (in rough order)
 
-1. **Async extraction (the big one, "item #1")** — move OpenRouter field
-   extraction off the request path so uploads/emails return instantly and
-   nothing blocks on a 20–60s AI call (also removes the Vercel Hobby
-   one-function-at-a-time pileup). Design decided: `ingest_jobs` queue table
-   + a Hobby-friendly poll-worker (`/api/process` endpoint the UI polls;
-   each call processes one job), with the table shaped so swapping in Vercel
-   Cron (Pro) or Inngest later is a one-file change. ~3–6h of work.
-2. Invoice-list pagination/virtualization once past a few thousand rows.
+1. Invoice-list pagination/virtualization once past a few thousand rows.
+2. Re-extract should recompute the `totals_note` (today the note logic only
+   runs at ingest).
+3. Settings page could use the org-cache getters too (it still fetches tax
+   codes fresh).
+4. Make split-confirmation + Re-extract/Reorder async through the same
+   ingest_jobs queue.
 3. Re-extract should recompute the `totals_note` (today the note logic only
    runs at ingest).
 4. Settings page could use the org-cache getters too (it still fetches tax

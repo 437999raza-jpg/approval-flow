@@ -3,12 +3,9 @@
 export const maxDuration = 60;
 
 import { NextResponse } from "next/server";
-import { revalidateTag } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { InvoiceIngestError } from "@/lib/invoices";
-import { ingestInvoiceFile } from "@/lib/invoice-ingest";
 import { mergeDocuments } from "@/lib/merge-documents";
-import { INVOICES_TAG } from "@/lib/org-cache";
+import { enqueueIngestJob } from "@/lib/ingest-queue";
 
 // Inbound email path (Resend — the same vendor as outbound notifications):
 //
@@ -100,8 +97,6 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true, error: "RESEND_API_KEY missing" });
   }
 
-  const invoiceIds: string[] = [];
-  const pendingSplitIds: string[] = [];
   const errors: string[] = [];
 
   try {
@@ -158,62 +153,87 @@ export async function POST(request: Request) {
       }
     }
 
+    // Record the email immediately (processing=true so the Queue shows it
+    // in flight) and enqueue one job per document. Extraction + invoice
+    // creation happen in the background (/api/ingest/process poller), so
+    // this webhook returns in seconds instead of waiting 20-60s per email.
+    const { data: logRow, error: logInsertError } = await supabase
+      .from("inbound_email_log")
+      .insert({
+        organization_id: org.id,
+        from_address: from,
+        to_address: candidates.join(", "),
+        subject,
+        attachment_count: ingestList.length,
+        processing: true,
+        error: errors.length > 0 ? errors.join("; ") : null,
+      })
+      .select("id")
+      .single();
+    if (logInsertError) {
+      console.error("inbound_email_log insert failed:", logInsertError);
+      return NextResponse.json({ ok: true, errors: ["Could not log the email."] });
+    }
+
+    const enqueued: string[] = [];
+    const enqueueErrors: string[] = [];
     for (const doc of ingestList) {
-      const file = new File([new Uint8Array(doc.bytes)], doc.name, {
-        type: doc.type || "application/octet-stream",
+      const jobId = await enqueueIngestJob({
+        supabase,
+        organizationId: org.id,
+        file: { name: doc.name, type: doc.type, size: doc.bytes.length, bytes: doc.bytes },
+        source: "email",
+        sourceEmail: from,
+        inboundEmailLogId: logRow.id,
       });
-      try {
-        const result = await ingestInvoiceFile({
-          supabase,
-          organizationId: org.id,
-          file,
-          source: "email",
-          sourceEmail: from,
-        });
-        if (result.kind === "pending_split") {
-          pendingSplitIds.push(result.pendingSplitId);
-        } else {
-          invoiceIds.push(result.invoice.id);
-        }
-      } catch (err) {
-        errors.push(
-          err instanceof InvoiceIngestError
-            ? err.message
-            : `Unknown ingest error for "${doc.name}"`
-        );
+      if (jobId) {
+        enqueued.push(jobId);
+      } else {
+        enqueueErrors.push(`Could not queue "${doc.name}"`);
       }
+    }
+
+    if (enqueueErrors.length > 0) {
+      await supabase
+        .from("inbound_email_log")
+        .update({
+          error:
+            (errors.length > 0 ? errors.join("; ") + "; " : "") +
+            enqueueErrors.join("; "),
+        })
+        .eq("id", logRow.id);
     }
   } catch (err) {
     errors.push(
       err instanceof Error ? err.message : "Unknown Resend API error"
     );
+    if (supabase) {
+      await supabase.from("inbound_email_log").insert({
+        organization_id: org.id,
+        from_address: from,
+        to_address: candidates.join(", "),
+        subject,
+        processed: false,
+        error: errors.join("; "),
+      });
+    }
   }
 
-  await supabase.from("inbound_email_log").insert({
-    organization_id: org.id,
-    from_address: from,
-    to_address: candidates.join(", "),
-    subject,
-    attachment_count: invoiceIds.length + pendingSplitIds.length,
-    invoice_ids: invoiceIds,
-    pending_split_ids: pendingSplitIds,
-    processed: invoiceIds.length > 0 || pendingSplitIds.length > 0,
-    error: errors.length > 0 ? errors.join("; ") : null,
-  });
-
-  // Keep the queue short: drop log rows older than 90 days (best-effort).
+  // Keep the queue short: drop log/job rows older than 90 days (best-effort).
   await supabase
     .from("inbound_email_log")
     .delete()
     .eq("organization_id", org.id)
     .lt("created_at", new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString())
     .then((r) => r.error && console.error("inbound_email_log cleanup:", r.error));
+  await supabase
+    .from("ingest_jobs")
+    .delete()
+    .eq("organization_id", org.id)
+    .lt("created_at", new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString())
+    .then((r) => r.error && console.error("ingest_jobs cleanup:", r.error));
 
-  if (invoiceIds.length > 0 || pendingSplitIds.length > 0) {
-    revalidateTag(INVOICES_TAG); // new invoices/splits from email
-  }
-
-  return NextResponse.json({ ok: true, invoiceIds, pendingSplitIds, errors });
+  return NextResponse.json({ ok: true, queued: true });
 }
 
 // Attribute an inbound email to an org. The friendly local part (if set)

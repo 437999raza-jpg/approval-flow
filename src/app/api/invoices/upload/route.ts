@@ -1,5 +1,10 @@
-// Vercel Hobby caps configurable duration at 60s — the
-// OpenRouter extraction call can take 20-60s.
+// Manual upload path: signed-in user clicks "Add invoice" / drags a file in.
+// Returns INSTANTLY — the file goes to storage, a queued upload_log row is
+// recorded (the upload queue / Recent uploads show it as "Processing"), and
+// an ingest_jobs entry is queued. The 20-60s extraction + invoice creation
+// happens in the background (/api/ingest/process poller), so this request
+// never blocks and never occupies the single serverless function for a
+// minute (see src/lib/ingest-queue.ts).
 export const maxDuration = 60;
 
 import { NextResponse } from "next/server";
@@ -7,20 +12,9 @@ import { revalidateTag } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentOrg } from "@/lib/current-org";
-import { InvoiceIngestError } from "@/lib/invoices";
-import { ingestInvoiceFile } from "@/lib/invoice-ingest";
+import { enqueueIngestJob } from "@/lib/ingest-queue";
 import { INVOICES_TAG } from "@/lib/org-cache";
-import type { Database } from "@/lib/supabase/types";
 
-// Manual upload path: signed-in user clicks "Add invoice" / drags a file in.
-// A multi-page PDF classified as several separate invoices doesn't create
-// anything yet — it lands in pending_invoice_splits for review instead.
-//
-// Every upload is recorded in upload_log (migration 0054) with its outcome
-// and processing time, so the Add-invoice page can show "Recent uploads"
-// and future reporting can measure how extraction/OCR and the queue
-// perform. Log rows older than 90 days are cleaned up opportunistically so
-// the queue never grows into thousands of rows.
 export async function POST(request: Request) {
   const supabase = createClient();
 
@@ -48,77 +42,56 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Missing file" }, { status: 400 });
   }
 
-  // Best-effort: never fail an upload because logging/cleanup failed.
-  type UploadLogPatch = { status: "done" | "split" | "error" } & Partial<
-    Database["public"]["Tables"]["upload_log"]["Row"]
-  >;
-  const logUpload = async (row: UploadLogPatch) => {
-    const { error } = await supabase.from("upload_log").insert({
+  const bytes = new Uint8Array(await file.arrayBuffer());
+
+  // Record the upload immediately so the queue shows it right away.
+  const { data: logRow, error: logError } = await supabase
+    .from("upload_log")
+    .insert({
       organization_id: org.id,
       user_id: user.id,
       filename: file.name,
       file_type: file.type,
       file_size_bytes: file.size,
-      ...row,
-    });
-    if (error) console.error("upload_log insert failed:", error);
-  };
-  const cleanupOldLogs = async () => {
-    const cutoff = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
-    const admin = createAdminClient(); // bypass RLS for cleanup
-    await admin
-      .from("upload_log")
-      .delete()
-      .eq("organization_id", org.id)
-      .lt("created_at", cutoff);
-    await admin
-      .from("inbound_email_log")
-      .delete()
-      .eq("organization_id", org.id)
-      .lt("created_at", cutoff);
-  };
+      status: "queued",
+    })
+    .select("id")
+    .single();
+  if (logError) console.error("upload_log queued insert failed:", logError);
 
-  const startedAt = Date.now();
-  const finish = async (patch: UploadLogPatch) => {
-    await logUpload({
-      ...patch,
-      created_at: new Date(startedAt).toISOString(),
-      processed_at: new Date().toISOString(),
-    });
-    await cleanupOldLogs();
-  };
+  const jobId = await enqueueIngestJob({
+    supabase,
+    organizationId: org.id,
+    file: { name: file.name, type: file.type, size: file.size, bytes },
+    source: "manual",
+    submittedBy: user.id,
+    uploadLogId: logRow?.id ?? null,
+  });
 
-  try {
-    const result = await ingestInvoiceFile({
-      supabase,
-      organizationId: org.id,
-      file,
-      source: "manual",
-      submittedBy: user.id,
-    });
-    if (result.kind === "pending_split") {
-      await finish({
-        status: "split",
-        pending_split_id: result.pendingSplitId,
-      });
-      revalidateTag(INVOICES_TAG); // new split pending review
-      return NextResponse.json(
-        { pendingSplitId: result.pendingSplitId, groupCount: result.groupCount },
-        { status: 202 }
-      );
+  if (!jobId) {
+    if (logRow) {
+      await supabase
+        .from("upload_log")
+        .update({
+          status: "error",
+          error: "Could not queue the upload for processing.",
+          processed_at: new Date().toISOString(),
+        })
+        .eq("id", logRow.id);
     }
-    await finish({ status: "done", invoice_id: result.invoice.id });
-    revalidateTag(INVOICES_TAG); // new invoice in the queue
-    return NextResponse.json({ invoice: result.invoice }, { status: 201 });
-  } catch (err) {
-    if (err instanceof InvoiceIngestError) {
-      await finish({ status: "error", error: err.message });
-      return NextResponse.json({ error: err.message }, { status: 422 });
-    }
-    await finish({
-      status: "error",
-      error: err instanceof Error ? err.message : "Unknown error",
-    });
-    throw err;
+    return NextResponse.json(
+      { error: "Could not queue the upload for processing." },
+      { status: 500 }
+    );
   }
+
+  // Keep the queue short: drop log/job rows older than 90 days (best-effort).
+  const cutoff = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
+  const admin = createAdminClient();
+  await admin.from("upload_log").delete().eq("organization_id", org.id).lt("created_at", cutoff);
+  await admin.from("inbound_email_log").delete().eq("organization_id", org.id).lt("created_at", cutoff);
+  await admin.from("ingest_jobs").delete().eq("organization_id", org.id).lt("created_at", cutoff);
+
+  revalidateTag(INVOICES_TAG); // a queued upload will become an invoice/split
+  return NextResponse.json({ jobId }, { status: 202 });
 }

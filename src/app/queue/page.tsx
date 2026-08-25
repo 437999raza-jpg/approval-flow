@@ -8,6 +8,7 @@ import {
   clearCompletedQueue,
 } from "@/lib/dashboard-actions";
 import { RemoveQueueEntryButton } from "@/components/RemoveQueueEntryButton";
+import { ExtractionPoller } from "@/components/ExtractionPoller";
 import { clsx } from "clsx";
 
 // The queue — ONE place showing everything that has come into the app:
@@ -20,7 +21,7 @@ type QueueRow = {
   createdAt: string;
   title: string;
   detail: string;
-  status: "processed" | "split" | "unmatched" | "failed" | "received";
+  status: "processing" | "processed" | "split" | "unmatched" | "failed" | "received";
   invoiceIds: string[];
   error: string | null;
 };
@@ -88,7 +89,10 @@ export default async function QueuePage({
   ].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
 
   const isPending = (r: QueueRow) =>
-    r.status === "unmatched" || r.status === "failed" || r.status === "received";
+    r.status === "processing" ||
+    r.status === "unmatched" ||
+    r.status === "failed" ||
+    r.status === "received";
   const isProcessed = (r: QueueRow) =>
     r.status === "processed" || r.status === "split";
 
@@ -134,6 +138,7 @@ export default async function QueuePage({
 
   return (
     <main className="mx-auto max-w-4xl p-8">
+      <ExtractionPoller />
       <Link
         href="/dashboard"
         className="text-sm text-slate-500 hover:underline"
@@ -269,10 +274,12 @@ export default async function QueuePage({
 
 function emailStatus(e: {
   processed: boolean;
+  processing: boolean;
   invoice_ids: string[];
   pending_split_ids: string[];
   error: string | null;
 }): QueueRow["status"] {
+  if (e.processing) return "processing";
   if (e.processed && (e.invoice_ids ?? []).length > 0) return "processed";
   if (e.processed && (e.pending_split_ids ?? []).length > 0) return "split";
   if (!e.processed && e.error?.includes("No organization found"))
@@ -284,6 +291,7 @@ function emailStatus(e: {
 function uploadStatus(u: {
   status: string;
 }): QueueRow["status"] {
+  if (u.status === "queued" || u.status === "processing") return "processing";
   if (u.status === "done") return "processed";
   if (u.status === "split") return "split";
   return "failed";
@@ -291,6 +299,7 @@ function uploadStatus(u: {
 
 function StatusChip({ status }: { status: QueueRow["status"] }) {
   const map: Record<QueueRow["status"], { label: string; cls: string }> = {
+    processing: { label: "Processing", cls: "bg-blue-50 text-blue-600" },
     processed: { label: "Processed", cls: "bg-emerald-50 text-emerald-700" },
     split: { label: "Split review", cls: "bg-amber-50 text-amber-700" },
     unmatched: { label: "Unmatched", cls: "bg-slate-100 text-slate-500" },

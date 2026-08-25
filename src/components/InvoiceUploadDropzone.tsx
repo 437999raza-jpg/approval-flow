@@ -64,7 +64,17 @@ export function InvoiceUploadDropzone() {
         });
         return;
       }
-      if (res.status === 202 && body.pendingSplitId) {
+      if (res.status === 202) {
+        // Accepted: extraction runs in the background now (see
+        // ExtractionPoller). The file shows as Processing here and appears
+        // in Recent uploads below once it's done.
+        patchItem(item.id, {
+          status: "processing",
+          message: undefined,
+        });
+        return;
+      }
+      if (body.pendingSplitId) {
         patchItem(item.id, {
           status: "split",
           pendingSplitId: body.pendingSplitId,

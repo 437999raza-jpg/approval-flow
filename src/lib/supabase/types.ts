@@ -589,6 +589,7 @@ export interface Database {
           invoice_ids: string[];
           pending_split_ids: string[];
           processed: boolean;
+          processing: boolean;
           error: string | null;
           created_at: string;
         };
@@ -635,6 +636,38 @@ export interface Database {
         >;
         Relationships: [];
       };
+      ingest_jobs: {
+        Row: {
+          id: string;
+          organization_id: string;
+          staging_path: string;
+          file_name: string;
+          mime_type: string | null;
+          file_size_bytes: number | null;
+          source: "manual" | "email";
+          submitted_by: string | null;
+          source_email: string | null;
+          status: "queued" | "processing" | "done" | "error";
+          attempt_count: number;
+          last_error: string | null;
+          upload_log_id: string | null;
+          inbound_email_log_id: string | null;
+          created_at: string;
+          updated_at: string;
+          processed_at: string | null;
+        };
+        Insert: Partial<
+          Database["public"]["Tables"]["ingest_jobs"]["Row"]
+        > & {
+          organization_id: string;
+          staging_path: string;
+          file_name: string;
+        };
+        Update: Partial<
+          Database["public"]["Tables"]["ingest_jobs"]["Row"]
+        >;
+        Relationships: [];
+      };
       upload_log: {
         Row: {
           id: string;
@@ -643,7 +676,7 @@ export interface Database {
           filename: string;
           file_type: string | null;
           file_size_bytes: number | null;
-          status: "done" | "split" | "error";
+          status: "queued" | "processing" | "done" | "split" | "error";
           invoice_id: string | null;
           pending_split_id: string | null;
           error: string | null;

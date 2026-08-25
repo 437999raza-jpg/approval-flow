@@ -23,6 +23,7 @@ import { CollapsiblePane } from "@/components/CollapsiblePane";
 import { DetailSplit, type DocumentRef } from "@/components/DetailSplit";
 import { Sidebar } from "@/components/Sidebar";
 import { DocumentFocusProvider } from "@/components/DocumentFocusContext";
+import { ExtractionPoller } from "@/components/ExtractionPoller";
 import { DocumentSearchModal, type DocumentSearchFilters } from "@/components/DocumentSearchModal";
 import type { SupplierDefaultsValues } from "@/components/SupplierRulesModal";
 import type { MultiSelectOption } from "@/components/MultiSelect";
@@ -907,6 +908,7 @@ export default async function DashboardPage({
 
   return (
     <DocumentFocusProvider>
+    <ExtractionPoller />
     <div className="flex h-screen bg-slate-50 text-slate-900">
       {/* Sidebar (collapsible via hamburger) */}
       <Sidebar>

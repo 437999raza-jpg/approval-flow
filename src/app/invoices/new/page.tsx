@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentOrg } from "@/lib/current-org";
 import { InvoiceUploadDropzone } from "@/components/InvoiceUploadDropzone";
+import { ExtractionPoller } from "@/components/ExtractionPoller";
 
 export default async function NewInvoicePage() {
   const supabase = createClient();
@@ -53,6 +54,7 @@ export default async function NewInvoicePage() {
 
   return (
     <main className="mx-auto max-w-2xl p-8">
+      <ExtractionPoller />
       <Link href="/dashboard" className="text-sm text-slate-500 hover:underline">
         ← Back to dashboard
       </Link>
@@ -97,6 +99,12 @@ export default async function NewInvoicePage() {
                         </Link>
                       )}
                     </>
+                  )}
+                  {(u.status === "queued" || u.status === "processing") && (
+                    <span className="flex items-center gap-1.5 rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-600">
+                      <span className="h-3 w-3 animate-spin rounded-full border-2 border-blue-500 border-t-transparent" />
+                      Processing…
+                    </span>
                   )}
                   {u.status === "split" && (
                     <>
