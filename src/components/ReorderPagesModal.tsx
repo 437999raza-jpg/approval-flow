@@ -81,9 +81,9 @@ export function ReorderPagesModal({
       <button
         type="button"
         onClick={openModal}
-        className="font-medium text-slate-500 hover:text-slate-700 hover:underline"
+        className="font-medium text-blue-600 hover:text-blue-700 hover:underline"
       >
-        Reorder pages…
+        Reorder pages
       </button>
 
       {open && (

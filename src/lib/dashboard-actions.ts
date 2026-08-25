@@ -1830,17 +1830,23 @@ export async function clearCompletedQueue(): Promise<void> {
   const org = await getCurrentOrg(supabase);
   if (!org || org.role !== "admin") return;
 
+  // ONLY fully-processed items: uploads that became an invoice (done) and
+  // emails that produced at least one invoice. Everything still needing a
+  // look stays — queued/processing/error uploads, unmatched/failed/
+  // processing emails, and SPLIT-REVIEW entries (both kinds) survive,
+  // because the split still awaits human review.
   const [emailRes, uploadRes] = await Promise.all([
     supabase
       .from("inbound_email_log")
       .delete()
       .eq("organization_id", org.id)
-      .eq("processed", true),
+      .eq("processed", true)
+      .filter("invoice_ids", "neq", "{}"),
     supabase
       .from("upload_log")
       .delete()
       .eq("organization_id", org.id)
-      .in("status", ["done", "split"]),
+      .eq("status", "done"),
   ]);
   if (emailRes.error) console.error("clearCompletedQueue emails:", emailRes.error);
   if (uploadRes.error) console.error("clearCompletedQueue uploads:", uploadRes.error);

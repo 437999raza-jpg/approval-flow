@@ -46,7 +46,7 @@ export default async function QueuePage({
     searchParams.f ?? ""
   )
     ? (searchParams.f as string)
-    : "pending";
+    : "all";
 
   const [{ data: emails }, { data: uploads }] = await Promise.all([
     supabase
@@ -149,7 +149,7 @@ export default async function QueuePage({
         {tabs.map((t) => (
           <Link
             key={t.key}
-            href={`/queue${t.key === "pending" ? "" : `?f=${t.key}`}`}
+            href={`/queue${t.key === "all" ? "" : `?f=${t.key}`}`}
             className={clsx(
               "rounded-full px-3 py-1 text-xs font-medium",
               filter === t.key

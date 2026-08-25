@@ -749,7 +749,7 @@ export function BillPanel({
           </button>
           {!readOnly && (
             <form action={reExtract}>
-              <SubmitButton className="font-medium text-slate-500 hover:text-slate-700 hover:underline">
+              <SubmitButton className="font-medium text-blue-600 hover:text-blue-700 hover:underline">
                 Re-extract document fields
               </SubmitButton>
             </form>
