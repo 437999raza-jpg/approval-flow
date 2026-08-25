@@ -588,20 +588,23 @@ them.
   each with a signed `download_url`) and ingests every PDF/image.
 
 **Subject codes (how the office tells the app what to do):** put the code at
-the very START of the subject when forwarding. No code = each PDF is its own
-invoice (the default — never merged).
+the very START of the subject when forwarding — **PDF count FIRST, invoice
+count SECOND**. No code = each PDF is its own invoice (the default — never
+merged).
 
 | Code | Meaning | Action |
 |---|---|---|
-| *(no code)* | Each PDF = its own invoice | Each file → its own invoice (split-review if one PDF contains several invoices) |
-| `[N1]` e.g. `[31]` | **N** files = **1** invoice (invoice + backup + certificate) | Combine all into one invoice |
-| `[1M]` | 1 PDF = multiple invoices | Force split review (confirm page ranges) |
-| `[NM]` | **N** PDFs, each containing multiple invoices | Each file goes to split review |
+| *(no code)* | Each PDF = its own invoice | Each file → its own invoice |
+| `[X1]` e.g. `[31]`, `[21]` | **X** PDFs = **1** invoice (invoice + backup + certificate) | Combine all into one invoice |
+| `[1N]` e.g. `[13]`, `[16]` | 1 PDF containing **N** invoices | Force split review (confirm page ranges) |
+| `[NN]` e.g. `[22]`, `[33]` | **N** PDFs = **N** invoices | Each PDF its own invoice (same as no code) |
+| `[NM]` | **N** PDFs, each containing multiple invoices | Every PDF goes to split review |
 
-Example: `[31] FW: Invoice 26-2400` → the three attachments are combined
-into one invoice. Emails are processed immediately on arrival (inline in the
-webhook — no browser needed); persistent failures are queued for retry and
-stay Reprocessable from the Queue page.
+Examples: `[31] FW: Invoice 26-2400` → combine three attachments into one
+invoice · `[13] FW: Draws` → one PDF with three invoices → split review.
+Emails are processed immediately on arrival (inline in the webhook — no
+browser needed); persistent failures are queued for retry and stay
+Reprocessable from the Queue page.
 
 **Setup (one-time, on the SaaS side — clients do nothing):**
 1. Resend → **Domains → Add domain** with the value of `INBOUND_EMAIL_DOMAIN`

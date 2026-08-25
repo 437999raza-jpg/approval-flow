@@ -31,10 +31,12 @@ import { INVOICES_TAG } from "@/lib/org-cache";
 // When an email carries several PDF/image attachments (an invoice plus a
 // Attachments are processed INLINE here (no browser needed — emails never
 // wait for the app's poller). How they're interpreted follows a subject
-// code the office stamps at the start of the subject:
-//   [N1]  → all attachments = ONE invoice (combine, e.g. invoice + backup +
+// code the office stamps at the START of the subject — PDF count FIRST,
+// invoice count SECOND:
+//   [X1]  → X PDFs = ONE invoice (combine, e.g. [31] invoice + backup +
 //          certificate)
-//   [1M]  → one PDF contains multiple invoices (force split review)
+//   [1N]  → one PDF contains N invoices (force split review, e.g. [13])
+//   [NN]  → N PDFs = N invoices (each its own — same as no code, e.g. [22])
 //   [NM]  → every PDF contains multiple invoices (each goes to split review)
 //   none  → each PDF is its own invoice (industry default — never merge)
 // Persistent failures fall back to the ingest_jobs queue so they auto-retry
@@ -137,16 +139,17 @@ export async function POST(request: Request) {
       });
     }
 
-    // Subject code convention (office stamps it when forwarding):
-    //   [N1]  → all attachments = ONE invoice (combine)
-    //   [1M]  → one PDF contains multiple invoices (force split review)
-    //   [NM]  → every PDF contains multiple invoices (each goes to split)
-    //   none  → each PDF is its OWN invoice (industry default — never merge)
+    // Subject code convention (PDF count FIRST, invoice count SECOND):
+    //   [31]  → 3 PDFs, 1 invoice  → combine into one
+    //   [13]  → 1 PDF, 3 invoices  → force split review
+    //   [22]  → 2 PDFs, 2 invoices → each PDF its own invoice
+    //   [NM]  → N PDFs, multiple   → every PDF goes to split review
+    //   none  → each PDF is its OWN invoice (never merge)
     // The code only decides; the attachments are always processed inline.
     const code = parseSubjectCode(subject);
-    if (code && code.count !== documents.length) {
+    if (code && code.x !== documents.length) {
       console.error(
-        `Subject code said [${code.count}${code.kind === "merge" ? "1" : "M"}] but ${documents.length} attachment(s) arrived.`
+        `Subject code [${code.x}${code.y}] said ${code.x} attachment(s) but ${documents.length} arrived.`
       );
     }
 
@@ -361,20 +364,26 @@ function isPdfOrImage(filename: string, contentType: string) {
   );
 }
 
-// Subject-code convention (office stamps it at the START of the subject):
-//   [N1]  → all attachments = ONE invoice (combine)
-//   [1M]  → one PDF contains multiple invoices (force split review)
-//   [NM]  → every PDF contains multiple invoices (each goes to split)
+// Subject-code convention (office stamps it at the START of the subject).
+// PDF count FIRST, invoice count SECOND:
+//   [31]  → 3 PDFs, 1 invoice        → combine all into one
+//   [13]  → 1 PDF, 3 invoices        → force split review
+//   [22]  → 2 PDFs, 2 invoices       → each PDF its own invoice (default)
+//   [NM]  → N PDFs, multiple invoices → every PDF goes to split review
 // No code → each PDF is its own invoice.
 function parseSubjectCode(
   subject: string
-): { kind: "merge" | "split"; count: number } | null {
-  const m = subject.match(/^\s*\[(\d+)(M|1)\]\s*/i);
+): { kind: "merge" | "split" | "none"; x: number; y: number | "M" } | null {
+  const m = subject.match(/^\s*\[(\d+)(M|\d+)\]\s*/i);
   if (!m) return null;
-  return {
-    kind: m[2].toUpperCase() === "M" ? "split" : "merge",
-    count: Number(m[1]),
-  };
+  const x = Number(m[1]);
+  const yRaw = m[2].toUpperCase();
+  if (yRaw === "M") return { kind: "split", x, y: "M" };
+  const y = Number(yRaw);
+  if (y === 1) return { kind: "merge", x, y }; // [X1] → combine
+  if (x === 1) return { kind: "split", x, y }; // [1N] → one PDF, N invoices
+  if (y === x) return { kind: "none", x, y }; // [NN] → default (each its own)
+  return { kind: "none", x, y }; // ambiguous (e.g. [32]) → default + mismatch log
 }
 
 // Resend's attachments list for a received email. The email may still be
