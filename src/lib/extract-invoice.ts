@@ -74,7 +74,12 @@ Rules:
 - Use null for anything you cannot find — never invent values.
 - Dates are YYYY-MM-DD. Amounts are plain numbers, no currency symbols.
 - If no line items are visible, return an empty array for line_items.
-- Put each visible line item of the invoice into line_items.`;
+- Put each visible line item of the invoice into line_items.
+- The document may have multiple pages (the invoice plus change orders or
+  supporting pages). Include the invoice's line items AND any change-order
+  line items as separate rows in line_items — never duplicate the same item
+  across pages. The printed total_amount covers the whole invoice,
+  including change orders.`;
 
 type ContentPart =
   | { type: "image_url"; image_url: { url: string } }
@@ -278,14 +283,36 @@ export function mapExtractionToInvoice(
   extracted: ExtractedInvoiceData
 ): Record<string, unknown> {
   const { amount, tax_amount } = computeInvoiceTotals(extracted);
+
+  // Same "document total wins" reconciliation as ingest (invoices.ts): when
+  // line items exist and disagree with the printed total, the printed total
+  // is used and a note is recorded; when the printed total couldn't be read
+  // at all, say the amount was derived from line items. Re-extract must
+  // behave exactly like first-time ingest, or the hard rule silently breaks.
+  const hasLineItems = extracted.line_items.length > 0;
+  const printedTotal = extracted.total_amount ?? null;
+  let finalAmount = hasLineItems ? amount : printedTotal;
+  let finalTax = hasLineItems ? tax_amount : (extracted.tax_amount ?? null);
+  let totalsNote: string | null = null;
+  if (hasLineItems && amount != null) {
+    if (printedTotal != null && Math.abs(printedTotal - amount) > 0.01) {
+      finalAmount = printedTotal;
+      if (extracted.tax_amount != null) finalTax = extracted.tax_amount;
+      totalsNote = `Document total ${printedTotal.toFixed(2)} differs from line items (${amount.toFixed(2)}). The document total was used.`;
+    } else if (printedTotal == null) {
+      totalsNote = `The document's printed total could not be read — the amount shown (${amount.toFixed(2)}) was derived from the line items. Please verify it against the invoice.`;
+    }
+  }
+
   return {
     vendor_name: extracted.vendor_name ?? null,
     invoice_number: extracted.invoice_number ?? null,
     bill_date: extracted.bill_date ?? null,
     due_date: extracted.due_date ?? null,
-    amount,
+    amount: finalAmount,
     currency: extracted.currency ?? "USD",
-    tax_amount,
+    tax_amount: finalTax,
+    totals_note: totalsNote,
     extraction: extracted,
   };
 }
