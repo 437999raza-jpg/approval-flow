@@ -18,7 +18,7 @@ export function ReorderPagesModal({
   reorder: (
     invoiceId: string,
     order: number[]
-  ) => Promise<{ ok: boolean; error?: string }>;
+  ) => Promise<{ ok: boolean; error?: string; warning?: string }>;
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -26,6 +26,7 @@ export function ReorderPagesModal({
   const [pageCount, setPageCount] = useState<number | null>(null);
   const [order, setOrder] = useState<number[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [warning, setWarning] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   async function openModal() {
@@ -56,11 +57,16 @@ export function ReorderPagesModal({
   async function apply() {
     setBusy(true);
     setError(null);
+    setWarning(null);
     const res = await reorder(invoiceId, order);
     setBusy(false);
     if (!res.ok) {
       setError(res.error ?? "Could not reorder the pages.");
       return;
+    }
+    if (res.warning) {
+      setWarning(res.warning);
+      return; // keep the modal open so the warning is visible
     }
     setOpen(false);
     router.refresh();
@@ -148,6 +154,7 @@ export function ReorderPagesModal({
                     ))}
                   </ul>
                   {error && <p className="mt-2 text-xs text-rose-600">{error}</p>}
+                  {warning && <p className="mt-2 text-xs text-amber-700">{warning}</p>}
                   <div className="mt-4 flex justify-end gap-2">
                     <button
                       type="button"

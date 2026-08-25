@@ -9,6 +9,7 @@ import {
 } from "@/lib/dashboard-actions";
 import { RemoveQueueEntryButton } from "@/components/RemoveQueueEntryButton";
 import { ExtractionPoller } from "@/components/ExtractionPoller";
+import { LocalTime } from "@/components/LocalTime";
 import { clsx } from "clsx";
 
 // The queue — ONE place showing everything that has come into the app:
@@ -128,14 +129,6 @@ export default async function QueuePage({
     { key: "failed", label: "Failed", n: counts.failed },
   ];
 
-  const fmtTime = (iso: string) =>
-    new Date(iso).toLocaleString(undefined, {
-      month: "short",
-      day: "numeric",
-      hour: "numeric",
-      minute: "2-digit",
-    });
-
   return (
     <main className="mx-auto max-w-4xl p-8">
       <ExtractionPoller />
@@ -191,7 +184,10 @@ export default async function QueuePage({
           {filtered.map((r) => (
             <li key={`${r.kind}-${r.id}`} className="px-4 py-3">
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                <span className="text-xs text-slate-400">{fmtTime(r.createdAt)}</span>
+                <LocalTime
+                  iso={r.createdAt}
+                  className="text-xs text-slate-400"
+                />
                 <span
                   className={clsx(
                     "rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide",

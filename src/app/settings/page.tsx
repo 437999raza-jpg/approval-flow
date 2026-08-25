@@ -18,6 +18,7 @@ import { DefaultTaxRateForm } from "@/components/DefaultTaxRateForm";
 import { InboundEmailForm } from "@/components/InboundEmailForm";
 import { ScrollPreserveForm } from "@/components/ScrollPreserveForm";
 import { ScrollRestorer } from "@/components/ScrollRestorer";
+import { LocalTime } from "@/components/LocalTime";
 import { membersTag } from "@/lib/org-cache";
 import type { Database } from "@/lib/supabase/types";
 
@@ -484,17 +485,6 @@ export default async function SettingsPage({
   const inputCls =
     "rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none";
 
-  // "Last synced on Feb 21, 2026, 3:42 PM" style timestamps for the QBO
-  // mirror sections.
-  const fmtSync = (iso: string) =>
-    new Date(iso).toLocaleString(undefined, {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-      hour: "numeric",
-      minute: "2-digit",
-    });
-
   return (
     <div className="flex h-screen bg-slate-50 text-slate-900">
       <aside className="flex w-60 flex-none flex-col border-r border-slate-200 bg-white">
@@ -778,7 +768,7 @@ export default async function SettingsPage({
                       ? `${classesCount} class${classesCount === 1 ? "" : "es"} on File. `
                       : ""}
                     {classesLastSync ? (
-                      <>Last synced on {fmtSync(classesLastSync)}.</>
+                      <>Last synced on <LocalTime iso={classesLastSync} withYear />.</>
                     ) : (
                       <>Not synced yet.</>
                     )}
@@ -823,7 +813,7 @@ export default async function SettingsPage({
                       ? `${projectsCount} project${projectsCount === 1 ? "" : "s"} on File. `
                       : ""}
                     {projectsLastSync ? (
-                      <>Last synced on {fmtSync(projectsLastSync)}.</>
+                      <>Last synced on <LocalTime iso={projectsLastSync} withYear />.</>
                     ) : (
                       <>Not synced yet.</>
                     )}
@@ -876,7 +866,7 @@ export default async function SettingsPage({
                       ? `${suppliersCount} supplier${suppliersCount === 1 ? "" : "s"} on File. `
                       : ""}
                     {suppliersLastSync ? (
-                      <>Last synced on {fmtSync(suppliersLastSync)}.</>
+                      <>Last synced on <LocalTime iso={suppliersLastSync} withYear />.</>
                     ) : (
                       <>Not synced yet.</>
                     )}
@@ -921,7 +911,7 @@ export default async function SettingsPage({
                       ? `${categoriesCount} categor${categoriesCount === 1 ? "y" : "ies"} on File. `
                       : ""}
                     {categoriesLastSync ? (
-                      <>Last synced on {fmtSync(categoriesLastSync)}.</>
+                      <>Last synced on <LocalTime iso={categoriesLastSync} withYear />.</>
                     ) : (
                       <>Not synced yet.</>
                     )}

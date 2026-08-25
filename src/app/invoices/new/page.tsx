@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getCurrentOrg } from "@/lib/current-org";
 import { InvoiceUploadDropzone } from "@/components/InvoiceUploadDropzone";
 import { ExtractionPoller } from "@/components/ExtractionPoller";
+import { LocalTime } from "@/components/LocalTime";
 
 export default async function NewInvoicePage() {
   const supabase = createClient();
@@ -44,14 +45,6 @@ export default async function NewInvoicePage() {
       : { data: [] };
   const invoiceById = new Map((invoices ?? []).map((i) => [i.id, i]));
 
-  const fmtTime = (iso: string) =>
-    new Date(iso).toLocaleString(undefined, {
-      month: "short",
-      day: "numeric",
-      hour: "numeric",
-      minute: "2-digit",
-    });
-
   return (
     <main className="mx-auto max-w-2xl p-8">
       <ExtractionPoller />
@@ -77,9 +70,7 @@ export default async function NewInvoicePage() {
             {recentUploads.map((u) => (
               <li key={u.id} className="px-4 py-2.5">
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
-                  <span className="text-xs text-slate-400">
-                    {fmtTime(u.created_at)}
-                  </span>
+                  <LocalTime iso={u.created_at} className="text-xs text-slate-400" />
                   <span className="min-w-0 flex-1 truncate text-slate-700">
                     {u.filename}
                   </span>

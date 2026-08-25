@@ -24,6 +24,7 @@ import { DetailSplit, type DocumentRef } from "@/components/DetailSplit";
 import { Sidebar } from "@/components/Sidebar";
 import { DocumentFocusProvider } from "@/components/DocumentFocusContext";
 import { ExtractionPoller } from "@/components/ExtractionPoller";
+import { LocalTime } from "@/components/LocalTime";
 import { DocumentSearchModal, type DocumentSearchFilters } from "@/components/DocumentSearchModal";
 import type { SupplierDefaultsValues } from "@/components/SupplierRulesModal";
 import type { MultiSelectOption } from "@/components/MultiSelect";
@@ -1295,7 +1296,7 @@ export default async function DashboardPage({
                                   href={`/dashboard/${d.id}${qs}`}
                                   className="underline hover:no-underline"
                                 >
-                                  {new Date(d.created_at).toLocaleDateString()} —{" "}
+                                  <LocalTime iso={d.created_at} dateOnly /> —{" "}
                                   {d.amount != null
                                     ? d.amount.toLocaleString(undefined, {
                                         style: "currency",

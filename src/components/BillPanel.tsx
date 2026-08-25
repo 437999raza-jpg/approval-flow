@@ -8,6 +8,7 @@ import { InlineSelectSave } from "./InlineSelectSave";
 import { ConfirmSubmitButton } from "./ConfirmSubmitButton";
 import { SubmitButton } from "./SubmitButton";
 import { InstructionsBox } from "./InstructionsBox";
+import { LocalTime } from "./LocalTime";
 import { ReorderPagesModal } from "./ReorderPagesModal";
 import { InvoiceStatusBadge } from "./InvoiceStatusBadge";
 import type { Database } from "@/lib/supabase/types";
@@ -774,11 +775,12 @@ export function BillPanel({
                 <p className="flex flex-wrap items-center gap-2 text-emerald-700">
                   <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
                   Synced to QuickBooks
-                  {invoice.qbo_synced_at
-                    ? ` — ${new Date(invoice.qbo_synced_at).toLocaleDateString()} at ${new Date(
-                        invoice.qbo_synced_at
-                      ).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`
-                    : ""}
+                  {invoice.qbo_synced_at && (
+                    <>
+                      {" "}—{" "}
+                      <LocalTime iso={invoice.qbo_synced_at} withYear />
+                    </>
+                  )}
                   {qboConnected && qboRealmId && invoice.qbo_bill_id && (
                     <a
                       href={`https://qbo.intuit.com/app/bill?txnId=${invoice.qbo_bill_id}`}
@@ -900,9 +902,10 @@ export function BillPanel({
                           ? authorNameById.get(comment.author_id) ?? "Team member"
                           : "System"}
                       </span>
-                      <span className="text-xs text-slate-400">
-                        {new Date(comment.created_at).toLocaleString()}
-                      </span>
+                      <LocalTime
+                        iso={comment.created_at}
+                        className="text-xs text-slate-400"
+                      />
                     </div>
                     <p className="mt-1 whitespace-pre-wrap text-sm text-slate-700">
                       {renderCommentBody(comment.body)}
@@ -953,9 +956,10 @@ export function BillPanel({
                         <span className="font-medium">{entry.actorName}</span>{" "}
                         {entry.kind === "comment" ? "commented" : entry.summary}
                       </p>
-                      <span className="flex-none text-[11px] text-slate-400">
-                        {new Date(entry.at).toLocaleString()}
-                      </span>
+                      <LocalTime
+                        iso={entry.at}
+                        className="flex-none text-[11px] text-slate-400"
+                      />
                     </div>
                     {entry.detail && (
                       <p className="mt-0.5 text-xs text-slate-500">{entry.detail}</p>

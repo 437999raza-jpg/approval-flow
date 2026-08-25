@@ -1432,10 +1432,23 @@ async function reExtractInvoiceCore(
     .single();
   if (!invoice) return false;
 
-  const { data: blob, error: downloadError } = await supabase.storage
-    .from("invoices")
-    .download(invoice.file_path);
-  if (downloadError || !blob) return false;
+  // Storage can lag a moment behind a just-finished write (e.g. Reorder
+  // pages re-uploaded the PDF in place) — retry the download briefly
+  // instead of failing the re-extract silently.
+  let blob: Blob | null = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const res = await supabase.storage
+      .from("invoices")
+      .download(invoice.file_path);
+    if (res.data) {
+      blob = res.data;
+      break;
+    }
+    if (attempt < 2) {
+      await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
+    }
+  }
+  if (!blob) return false;
 
   const ext = invoice.file_name.split(".").pop()?.toLowerCase() ?? "";
   const mime =
@@ -1559,7 +1572,7 @@ export async function getInvoicePageCount(
 export async function reorderInvoicePages(
   invoiceId: string,
   order: number[]
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<{ ok: boolean; error?: string; warning?: string }> {
   "use server";
 
   const supabase = createClient();
@@ -1615,13 +1628,19 @@ export async function reorderInvoicePages(
     metadata: { order },
   });
 
-  // Re-extract from the new page order.
-  await reExtractInvoiceCore(supabase, invoiceId, user.id);
+  // Re-extract from the new page order. If that doesn't complete, say so
+  // instead of leaving the fields silently stale.
+  const reextracted = await reExtractInvoiceCore(supabase, invoiceId, user.id);
 
   revalidateTag(INVOICES_TAG);
 
   revalidatePath("/dashboard", "layout");
-  return { ok: true };
+  return {
+    ok: true,
+    warning: reextracted
+      ? undefined
+      : "The new page order was saved, but re-extraction didn't complete — press \"Re-extract document fields\" to refresh the fields.",
+  };
 }
 
 
