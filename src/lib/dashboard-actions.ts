@@ -1523,6 +1523,14 @@ async function reExtractInvoiceCore(
     // CO/Extras keeps its line class "Extras" (that flag is locked once
     // decided, so the class stays with it through re-extraction).
     const lineClass = invoice.has_cos_or_extras === true ? "Extras" : null;
+    // Org default tax is a specific CODE (H 13%) — carry it onto lines whose
+    // rate matches the default, so the sync doesn't have to guess between
+    // duplicate-rate codes.
+    const { data: orgDefault } = await supabase
+      .from("organizations")
+      .select("default_tax_rate, default_tax_code_id")
+      .eq("id", invoice.organization_id)
+      .single();
     await supabase.from("invoice_line_items").insert(
       extracted.line_items.map((li, i) => ({
         invoice_id: invoiceId,
@@ -1532,6 +1540,13 @@ async function reExtractInvoiceCore(
             ? -(li.amount ?? 0)
             : li.amount,
         tax_rate: li.tax_rate,
+        qbo_tax_code_id:
+          orgDefault?.default_tax_code_id != null &&
+          li.tax_rate != null &&
+          orgDefault.default_tax_rate != null &&
+          Math.abs(li.tax_rate - orgDefault.default_tax_rate) < 0.005
+            ? orgDefault.default_tax_code_id
+            : null,
         category: holdbackCategoryFor(li) ?? li.category,
         class: lineClass,
         project_id: projectByOrder.get(i + 1) ?? null,
@@ -1679,19 +1694,14 @@ export async function reorderInvoicePages(
     await new Promise((r) => setTimeout(r, settleMs));
   }
 
-  // Re-extract from the new page order. If that doesn't complete, say so
-  // instead of leaving the fields silently stale.
-  const reextracted = await reExtractInvoiceCore(supabase, invoiceId, user.id);
+  // No auto re-extraction after page changes — that stays a manual
+  // "Re-extract document fields" step (the PDF is rebuilt in the new order;
+  // the user re-extracts when they want the fields refreshed).
 
   revalidateTag(INVOICES_TAG);
 
   revalidatePath("/dashboard", "layout");
-  return {
-    ok: true,
-    warning: reextracted
-      ? undefined
-      : "The new page order was saved, but re-extraction didn't complete — press \"Re-extract document fields\" to refresh the fields.",
-  };
+  return { ok: true };
 }
 
 
@@ -1712,17 +1722,29 @@ export async function saveDefaultTaxRate(formData: FormData) {
     redirect("/settings?taxdefault=error");
   }
 
-  const raw = String(formData.get("default_tax_rate") ?? "").trim();
-  const rate = raw === "" ? null : Number(raw);
-  if (raw !== "" && (!Number.isFinite(rate!) || rate! <= 0)) {
-    redirect("/settings?taxdefault=error");
+  // The setting is a specific QBO tax CODE (e.g. H 13%) — duplicate-rate
+  // codes (H vs M&E (ON), both 13%) can't be guessed at sync time, so we
+  // store the code and its rate together.
+  const rawCode = String(formData.get("default_tax_code_id") ?? "").trim();
+  let rate: number | null = null;
+  if (rawCode !== "") {
+    const { data: code } = await supabase
+      .from("qbo_tax_codes")
+      .select("rate_value")
+      .eq("organization_id", org.id)
+      .eq("qbo_tax_code_id", rawCode)
+      .single();
+    if (!code || code.rate_value == null) {
+      redirect("/settings?taxdefault=error");
+    }
+    rate = Number(code.rate_value);
   }
 
   // Never claim success when the write didn't land (e.g. RLS denied it) —
   // otherwise Settings shows the banner while the rate stays unsaved.
   const { error: updateError } = await supabase
     .from("organizations")
-    .update({ default_tax_rate: rate })
+    .update({ default_tax_rate: rate, default_tax_code_id: rawCode || null })
     .eq("id", org.id);
   if (updateError) {
     console.error("saveDefaultTaxRate failed:", updateError);
@@ -1733,7 +1755,7 @@ export async function saveDefaultTaxRate(formData: FormData) {
     organization_id: org.id,
     actor_id: user.id,
     action: "org.default_tax_rate_saved",
-    metadata: { default_tax_rate: rate },
+    metadata: { default_tax_code_id: rawCode || null, default_tax_rate: rate },
   });
   if (auditError) console.error("saveDefaultTaxRate audit failed:", auditError);
 

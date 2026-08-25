@@ -20,7 +20,7 @@ export async function getCurrentOrg(supabase: SupabaseClient<Database>) {
 
   const { data: organization } = await supabase
     .from("organizations")
-    .select("id, name, slug, inbound_email_token, inbound_email_local, default_tax_rate")
+    .select("id, name, slug, inbound_email_token, inbound_email_local, default_tax_rate, default_tax_code_id")
     .eq("id", membership.organization_id)
     .single();
 

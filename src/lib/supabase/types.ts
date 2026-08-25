@@ -45,6 +45,7 @@ export interface Database {
           inbound_email_token: string;
           inbound_email_local: string | null;
           default_tax_rate: number | null;
+          default_tax_code_id: string | null;
           created_at: string;
         };
         Insert: Partial<

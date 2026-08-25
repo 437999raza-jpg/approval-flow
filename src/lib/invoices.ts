@@ -196,14 +196,18 @@ export async function createInvoiceFromFile({
     vendorName
   );
 
-  // Org-wide default tax rate (Settings → Data from QuickBooks). Applied to
-  // line items that have no supplier rule and no rate from extraction.
+  // Org-wide default tax (Settings → Data from QuickBooks). Stored as a
+  // specific QBO tax CODE (e.g. H 13%) so lines carry an unambiguous code —
+  // duplicate-rate codes (H vs M&E (ON), both 13%) can't be guessed at sync
+  // time. Applied to line items that have no supplier rule and no rate from
+  // extraction.
   const { data: org } = await supabase
     .from("organizations")
-    .select("default_tax_rate")
+    .select("default_tax_rate, default_tax_code_id")
     .eq("id", organizationId)
     .single();
   const orgDefaultTaxRate = org?.default_tax_rate ?? null;
+  const orgDefaultTaxCodeId = org?.default_tax_code_id ?? null;
 
   // Project detection from the PO number: suppliers commonly put their job
   // number on the PO ("2022-589-PO-1234" starts with project code 2022-58).
@@ -239,15 +243,24 @@ export async function createInvoiceFromFile({
         // A holdback read as a positive amount is still a deduction — negate
         // it so the bill math stays right (the category rule matches it).
         const hbCat = holdbackCategoryFor(li);
+        const appliedRate =
+          supplierDefaults?.tax_rate ??
+          orgDefaultTaxRate ??
+          li.tax_rate;
         return {
           description: li.description,
           amount:
             hbCat && (li.amount ?? 0) > 0 ? -(li.amount ?? 0) : li.amount,
           // Supplier rule > org default > what extraction guessed.
-          tax_rate:
-            supplierDefaults?.tax_rate ??
-            orgDefaultTaxRate ??
-            li.tax_rate,
+          tax_rate: appliedRate,
+          // The QBO tax code: the org default is a specific CODE (H), so
+          // lines using it carry it directly — duplicate-rate codes can't
+          // be guessed at sync time. A supplier rule sets a rate only (no
+          // code identity), so those lines leave the code to the sync.
+          qbo_tax_code_id:
+            supplierDefaults?.tax_rate != null
+              ? null
+              : orgDefaultTaxCodeId,
           category: hbCat ?? supplierDefaults?.category ?? li.category,
           // Class NEVER comes from the document — the org's classes are
           // totally different from whatever the supplier prints. Only a
@@ -262,6 +275,10 @@ export async function createInvoiceFromFile({
             description: null,
             amount: extracted?.total_amount ?? null,
             tax_rate: supplierDefaults.tax_rate ?? orgDefaultTaxRate,
+            qbo_tax_code_id:
+              supplierDefaults.tax_rate != null
+                ? null
+                : orgDefaultTaxCodeId,
             category: supplierDefaults.category,
             class: supplierDefaults.class,
             project_id: projectId,

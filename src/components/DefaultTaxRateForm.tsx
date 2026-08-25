@@ -2,75 +2,91 @@
 
 import { useEffect, useState } from "react";
 import { clsx } from "clsx";
-import { saveScrollPosition } from "./ScrollPreserveForm";
 
-// Default tax rate for new invoices (Settings → Data from QuickBooks).
+// Default tax for new invoices (Settings → Data from QuickBooks). Stored as
+// a specific QBO tax CODE (e.g. H 13%), because H and "M&E (ON)" are both
+// 13% and the QBO sync refuses to guess between duplicate-rate codes —
+// storing the code lets ingest put the exact code (H) on new line items.
 //
-// The Save button stays greyed out until a DIFFERENT rate than the saved
-// one is picked. Saving goes through a server action that redirects, so the
-// page re-renders with the newly saved rate as a prop — the effect below
-// syncs the select back to it (the controlled-input pitfall: useState only
-// initializes on mount, so without this the select would keep showing the
-// pre-save value forever).
+// The Save button stays greyed until the selected code actually differs
+// from what's saved. The server action redirects and this component
+// receives the new saved code as a prop, which the effect below syncs back
+// into the select (the controlled-input pitfall: useState only initializes
+// on mount).
 export function DefaultTaxRateForm({
+  currentCodeId,
   currentRate,
-  rates,
+  codes,
   action,
 }: {
+  currentCodeId: string | null;
   currentRate: number | null;
-  rates: number[];
+  codes: { id: string; name: string; rate: number | null }[];
   action: (formData: FormData) => Promise<void>;
 }) {
-  const [value, setValue] = useState(currentRate?.toString() ?? "");
+  const [value, setValue] = useState(currentCodeId ?? "");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  // After a save (server action redirect → re-render with the new rate),
-  // reset the select so it always mirrors what's actually saved.
+  // After a save (server action redirect → re-render with the new saved
+  // code), reset the select so it always mirrors what's actually saved.
   useEffect(() => {
-    setValue(currentRate?.toString() ?? "");
-  }, [currentRate]);
+    setValue(currentCodeId ?? "");
+  }, [currentCodeId]);
 
-  const saved = currentRate?.toString() ?? "";
-  const dirty = value !== saved;
+  const dirty = value !== (currentCodeId ?? "");
+  const savedCode = codes.find((c) => c.id === currentCodeId);
 
   return (
     <form
       className="mt-2 flex flex-wrap items-center gap-2"
-      onSubmit={saveScrollPosition}
+      onSubmit={(e) => {
+        // The server action redirects; nothing to restore.
+        void e;
+      }}
       action={async (formData) => {
-        await action(formData);
-        // The server action redirects; this line only matters if it ever
-        // returns without redirecting (nothing to reset here).
+        setSaving(true);
+        setError(null);
+        try {
+          await action(formData);
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Could not save.");
+          setSaving(false);
+        }
       }}
     >
       <select
-        name="default_tax_rate"
+        name="default_tax_code_id"
         value={value}
         onChange={(e) => setValue(e.target.value)}
         className="rounded-md border border-slate-300 px-3 py-1.5 text-sm focus:border-blue-500 focus:outline-none"
       >
         <option value="">— none —</option>
-        {rates.map((rate) => (
-          <option key={rate} value={rate}>
-            {rate}%
+        {codes.map((c) => (
+          <option key={c.id} value={c.id}>
+            {c.name} ({c.rate ?? 0}%)
           </option>
         ))}
       </select>
       <button
         type="submit"
-        disabled={!dirty}
+        disabled={!dirty || saving}
         className={clsx(
           "rounded-md px-3 py-1.5 text-xs font-medium",
-          dirty
+          dirty && !saving
             ? "bg-slate-800 text-white hover:bg-slate-700"
             : "cursor-default bg-slate-100 text-slate-400"
         )}
       >
-        {dirty ? "Save" : "Saved"}
+        {saving ? "Saving…" : dirty ? "Save" : "Saved"}
       </button>
+      {error && <span className="text-xs text-rose-600">{error}</span>}
       <span className="text-xs text-emerald-700">
-        {currentRate != null
-          ? `Current default: ${currentRate}% — applied when a supplier has no rule of their own.`
-          : "No default set — extraction or supplier rules apply."}
+        {savedCode
+          ? `Current default: ${savedCode.name} (${savedCode.rate ?? 0}%) — applied when a supplier has no rule of their own.`
+          : currentRate != null
+            ? `Current default: ${currentRate}%`
+            : "No default set — extraction or supplier rules apply."}
       </span>
     </form>
   );

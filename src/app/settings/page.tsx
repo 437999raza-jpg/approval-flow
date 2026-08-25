@@ -309,20 +309,20 @@ export default async function SettingsPage({
   // codes with a usable rate are listed (H 13%, M&E 13%, Out of Scope 0%).
   const { data: qboTaxCodes } = await supabase
     .from("qbo_tax_codes")
-    .select("id, name, rate_value")
+    .select("qbo_tax_code_id, name, rate_value")
     .eq("organization_id", org.id)
     .not("rate_value", "is", null)
     .order("name", { ascending: true })
     .limit(50);
 
-  // Default-tax-rate choices = the distinct synced rates, sorted.
-  const defaultTaxRates = [
-    ...new Set(
-      (qboTaxCodes ?? [])
-        .map((c) => c.rate_value)
-        .filter((r): r is number => r != null)
-    ),
-  ].sort((a, b) => a - b);
+  // Default-tax choices = the synced tax CODES (H 13%, M&E (ON) 13%…).
+  // Stored as a code so ingest puts the exact code on new lines — two codes
+  // can share a rate and the QBO sync refuses to guess between them.
+  const defaultTaxCodes = (qboTaxCodes ?? []).map((c) => ({
+    id: c.qbo_tax_code_id,
+    name: c.name,
+    rate: c.rate_value,
+  }));
 
   // Per-section sync log (migration 0049): when each QBO mirror was last
   // synced, so sections can show "N on File. Last synced on <time>".
@@ -715,7 +715,7 @@ export default async function SettingsPage({
                   {qboTaxCodes && qboTaxCodes.length > 0 ? (
                     <ul className="mt-2 space-y-0.5">
                       {(qboTaxCodes ?? []).map((c) => (
-                        <li key={c.id} className="text-sm text-slate-700">
+                        <li key={c.qbo_tax_code_id} className="text-sm text-slate-700">
                           {c.name} ({c.rate_value}%)
                         </li>
                       ))}
@@ -735,11 +735,13 @@ export default async function SettingsPage({
                     </div>
                     <p className="mt-1 text-xs text-slate-500">
                       Applied to every incoming invoice when the supplier has
-                      no rule of their own. Choose one of the synced rates.
+                      no rule of their own. Choose one of the synced tax
+                      codes (e.g. H 13%).
                     </p>
                     <DefaultTaxRateForm
+                      currentCodeId={org.default_tax_code_id}
                       currentRate={org.default_tax_rate}
-                      rates={defaultTaxRates}
+                      codes={defaultTaxCodes}
                       action={saveDefaultTaxRate}
                     />
                   </div>
