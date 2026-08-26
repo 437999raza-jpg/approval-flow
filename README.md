@@ -480,6 +480,49 @@ The Email field under Vendor name now shows/edits that instead, with a
 mailto: link. "Open vendor in QuickBooks Online" sits right under the picked
 vendor name (resolved server-side the same way sync matches suppliers).
 
+### Line-item cells: bottom-aligned, full-column hover/click target
+
+Follow-up round on the same table, driven by the user clicking through the
+live UI and iterating live (unlike the rest of this session's UI work, this
+round **was** confirmed working against real data — bill with a wrapped
+Description, e.g. "MR6010 FENCE, 6' X 10' TEMP./FT"):
+
+- Category/Description/Project/Class/Tax/Amount used `items-start` on the
+  row's grid, so an *empty* field's underline sat up near the row's first
+  line instead of near its own bottom divider — most visible once
+  Description wraps to 2+ lines and the row grows taller than the other,
+  single-line cells. Switched the row to `items-end`; checkbox/action-icon
+  padding flipped from `pt-*` to matching `items-end` handling.
+- That alone made the underline hug the bottom correctly for a normal
+  1–3 line row, but it also meant the *hoverable/clickable area* was still
+  just that field's own small content-height box, now sitting at the very
+  bottom of a possibly much taller row — easy to miss, and for a long
+  Description effectively required scrolling to find. **First attempted
+  fix (capping Description's height with an internal scrollbar) was
+  explicitly rejected by the user** — they didn't want Description
+  truncated/scrolled at all; the real ask was "hovering anywhere in the
+  column should reveal the line, not just the exact bottom sliver."
+- Real fix: `Combobox` (`src/components/Combobox.tsx`) gets a new
+  `fillCell` prop (Category/Project/Class/Tax in the line-item row use it;
+  Vendor name and other Comboboxes elsewhere don't). Its own wrapper
+  becomes a nested single-cell grid spanning the *full* row height
+  (`items-end` inside, so the value still sits at the bottom); a
+  `group/cell`-scoped hover reveals the underline from anywhere in that
+  full-height area, and an `onClick` on the wrapper's dead space (guarded
+  by `e.target === boxRef.current`, so it doesn't double-fire when the
+  actual input/idle-div handles its own click) focuses the field. Amount
+  (a plain `<input>`, not a `Combobox`) gets the identical treatment by
+  hand via an explicit wrapper + ref.
+- Separately (unconfirmed): picking a Combobox option by mouse click,
+  then immediately pressing Tab, was reported to sometimes not land on
+  the next field. Root cause unconfirmed — no reproduction found by
+  reading the code (focus should already survive the pick via the
+  existing `preventDefault()` on the dropdown option's `onMouseDown`).
+  Best-effort mitigation added: `justPickedRef` in `Combobox.tsx` restores
+  focus to the field once its own autosave round-trip lands, in case the
+  page-wide `revalidatePath("/dashboard", "layout")` triggered by that
+  save is what's knocking focus away.
+
 ### Pending / worth knowing
 
 1. `product_service` and `qbo_suppliers.integration` are stored but not yet
@@ -494,7 +537,10 @@ vendor name (resolved server-side the same way sync matches suppliers).
    the scroll fixes were click-tested in a live browser — no login
    credentials were available in that working environment. Verified via
    `tsc`/`lint`/build + careful reasoning about the exact DOM/layout
-   mechanics only.
+   mechanics only. (The line-item cell alignment/hover fix above is the
+   exception — that one was confirmed live by the user.)
+4. The Tab-after-pick mitigation (above) is unconfirmed — flag it if it
+   turns out not to be the actual cause next time it's reported.
 
 ---
 
