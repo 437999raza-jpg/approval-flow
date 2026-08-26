@@ -90,6 +90,10 @@ export interface BillData {
   instructions: BillInstructionsData;
   qboConnected: boolean;
   qboRealmId: string | null;
+  // The invoice's vendor, matched (by normalized name, same as sync) to a
+  // QBO Vendor id — null if unmatched. Backs the "Open vendor in
+  // QuickBooks Online" link.
+  qboVendorId: string | null;
   alerts?: ReactNode;
 }
 
@@ -390,6 +394,7 @@ export function DetailSplit({
             instructions={bill.instructions}
             qboConnected={bill.qboConnected}
             qboRealmId={bill.qboRealmId}
+            qboVendorId={bill.qboVendorId}
             alerts={bill.alerts}
             onOpenDocument={openDocument}
             onCollapse={() => setBillOpen(false)}

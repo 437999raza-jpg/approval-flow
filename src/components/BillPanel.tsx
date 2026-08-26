@@ -135,6 +135,7 @@ export function BillPanel({
   instructions,
   qboConnected,
   qboRealmId,
+  qboVendorId,
   alerts,
   onOpenDocument,
   onCollapse,
@@ -185,6 +186,7 @@ export function BillPanel({
   instructions: BillInstructionsData;
   qboConnected: boolean;
   qboRealmId: string | null;
+  qboVendorId: string | null;
   // Server-rendered banners (decision errors, possible-duplicate warnings)
   // slotted in above everything else.
   alerts?: ReactNode;
@@ -263,6 +265,15 @@ export function BillPanel({
   }
   const vendor = invoice.vendor_name ?? invoice.file_name ?? "Unknown vendor";
   const billNumber = invoice.invoice_number ?? "—";
+  // The vendor's own email, as OCR'd off the invoice document — not
+  // source_email (which invoice.source_email actually is: the address
+  // that emailed the invoice INTO Flow, e.g. an AP inbox or a forwarder,
+  // not the vendor). vendor_email only ever lives inside the extraction
+  // JSON; there's no dedicated column for it.
+  const vendorEmail =
+    typeof invoice.extraction?.vendor_email === "string"
+      ? invoice.extraction.vendor_email
+      : null;
   const billDateDefault = invoice.bill_date ?? invoice.created_at.slice(0, 10);
 
   // Bill fields save automatically when a field loses focus (no Save
@@ -516,9 +527,19 @@ export function BillPanel({
               <h2 className="truncate text-lg font-semibold text-slate-900">
                 Bill {billNumber} from {vendor}
               </h2>
-              {invoice.source_email && (
-                <p className="mt-0.5 truncate text-sm text-slate-400">
-                  {invoice.source_email}
+              {(vendorEmail || (qboConnected && qboVendorId)) && (
+                <p className="mt-0.5 flex flex-wrap items-center gap-x-2 truncate text-sm text-slate-400">
+                  {vendorEmail}
+                  {qboConnected && qboVendorId && (
+                    <a
+                      href={`https://qbo.intuit.com/app/vendordetail?nameId=${qboVendorId}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="font-medium text-blue-600 hover:underline"
+                    >
+                      Open vendor in QuickBooks Online ↗
+                    </a>
+                  )}
                 </p>
               )}
               {!readOnly && invoice.vendor_name && (

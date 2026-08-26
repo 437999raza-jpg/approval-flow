@@ -652,6 +652,7 @@ export default async function DashboardPage({
     payment_terms_days: "",
     currency: "",
   };
+  let qboVendorIdForSelected: string | null = null;
 
   if (selected) {
     const [signed, approvalsRes, commentsRes, docsRes, lineItemsRes, auditRes] =
@@ -687,12 +688,21 @@ export default async function DashboardPage({
     stepsForSelected = (allSteps ?? []).filter((s) => s.workflow_id === selected.workflow_id);
 
     if (selected.vendor_name) {
-      const { data: sd } = await supabase
-        .from("supplier_defaults")
-        .select("*")
-        .eq("organization_id", org.id)
-        .eq("vendor_name_normalized", normalizeForMatching(selected.vendor_name))
-        .maybeSingle();
+      const [{ data: sd }, { data: matchedSupplier }] = await Promise.all([
+        supabase
+          .from("supplier_defaults")
+          .select("*")
+          .eq("organization_id", org.id)
+          .eq("vendor_name_normalized", normalizeForMatching(selected.vendor_name))
+          .maybeSingle(),
+        supabase
+          .from("qbo_suppliers")
+          .select("qbo_vendor_id")
+          .eq("organization_id", org.id)
+          .eq("name_normalized", normalizeForMatching(selected.vendor_name))
+          .maybeSingle(),
+      ]);
+      qboVendorIdForSelected = matchedSupplier?.qbo_vendor_id ?? null;
       if (sd) {
         supplierDefaultsForSelected = {
           category: sd.category ?? "",
@@ -1225,6 +1235,7 @@ export default async function DashboardPage({
                   canReview: canReviewNow,
                   readOnly: !canEdit,
                   supplierDefaults: supplierDefaultsForSelected,
+                  qboVendorId: qboVendorIdForSelected,
                   saveSupplierDefaults: saveSupplierDefaults.bind(
                     null,
                     selected.id,
