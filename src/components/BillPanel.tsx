@@ -1058,14 +1058,22 @@ function LineItemRow({
   const [addPending, setAddPending] = useState(false);
   const cellCls = "w-full truncate border-b border-transparent bg-transparent px-0 py-1.5 text-xs text-slate-800 hover:border-slate-200 focus:border-blue-500 focus:outline-none disabled:text-slate-400";
   // Description wraps and grows instead of truncating — PMs need to read
-  // the whole thing, not just what fits on one line.
-  const descCls = "w-full resize-none overflow-hidden whitespace-pre-wrap break-words border-b border-transparent bg-transparent px-0 py-1.5 text-xs text-slate-800 hover:border-slate-200 focus:border-blue-500 focus:outline-none disabled:text-slate-400";
+  // the whole thing, not just what fits on one line. It's capped (below,
+  // see MAX_DESC_HEIGHT) with its own internal scroll past that point —
+  // otherwise an unusually long description makes the whole row (and every
+  // other field in it, bottom-anchored via items-end) grow just as tall,
+  // pushing those fields' hover-to-reveal underlines far enough down that
+  // they're effectively unfindable without scrolling to hunt for them.
+  const descCls = "w-full resize-none overflow-y-auto whitespace-pre-wrap break-words border-b border-transparent bg-transparent px-0 py-1.5 text-xs text-slate-800 hover:border-slate-200 focus:border-blue-500 focus:outline-none disabled:text-slate-400";
+  // ~5 lines — generous for a real description, short enough that no row
+  // in the table can grow past a predictable, on-screen height.
+  const MAX_DESC_HEIGHT = 96;
 
   const autoResizeDesc = useCallback(() => {
     const el = descRef.current;
     if (!el) return;
     el.style.height = "auto";
-    el.style.height = `${el.scrollHeight}px`;
+    el.style.height = `${Math.min(el.scrollHeight, MAX_DESC_HEIGHT)}px`;
   }, []);
   // Resize after the grid layout settles (requestAnimationFrame) AND
   // whenever the description changes (extraction, save, edits) — the mount-
