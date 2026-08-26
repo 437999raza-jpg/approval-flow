@@ -90,6 +90,25 @@ function addDays(dateStr: string, days: number): string {
   return d.toISOString().slice(0, 10);
 }
 
+// Pure. The org's default tax code (e.g. H) is only a known-good match for
+// the org's own default RATE (e.g. 13%) — it says nothing about a rate that
+// happens to differ. A line's applied rate might come from a supplier rule
+// rather than the org default, but if that rule's rate is the SAME number,
+// there's no real ambiguity: the org has already declared which code that
+// rate means. Only an applied rate that differs from the org default has no
+// known code and resolves to null here, left for sync-time rate matching
+// (resolveTaxCode/matchTaxCode in qbo.ts) to resolve or fail loudly on.
+function taxCodeIdFor(
+  appliedRate: number | null | undefined,
+  orgDefaultTaxRate: number | null,
+  orgDefaultTaxCodeId: string | null
+): string | null {
+  if (appliedRate == null || orgDefaultTaxRate == null || orgDefaultTaxCodeId == null) {
+    return null;
+  }
+  return Math.abs(appliedRate - orgDefaultTaxRate) < 0.005 ? orgDefaultTaxCodeId : null;
+}
+
 // Business rule: when a line item's description mentions a holdback (HB),
 // the category is HB Payable (2-1031 in QBO) — regardless of sign. The
 // caller also negates a positive holdback amount (the model sometimes reads
@@ -253,14 +272,14 @@ export async function createInvoiceFromFile({
             hbCat && (li.amount ?? 0) > 0 ? -(li.amount ?? 0) : li.amount,
           // Supplier rule > org default > what extraction guessed.
           tax_rate: appliedRate,
-          // The QBO tax code: the org default is a specific CODE (H), so
-          // lines using it carry it directly — duplicate-rate codes can't
-          // be guessed at sync time. A supplier rule sets a rate only (no
-          // code identity), so those lines leave the code to the sync.
-          qbo_tax_code_id:
-            supplierDefaults?.tax_rate != null
-              ? null
-              : orgDefaultTaxCodeId,
+          // The org's default tax code is only a known-good match for the
+          // org's own default RATE — a supplier rule's rate happening to
+          // equal it too isn't a genuine ambiguity (the org already
+          // declared which code that rate means); only a supplier rate
+          // that DIFFERS from the org default has no known code, left for
+          // sync-time rate matching to resolve (or fail loudly on if truly
+          // ambiguous — see resolveTaxCode/matchTaxCode in qbo.ts).
+          qbo_tax_code_id: taxCodeIdFor(appliedRate, orgDefaultTaxRate, orgDefaultTaxCodeId),
           category: hbCat ?? supplierDefaults?.category ?? li.category,
           // Class NEVER comes from the document — the org's classes are
           // totally different from whatever the supplier prints. Only a
@@ -275,10 +294,11 @@ export async function createInvoiceFromFile({
             description: null,
             amount: extracted?.total_amount ?? null,
             tax_rate: supplierDefaults.tax_rate ?? orgDefaultTaxRate,
-            qbo_tax_code_id:
-              supplierDefaults.tax_rate != null
-                ? null
-                : orgDefaultTaxCodeId,
+            qbo_tax_code_id: taxCodeIdFor(
+              supplierDefaults.tax_rate ?? orgDefaultTaxRate,
+              orgDefaultTaxRate,
+              orgDefaultTaxCodeId
+            ),
             category: supplierDefaults.category,
             class: supplierDefaults.class,
             project_id: projectId,
