@@ -527,21 +527,6 @@ export function BillPanel({
               <h2 className="truncate text-lg font-semibold text-slate-900">
                 Bill {billNumber} from {vendor}
               </h2>
-              {(vendorEmail || (qboConnected && qboVendorId)) && (
-                <p className="mt-0.5 flex flex-wrap items-center gap-x-2 truncate text-sm text-slate-400">
-                  {vendorEmail}
-                  {qboConnected && qboVendorId && (
-                    <a
-                      href={`https://qbo.intuit.com/app/vendordetail?nameId=${qboVendorId}`}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="font-medium text-blue-600 hover:underline"
-                    >
-                      Open vendor in QuickBooks Online ↗
-                    </a>
-                  )}
-                </p>
-              )}
               {!readOnly && invoice.vendor_name && (
                 <div className="mt-1.5">
                   <SupplierRulesModal
@@ -638,16 +623,34 @@ export function BillPanel({
                   correct one above before this bill can sync.
                 </span>
               )}
+              {qboConnected && qboVendorId && (
+                <a
+                  href={`https://qbo.intuit.com/app/vendordetail?nameId=${qboVendorId}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-0.5 block text-[11px] font-medium text-blue-600 hover:underline"
+                >
+                  Open vendor in QuickBooks Online ↗
+                </a>
+              )}
             </label>
             <label>
               <span className={ghostLabel}>Email</span>
               <input
                 form="bill-form"
                 name="source_email"
-                defaultValue={invoice.source_email ?? ""}
+                defaultValue={vendorEmail ?? invoice.source_email ?? ""}
                 className={ghostField}
                 {...billBlur}
               />
+              {(vendorEmail ?? invoice.source_email) && (
+                <a
+                  href={`mailto:${vendorEmail ?? invoice.source_email}`}
+                  className="mt-0.5 block text-[11px] font-medium text-blue-600 hover:underline"
+                >
+                  ✉ Email vendor
+                </a>
+              )}
             </label>
           </div>
         </div>
@@ -1047,6 +1050,7 @@ function LineItemRow({
   const formId = `line-item-${itemId}`;
   const formRef = useRef<HTMLFormElement>(null);
   const descRef = useRef<HTMLTextAreaElement>(null);
+  const rowRef = useRef<HTMLDivElement>(null);
   // The "Add" button below is associated with the hidden form via the
   // form="..." attribute, not by being a descendant of it — useFormStatus
   // only tracks descendants of the <form> it's actually inside, so it
@@ -1070,6 +1074,22 @@ function LineItemRow({
     const raf = requestAnimationFrame(autoResizeDesc);
     return () => cancelAnimationFrame(raf);
   }, [defaults.description, autoResizeDesc]);
+  // The height set above is frozen in pixels — it only reflects how many
+  // lines the text wrapped into at THAT width. Nothing re-ran it when the
+  // column got narrower for a reason that has nothing to do with the text
+  // itself (opening the document for the 50/50 split, dragging the bill
+  // panel's own resize handle, collapsing the sidebar, resizing the
+  // window): the same text now wraps into more lines, but the frozen
+  // height doesn't grow, so the extra lines get clipped by
+  // overflow-hidden. A ResizeObserver on the row reacts to a width change
+  // for ANY reason, not just the ones some effect happened to be watching.
+  useEffect(() => {
+    const el = rowRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver(() => autoResizeDesc());
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [autoResizeDesc]);
 
   // Existing rows save automatically when a field loses focus (no Save
   // button). The blank "add line" row keeps an explicit button. In
@@ -1087,6 +1107,7 @@ function LineItemRow({
 
   return (
     <div
+      ref={rowRef}
       className={`group grid ${LINE_ITEM_COLS} items-start gap-x-2 border-b border-slate-100 py-0.5`}
     >
       <form
@@ -1103,6 +1124,7 @@ function LineItemRow({
         placeholder={isNew ? "Search category…" : undefined}
         className={cellCls}
         disabled={readOnly}
+        wrapWhenIdle
         onCommit={() => {
           if (!isNew && !readOnly) formRef.current?.requestSubmit();
         }}
@@ -1126,6 +1148,7 @@ function LineItemRow({
         placeholder={isNew ? "Search project…" : undefined}
         className={cellCls}
         disabled={readOnly}
+        wrapWhenIdle
         onCommit={() => {
           if (!isNew && !readOnly) formRef.current?.requestSubmit();
         }}

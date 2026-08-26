@@ -48,6 +48,7 @@ export function Combobox({
   showValue = false,
   minQueryLength = 2,
   secondaryName,
+  wrapWhenIdle = false,
 }: {
   name: string;
   formId: string;
@@ -77,6 +78,14 @@ export function Combobox({
   // one was picked) and the resolved rate (as `secondaryValue`, for the
   // app's own tax-total math and display).
   secondaryName?: string;
+  // For fields whose values can genuinely run long (Category, Project) —
+  // an <input> can never wrap, so truncating with "…" was the only way to
+  // avoid it overflowing, which silently hid part of the value. When not
+  // being actively edited, show the picked value as wrapped, auto-height
+  // text instead (click it to search/edit again, same as always). Off by
+  // default — every other Combobox in the app (Class, Tax, Supplier,
+  // workflow rules, …) keeps today's plain single-line input untouched.
+  wrapWhenIdle?: boolean;
 }) {
   const hasPairs = options.length > 0 && isObjOption(options[0]);
   const pairForValue = (v: string) =>
@@ -103,6 +112,10 @@ export function Combobox({
   const [query, setQuery] = useState(displayOf(defaultValue)); // shown text
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(-1);
+  // wrapWhenIdle only: whether the box is being actively edited (plain
+  // single-line input, dropdown available) vs. idle (wrapped, auto-height
+  // display of the current value — see the render below).
+  const [isFocused, setIsFocused] = useState(false);
   type DropRect = {
     left: number;
     width: number;
@@ -222,6 +235,7 @@ export function Combobox({
       const inDropdown = dropdownRef.current && dropdownRef.current.contains(target);
       if (!inBox && !inDropdown) {
         setOpen(false);
+        setIsFocused(false);
         commitCurrent();
       }
     }
@@ -229,6 +243,13 @@ export function Combobox({
     return () => document.removeEventListener("mousedown", onDocMouseDown);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query, selected]);
+
+  // wrapWhenIdle: clicking the idle (wrapped-display) view switches to the
+  // real input, which needs an explicit focus() once it actually mounts —
+  // a plain onClick on the div that used to be there doesn't reach it.
+  useEffect(() => {
+    if (isFocused) queryInputRef.current?.focus();
+  }, [isFocused]);
 
   function commitCurrent() {
     let value = selected;
@@ -304,52 +325,75 @@ export function Combobox({
           })()}
         />
       )}
-      <input
-        ref={queryInputRef}
-        form={hasPairs ? undefined : formId}
-        name={hasPairs ? undefined : name}
-        value={query}
-        onChange={(e) => {
-          editingRef.current = true;
-          setQuery(e.target.value);
-          setOpen(true);
-          setActive(-1);
-        }}
-        onFocus={(e) => {
-          editingRef.current = true;
-          setOpen(true);
-          // Pre-filled fields (e.g. OCR'd vendor): select the existing text
-          // so the first keystroke replaces it instead of appending — which
-          // would make the search look for "oldname + newletters" and match
-          // nothing.
-          e.target.select();
-        }}
-        onKeyDown={(e) => {
-          if (e.key === "ArrowDown") {
-            e.preventDefault();
+      {wrapWhenIdle && (disabled || !isFocused) ? (
+        <div
+          tabIndex={disabled ? undefined : 0}
+          onClick={() => !disabled && setIsFocused(true)}
+          onFocus={() => !disabled && setIsFocused(true)}
+          title={query}
+          className={`${(className ?? "").replace(/\btruncate\b/g, "").trim()} ${
+            disabled ? "" : "cursor-text"
+          } whitespace-pre-wrap break-words`}
+        >
+          {query || <span className="text-slate-400">{placeholder}</span>}
+        </div>
+      ) : (
+        <input
+          ref={queryInputRef}
+          form={hasPairs ? undefined : formId}
+          name={hasPairs ? undefined : name}
+          value={query}
+          onChange={(e) => {
+            editingRef.current = true;
+            setQuery(e.target.value);
             setOpen(true);
-            setActive((a) => Math.min(a + 1, filtered.length - 1));
-          } else if (e.key === "ArrowUp") {
-            e.preventDefault();
-            setActive((a) => Math.max(a - 1, 0));
-          } else if (e.key === "Enter") {
-            if (open && active >= 0 && filtered[active]) {
+            setActive(-1);
+          }}
+          onFocus={(e) => {
+            editingRef.current = true;
+            setOpen(true);
+            setIsFocused(true);
+            // Pre-filled fields (e.g. OCR'd vendor): select the existing text
+            // so the first keystroke replaces it instead of appending — which
+            // would make the search look for "oldname + newletters" and match
+            // nothing.
+            e.target.select();
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "ArrowDown") {
               e.preventDefault();
-              pick(filtered[active]);
-            } else {
+              setOpen(true);
+              setActive((a) => Math.min(a + 1, filtered.length - 1));
+            } else if (e.key === "ArrowUp") {
+              e.preventDefault();
+              setActive((a) => Math.max(a - 1, 0));
+            } else if (e.key === "Enter") {
+              if (open && active >= 0 && filtered[active]) {
+                e.preventDefault();
+                pick(filtered[active]);
+              } else {
+                setOpen(false);
+                commitCurrent();
+              }
+            } else if (e.key === "Escape") {
               setOpen(false);
-              commitCurrent();
             }
-          } else if (e.key === "Escape") {
-            setOpen(false);
-          }
-        }}
-        placeholder={placeholder}
-        disabled={disabled}
-        autoComplete="off"
-        title={query}
-        className={className}
-      />
+          }}
+          placeholder={placeholder}
+          disabled={disabled}
+          autoComplete="off"
+          title={query}
+          className={className}
+        />
+      )}
+      {wrapWhenIdle && (disabled || !isFocused) && !hasPairs && (
+        // The div above replaces the input while idle, so the form needs
+        // a stand-in to keep submitting `name`'s current value — the
+        // plain input normally does this itself via its own name/value,
+        // but it isn't mounted right now. Only ever one or the other is
+        // in the DOM at a time (same condition as the div), never both.
+        <input type="hidden" form={formId} name={name} value={query} readOnly />
+      )}
       {open &&
         rect &&
         createPortal(
