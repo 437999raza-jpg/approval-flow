@@ -342,6 +342,162 @@ Extraction moved OFF the request path:
 
 ---
 
+## Session log — 2026-08-26 (QBO sync + Suppliers + UI fixes)
+
+A separate long session (user + AI pair), overlapping with the 2026-08-24 work
+above — some of this landed via `git pull` mid-session and merged in cleanly.
+**Migrations 0043–0047 are all APPLIED to the live DB.** Read this before
+touching `syncToQbo`, `Combobox.tsx`, or the invoice list/document-split layout.
+
+### QBO Bill sync — several real bugs found via live retries
+
+No QBO connection exists in local dev, so every fix here was verified by the
+user retrying a real sync on `flow.ufirst.co` and reporting the next error —
+each one was a genuine, different bug, not the same issue recurring:
+
+- **`DetailType` typo**: was sending `AccountBasedExpenseDetail`, QBO expects
+  `AccountBasedExpenseLineDetail` (found by the user).
+- **`AcctNum` isn't queryable** in QBO's API (`where AcctNum = '...'` → error
+  4001). Numbered categories ("5-15450 - HVAC") now resolve against the
+  already-synced `qbo_categories` mirror instead of a live query —
+  `matchCategoryAccount`/`resolveCategoryAccount` in `src/lib/qbo.ts`, refresh-
+  on-miss (once per bill), hard failure (never a guess) if still unresolved.
+- **Sales tax**: do NOT manually post a "Tax" expense/liability line (tried and
+  reverted — migrations 0043/0044 add then drop
+  `qbo_connections.tax_liability_account_id`). QBO calculates and posts tax
+  itself once a line carries a native `TaxCodeRef`. `resolveTaxCode`/
+  `matchTaxCode` resolve a line's selected rate to a QBO tax code via the
+  `qbo_tax_codes` mirror — but **two codes can share a rate** (this org has
+  "H" and "M&E (ON)" both at 13%), so `invoice_line_items.qbo_tax_code_id`
+  (migration 0045) now stores the exact code picked, not just the resolved
+  %. The Tax field's `Combobox` submits the code id as `value` and the rate
+  as a `secondaryValue` (see `secondaryName` prop on `Combobox`) so the box
+  still *displays* "13" while submitting the unambiguous id.
+- **Class and Project were never sent to QBO at all** — `createBill` had no
+  `ClassRef`/`CustomerRef` handling, and `syncToQbo` wasn't even selecting
+  `class`/`project_id` from the line items. Both fixed; Project→QBO Customer
+  id is a direct lookup (`projects.qbo_id`, already stored), not a name match.
+- **Attachments silently never landed**: `attachDocuments`'s multipart upload
+  sent the JSON metadata part as a bare string (defaults to `text/plain`) —
+  QBO can't parse that, drops the file, and still returns 200. Fixed by
+  sending it as a `Blob` typed `application/json`. Also now checks
+  `AttachableResponse[].Fault` per file (QBO can 200 with a partial failure)
+  and treats an attachment failure as a **warning**, not a sync failure — the
+  Bill already exists in QBO by that point, so failing the whole sync would
+  invite a retry that creates a duplicate bill.
+- **Vendor matching was exact-only** and errored on trivial spelling
+  differences (OCR'd "ONYX-FIRE PROTECTION SERVICES INC." vs QBO's
+  "Onyx-Fire Protection Services"). `matchSupplier` now falls back to
+  stripping a trailing business suffix (Inc/LLC/Ltd/Corp/Co/…) from both
+  sides — only resolves if that narrows to exactly one supplier, never
+  guesses between candidates.
+- **`vendor_name_normalized` had a real bug**: the generated-column SQL
+  expression didn't `trim()` after collapsing punctuation, so a name ending
+  in punctuation ("Marsil Mechanical Inc.") produced a value with a trailing
+  space that never matched `normalizeForMatching()` (the JS version, used
+  everywhere else) — a saved supplier rule for such a name silently never
+  applied. Migration 0047 drops and re-adds the column with the fix; found
+  while bulk-seeding supplier defaults, which also surfaced that two
+  `qbo_suppliers` rows can collapse to the same normalized name (e.g. "X
+  Inc" and "X Inc.") — real, separate QBO vendors; only one gets a
+  `supplier_defaults` row, the other inherits it via the shared normalized key.
+- **Bill `DocNumber` was never set** — `createBill` didn't map
+  `invoices.invoice_number` onto it at all; every synced bill showed a blank
+  bill number in QBO regardless of tax.
+- Admin **"Undo sync"** button (next to "Clear error") lets an admin re-push a
+  bill after fixing something — clears Flow's own sync record only, does
+  **not** touch/void the Bill already in QBO (re-syncing without deleting the
+  old one there creates a duplicate — the button says so).
+
+### Settings → Suppliers (new page)
+
+`/settings/suppliers` — one row per synced QBO vendor (Name, invoice count,
+Integration, Category, Product/Service, Class, Tax rate, Currency, Payment
+terms), every field auto-saving on blur like a bill's line items. Suppliers
+are one-way from QBO (never created here); a new one shows up after the next
+"Sync suppliers" and is immediately configurable. This page and the Bill
+panel's "Supplier rules" modal call the **exact same** `saveSupplierDefaults`
+action (now takes `invoiceId: string | null`) against the exact same
+`supplier_defaults` row, so editing either one keeps both in sync by
+construction. `class` and the new `product_service` (migration 0046, plain
+text — no QBO Item/Product-Service mirror exists) are now real supplier
+defaults; `class` used to be deliberately excluded ("a per-bill choice") —
+reversed per an explicit ask, since class drives this org's workflow routing.
+`qbo_suppliers.integration` (migration 0046) is informational only — every
+supplier is QBO today; nothing reads it yet, it's there for whenever a
+Xero/Zoho Books connection exists to pick between.
+
+### `Combobox.tsx` — two real bugs, one intentional new mode
+
+- **Picking an option could save the typed search text instead of the picked
+  value** (e.g. search "elec", click "Electrical", what actually saves is
+  literally `"elec"`). Root cause: for plain-string option lists (Category,
+  Class, Supplier name — no `{value,label}` pairs), the *visible* `<input>`
+  is the field that submits, and `pick()` called `setQuery(...)` then
+  synchronously fired the form submit in the same handler — React batches the
+  state update, so the DOM still held the old text when the form read it.
+  Paired options (Project, Tax) already dodged this via a hidden input
+  written directly by ref, bypassing React's render cycle; the fix extends
+  that same synchronous-DOM-write treatment to the visible input itself via
+  a new `queryInputRef`. **If you find another oddly-truncated saved value
+  anywhere, it's very likely a pre-fix relic — just re-pick it.**
+- **`wrapWhenIdle` prop** (opt-in, default off): Category and Project values
+  used to truncate with "…" when their column narrowed, silently hiding part
+  of the value — same complaint as the Description-clipping bug below, but
+  these are `<input>`-backed (via Combobox) and inputs can't wrap. When
+  `wrapWhenIdle` is set and the field isn't actively focused, it renders the
+  current value as a wrapped, auto-height `<div>` instead of the single-line
+  input; clicking it swaps back to the normal search input. Only Category
+  and Project opt in — every other Combobox in the app is untouched. For
+  plain-string options a hidden stand-in `<input>` carries the submitted
+  value while idle (the real input isn't mounted then).
+
+### Layout: document 50/50 split, scroll fixes
+
+- Opening a document now splits the bill panel to exactly half the available
+  width (floored at 600px so it doesn't get too cramped on a small screen)
+  and **hides the sidebar and invoice list entirely** (not just their usual
+  collapsed rail) via a new `DocumentFocusContext` — both come back exactly
+  as they were on close. `DetailSplit`/`Sidebar`/`CollapsiblePane`.
+- The invoice-list line-item Description box could get clipped when its
+  column narrowed for any reason (the 50/50 split, a manual panel resize) —
+  its auto-resize only re-ran when the *text* changed, not the *width*.
+  Fixed with a `ResizeObserver` on the row.
+- Invoice list scrolling to the top on every click took **two** attempts:
+  `scroll={false}` on the row `Link` wasn't enough — Next.js resets nested
+  scrollable panes on navigation too, not just the window, apparently
+  strongly enough to survive that prop. Fixed the same way
+  `ScrollPreserveForm` already fixed this for Settings' buttons: save
+  `scrollTop` to `sessionStorage` on scroll, forcibly reassert it on every
+  render (now, next frame, +100ms) in `CollapsiblePane`.
+
+### Bill panel: vendor email + QBO vendor link
+
+`invoice.source_email` is genuinely "who emailed this into Flow" (an AP
+inbox, a forwarder) — never the vendor's own email, which was always sitting
+unused in `invoices.extraction.vendor_email` (OCR'd, no dedicated column).
+The Email field under Vendor name now shows/edits that instead, with a
+mailto: link. "Open vendor in QuickBooks Online" sits right under the picked
+vendor name (resolved server-side the same way sync matches suppliers).
+
+### Pending / worth knowing
+
+1. `product_service` and `qbo_suppliers.integration` are stored but not yet
+   used anywhere else (no QBO Item mirror, no second accounting-platform
+   connection) — see their migration comments (0046) before building on them.
+2. The Combobox truncation-save bug (fixed above) may have corrupted
+   Category/Class/vendor-name values saved before the fix — an audit across
+   this org's live data found only the one already-known instance (already
+   corrected by hand), but it's worth a periodic glance if something looks
+   like a truncated search string instead of a real value.
+3. Neither the document 50/50 split nor the Combobox `wrapWhenIdle` mode nor
+   the scroll fixes were click-tested in a live browser — no login
+   credentials were available in that working environment. Verified via
+   `tsc`/`lint`/build + careful reasoning about the exact DOM/layout
+   mechanics only.
+
+---
+
 ## Environment variables
 
 Copy `.env.example` → `.env.local` and fill in:
