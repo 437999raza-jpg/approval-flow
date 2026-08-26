@@ -132,6 +132,13 @@ export function Combobox({
   // synchronous-DOM-write treatment as hiddenRef below.
   const queryInputRef = useRef<HTMLInputElement>(null);
   const committedRef = useRef(defaultValue);
+  // Set right after a pick, so the effect below (which fires once the
+  // autosave round-trip lands and defaultValue catches up to what we just
+  // picked) knows to restore focus to this field if it got knocked away —
+  // e.g. by the page-wide revalidation that autosave triggers. Without
+  // this, a Tab pressed right after clicking an option can land wherever
+  // focus ended up after that re-render instead of on the next field.
+  const justPickedRef = useRef(false);
 
   // The dropdown is portaled to document.body and positioned against the
   // input's live screen coordinates instead of a plain `absolute` child —
@@ -184,6 +191,19 @@ export function Combobox({
     setSelected(defaultValue);
     setQuery(displayOf(defaultValue));
     committedRef.current = defaultValue;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [defaultValue]);
+
+  // Runs whenever the server-confirmed value (defaultValue) changes — which
+  // includes right after this field's own pick round-trips back through a
+  // save + revalidation. Only restores focus when justPickedRef marks that
+  // this specific change is our own, so it never steals focus for an
+  // unrelated field re-rendering elsewhere on the page.
+  useEffect(() => {
+    if (justPickedRef.current) {
+      justPickedRef.current = false;
+      queryInputRef.current?.focus();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [defaultValue]);
 
@@ -294,6 +314,7 @@ export function Combobox({
     setOpen(false);
     if (v !== committedRef.current) {
       committedRef.current = v;
+      justPickedRef.current = true;
       // Same synchronous DOM write as commitCurrent — see above.
       if (hiddenRef.current) hiddenRef.current.value = v;
       else if (queryInputRef.current) queryInputRef.current.value = displayText;

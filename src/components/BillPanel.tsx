@@ -1108,7 +1108,7 @@ function LineItemRow({
   return (
     <div
       ref={rowRef}
-      className={`group grid ${LINE_ITEM_COLS} items-start gap-x-2 border-b border-slate-100 py-0.5`}
+      className={`group grid ${LINE_ITEM_COLS} items-end gap-x-2 border-b border-slate-100 py-0.5`}
     >
       <form
         id={formId}
@@ -1195,7 +1195,7 @@ function LineItemRow({
         className={`${cellCls} text-right tabular-nums`}
         {...blurSave}
       />
-      <div className="flex justify-center pt-1.5">
+      <div className="flex justify-center pb-1.5">
         <input
           form={formId}
           name="linked"
@@ -1207,7 +1207,7 @@ function LineItemRow({
       </div>
       {isNew ? (
         !readOnly && (
-          <div className="flex items-center justify-end gap-1.5 pt-1">
+          <div className="flex items-center justify-end gap-1.5 pb-1">
             <button
               type="button"
               title="Add line"
@@ -1237,7 +1237,7 @@ function LineItemRow({
         )
       ) : (
         !readOnly && (
-          <div className="flex items-center justify-end gap-1.5 pt-1 opacity-0 group-hover:opacity-100">
+          <div className="flex items-center justify-end gap-1.5 pb-1 opacity-0 group-hover:opacity-100">
             {cloneLineItem && (
               <form action={cloneLineItem.bind(null, itemId)}>
                 <SubmitButton title="Clone line" className="text-slate-400 hover:text-blue-600">
