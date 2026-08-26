@@ -49,6 +49,7 @@ export function Combobox({
   minQueryLength = 2,
   secondaryName,
   wrapWhenIdle = false,
+  fillCell = false,
 }: {
   name: string;
   formId: string;
@@ -86,6 +87,14 @@ export function Combobox({
   // default — every other Combobox in the app (Class, Tax, Supplier,
   // workflow rules, …) keeps today's plain single-line input untouched.
   wrapWhenIdle?: boolean;
+  // For a bottom-anchored line-item cell whose row can be much taller than
+  // the field itself (a long Description in the same row): fill the whole
+  // cell height so hovering or clicking ANYWHERE in the column reveals/
+  // activates the field, not just the thin sliver right around the value's
+  // own line once it's pinned to the bottom. Off by default — every other
+  // Combobox (Vendor name, workflow rules, …) sits in a normal-height row
+  // where this wouldn't do anything useful.
+  fillCell?: boolean;
 }) {
   const hasPairs = options.length > 0 && isObjOption(options[0]);
   const pairForValue = (v: string) =>
@@ -324,7 +333,24 @@ export function Combobox({
   }
 
   return (
-    <div ref={boxRef} className="relative">
+    <div
+      ref={boxRef}
+      className={fillCell ? "group/cell relative grid h-full items-end" : "relative"}
+      onClick={
+        fillCell
+          ? (e) => {
+              if (disabled) return;
+              // Only the dead space directly on this wrapper — the actual
+              // input/idle-div (a child) already handles its own click.
+              // With items-end this dead space is everything above the
+              // value's own line once the row is taller than one field.
+              if (e.target !== boxRef.current) return;
+              setIsFocused(true);
+              queryInputRef.current?.focus();
+            }
+          : undefined
+      }
+    >
       {hasPairs && (
         <input
           ref={hiddenRef}

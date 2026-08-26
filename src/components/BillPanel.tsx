@@ -1056,24 +1056,30 @@ function LineItemRow({
   // only tracks descendants of the <form> it's actually inside, so it
   // can't see this submission. Tracked by hand instead.
   const [addPending, setAddPending] = useState(false);
-  const cellCls = "w-full truncate border-b border-transparent bg-transparent px-0 py-1.5 text-xs text-slate-800 hover:border-slate-200 focus:border-blue-500 focus:outline-none disabled:text-slate-400";
+  // group-hover/cell (not plain hover:) — these sit inside a per-field
+  // wrapper (below) that spans the FULL row height, so hovering anywhere
+  // in the column reveals the line, not just the thin sliver right around
+  // the input itself once it's bottom-anchored in a tall row.
+  const cellCls = "w-full truncate border-b border-transparent bg-transparent px-0 py-1.5 text-xs text-slate-800 group-hover/cell:border-slate-200 focus:border-blue-500 focus:outline-none disabled:text-slate-400";
   // Description wraps and grows instead of truncating — PMs need to read
-  // the whole thing, not just what fits on one line. It's capped (below,
-  // see MAX_DESC_HEIGHT) with its own internal scroll past that point —
-  // otherwise an unusually long description makes the whole row (and every
-  // other field in it, bottom-anchored via items-end) grow just as tall,
-  // pushing those fields' hover-to-reveal underlines far enough down that
-  // they're effectively unfindable without scrolling to hunt for them.
-  const descCls = "w-full resize-none overflow-y-auto whitespace-pre-wrap break-words border-b border-transparent bg-transparent px-0 py-1.5 text-xs text-slate-800 hover:border-slate-200 focus:border-blue-500 focus:outline-none disabled:text-slate-400";
-  // ~5 lines — generous for a real description, short enough that no row
-  // in the table can grow past a predictable, on-screen height.
-  const MAX_DESC_HEIGHT = 96;
+  // the whole thing, not just what fits on one line.
+  const descCls = "w-full resize-none overflow-hidden whitespace-pre-wrap break-words border-b border-transparent bg-transparent px-0 py-1.5 text-xs text-slate-800 hover:border-slate-200 focus:border-blue-500 focus:outline-none disabled:text-slate-400";
+  // Wraps the plain Amount <input> the same way Combobox's own fillCell
+  // prop wraps Category/Project/Class/Tax: a nested single-cell grid so
+  // the field (justify-items stretch, the default) still spans the full
+  // column width, but only takes its own natural height and sits at the
+  // bottom (align-items: end) of the wrapper — which itself spans the
+  // full, row-defining height via the outer row's own default stretch.
+  // "group/cell" scopes the hover so it doesn't clash with the row's own
+  // (unnamed) group, used below for the per-row action icons.
+  const cellWrapCls = "group/cell grid h-full items-end";
+  const amountRef = useRef<HTMLInputElement>(null);
 
   const autoResizeDesc = useCallback(() => {
     const el = descRef.current;
     if (!el) return;
     el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, MAX_DESC_HEIGHT)}px`;
+    el.style.height = `${el.scrollHeight}px`;
   }, []);
   // Resize after the grid layout settles (requestAnimationFrame) AND
   // whenever the description changes (extraction, save, edits) — the mount-
@@ -1116,7 +1122,7 @@ function LineItemRow({
   return (
     <div
       ref={rowRef}
-      className={`group grid ${LINE_ITEM_COLS} items-end gap-x-2 border-b border-slate-100 py-0.5`}
+      className={`group grid ${LINE_ITEM_COLS} gap-x-2 border-b border-slate-100 py-0.5`}
     >
       <form
         id={formId}
@@ -1133,6 +1139,7 @@ function LineItemRow({
         className={cellCls}
         disabled={readOnly}
         wrapWhenIdle
+        fillCell
         onCommit={() => {
           if (!isNew && !readOnly) formRef.current?.requestSubmit();
         }}
@@ -1157,6 +1164,7 @@ function LineItemRow({
         className={cellCls}
         disabled={readOnly}
         wrapWhenIdle
+        fillCell
         onCommit={() => {
           if (!isNew && !readOnly) formRef.current?.requestSubmit();
         }}
@@ -1169,6 +1177,7 @@ function LineItemRow({
         placeholder={isNew ? "Search class…" : undefined}
         className={cellCls}
         disabled={readOnly}
+        fillCell
         onCommit={() => {
           if (!isNew && !readOnly) formRef.current?.requestSubmit();
         }}
@@ -1190,20 +1199,30 @@ function LineItemRow({
         disabled={readOnly}
         showValue
         minQueryLength={1}
+        fillCell
         onCommit={() => {
           if (!isNew && !readOnly) formRef.current?.requestSubmit();
         }}
       />
-      <input
-        form={formId}
-        name="amount"
-        type="text"
-        inputMode="decimal"
-        defaultValue={defaults.amount}
-        className={`${cellCls} text-right tabular-nums`}
-        {...blurSave}
-      />
-      <div className="flex justify-center pb-1.5">
+      <div
+        className={cellWrapCls}
+        onClick={(e) => {
+          if (readOnly || e.target !== e.currentTarget) return;
+          amountRef.current?.focus();
+        }}
+      >
+        <input
+          ref={amountRef}
+          form={formId}
+          name="amount"
+          type="text"
+          inputMode="decimal"
+          defaultValue={defaults.amount}
+          className={`${cellCls} text-right tabular-nums`}
+          {...blurSave}
+        />
+      </div>
+      <div className="flex h-full items-end justify-center">
         <input
           form={formId}
           name="linked"
@@ -1215,7 +1234,7 @@ function LineItemRow({
       </div>
       {isNew ? (
         !readOnly && (
-          <div className="flex items-center justify-end gap-1.5 pb-1">
+          <div className="flex h-full items-end justify-end gap-1.5">
             <button
               type="button"
               title="Add line"
@@ -1245,7 +1264,7 @@ function LineItemRow({
         )
       ) : (
         !readOnly && (
-          <div className="flex items-center justify-end gap-1.5 pb-1 opacity-0 group-hover:opacity-100">
+          <div className="flex h-full items-end justify-end gap-1.5 opacity-0 group-hover:opacity-100">
             {cloneLineItem && (
               <form action={cloneLineItem.bind(null, itemId)}>
                 <SubmitButton title="Clone line" className="text-slate-400 hover:text-blue-600">
