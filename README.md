@@ -1266,8 +1266,35 @@ or Extras?"** checkbox in the Instructions section. The reviewer/accountant
 does not. Once an approver ticks it and approves:
 - a note for accounting becomes **required** (the Approve button is disabled
   until one is typed; server-side enforced too),
-- every line item's class is set to **"Extras"** (a real QBO class),
+- every line item **without a class** is set to **"Extras"** (a real QBO
+  class),
+- lines already tagged **Contract** or **Change Orders** keep their tag
+  (see below),
 - the flag is **locked** — no downstream approver can remove it.
+
+### Per-line Contract / Change Order tags (CON / CO)
+
+Every line item in the Bill panel has a **CON / CO toggle** next to the
+class search box:
+
+- **CON** writes the QBO class **"Contract"** — the line is original
+  contract value.
+- **CO** writes the QBO class **"Change Orders"** — the line is extra work
+  beyond the contract.
+- The search box still sets any other class (Extras, HB, Chargeback, …).
+
+The toggle writes the line's `class`, which syncs to QBO as that line's
+`ClassRef` — so the construction fold app can read each line's class back
+out of QBO and tell contract value from change orders (e.g. one line
+$50,000 = CON, the next $10,000 = CO, both electrical). Class is a human
+decision: it **never** comes from the document, and re-extraction preserves
+it (like project) instead of reverting it. If a supplier-default rule sets
+a class, it applies to lines with no class yet.
+
+The two class names are the exact QBO class names Fluid already has
+(`Contract`, `Change Orders`); the constants live at the top of
+`BillPanel.tsx` (`CON_CLASS_NAME` / `CO_CLASS_NAME`) if a client ever uses
+different names.
 
 ### The final sync
 

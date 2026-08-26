@@ -173,10 +173,14 @@ export async function decide(
       const lastStep = orderedSteps[orderedSteps.length - 1]?.step_order ?? 1;
       const isFinalStep = invoice.current_step_order >= lastStep;
       if (hasCosOrExtras) {
+        // Stamp "Extras" on lines WITHOUT a class — never on lines the
+        // team already tagged Contract/Change Order (the fold app reads
+        // those per-line classes out of QBO).
         await supabase
           .from("invoice_line_items")
           .update({ class: "Extras" })
-          .eq("invoice_id", invoiceId);
+          .eq("invoice_id", invoiceId)
+          .not("class", "in", '("Contract","Change Orders")');
         await supabase
           .from("invoices")
           .update({ has_cos_or_extras: true })
@@ -236,15 +240,18 @@ export async function decide(
     const isFinalStep = invoice.current_step_order >= lastStep;
 
     // CO/Extras rule: when the approver (usually the PM) flags the invoice
-    // as having COs or Extras, every line item's class is set to "Extras"
-    // (a real QBO class) so they're separated in QBO reports, and the flag
-    // is persisted on the invoice — LOCKED from here on, no later approver
-    // can remove it.
+    // as having COs or Extras, every line item WITHOUT a class is set to
+    // "Extras" (a real QBO class) so they're separated in QBO reports, and
+    // the flag is persisted on the invoice — LOCKED from here on, no later
+    // approver can remove it. Lines already tagged Contract/Change Order
+    // keep their tag — the fold app reads those per-line classes out of
+    // QBO to separate contract value from change orders.
     if (hasCosOrExtras) {
       await supabase
         .from("invoice_line_items")
         .update({ class: "Extras" })
-        .eq("invoice_id", invoiceId);
+        .eq("invoice_id", invoiceId)
+        .not("class", "in", '("Contract","Change Orders")');
       await supabase
         .from("invoices")
         .update({ has_cos_or_extras: true })
@@ -710,13 +717,22 @@ export async function saveSupplierDefaults(
       const lineItemUpdate: Database["public"]["Tables"]["invoice_line_items"]["Update"] =
         {};
       if (values.category) lineItemUpdate.category = values.category;
-      if (values.class) lineItemUpdate.class = values.class;
       if (values.tax_rate != null) lineItemUpdate.tax_rate = values.tax_rate;
       if (Object.keys(lineItemUpdate).length > 0) {
         await supabase
           .from("invoice_line_items")
           .update(lineItemUpdate)
           .eq("invoice_id", inv.id);
+      }
+      // A rule's class applies only to lines that don't already have one —
+      // a per-line Contract/Change Order tag (or any other class) is a
+      // human decision and must never be overwritten by a bulk rule.
+      if (values.class) {
+        await supabase
+          .from("invoice_line_items")
+          .update({ class: values.class })
+          .eq("invoice_id", inv.id)
+          .is("class", null);
       }
     }
   }
@@ -1503,14 +1519,20 @@ async function reExtractInvoiceCore(
   // PROJECT is a human decision: it may have been auto-filled from the PO
   // number at ingest, but once the user changes it, re-extraction must
   // NEVER revert it. Preserve each existing line's project_id by line
-  // order onto the freshly-extracted lines.
+  // order onto the freshly-extracted lines. CLASS is the same: the
+  // per-line Contract/Change Order tag is a human decision too, so
+  // re-extraction keeps it (only lines that had no class fall back to the
+  // CO/Extras "Extras" stamp below).
   const { data: existingLines } = await supabase
     .from("invoice_line_items")
-    .select("line_order, project_id")
+    .select("line_order, project_id, class")
     .eq("invoice_id", invoiceId)
     .order("line_order", { ascending: true });
   const projectByOrder = new Map(
     (existingLines ?? []).map((l) => [l.line_order, l.project_id])
+  );
+  const classByOrder = new Map(
+    (existingLines ?? []).map((l) => [l.line_order, l.class])
   );
 
   await supabase
@@ -1520,9 +1542,11 @@ async function reExtractInvoiceCore(
   if (extracted.line_items.length > 0) {
     // Class NEVER comes from the document (the org's classes are totally
     // different). The only exception: an invoice already flagged as
-    // CO/Extras keeps its line class "Extras" (that flag is locked once
-    // decided, so the class stays with it through re-extraction).
-    const lineClass = invoice.has_cos_or_extras === true ? "Extras" : null;
+    // CO/Extras gives its untagged lines the class "Extras" (that flag is
+    // locked once decided, so the class stays with it through
+    // re-extraction) — lines the user already tagged Contract/Change
+    // Order keep their tag via classByOrder above.
+    const fallbackClass = invoice.has_cos_or_extras === true ? "Extras" : null;
     // Org default tax is a specific CODE (H 13%) — carry it onto lines whose
     // rate matches the default, so the sync doesn't have to guess between
     // duplicate-rate codes.
@@ -1548,7 +1572,7 @@ async function reExtractInvoiceCore(
             ? orgDefault.default_tax_code_id
             : null,
         category: holdbackCategoryFor(li) ?? li.category,
-        class: lineClass,
+        class: classByOrder.get(i + 1) ?? fallbackClass,
         project_id: projectByOrder.get(i + 1) ?? null,
         line_order: i + 1,
       }))

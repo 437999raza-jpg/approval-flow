@@ -94,8 +94,20 @@ const ghostLabel = "block text-[10px] font-semibold uppercase tracking-wide text
 // Project once the panel narrows (e.g. splitting 50/50 with an open
 // document), wrapping into a tall, cramped column. It now gets clearly
 // the largest share of the three flexible columns.
+//
+// Class now carries the per-line CON/CO toggle (Contract vs Change
+// Orders) plus the full class search, so it needs real room: it's a
+// fixed track (like Tax/Amount), widened from 76px to hold two toggle
+// buttons and the search box side by side.
 const LINE_ITEM_COLS =
-  "grid-cols-[minmax(0,0.85fr)_minmax(0,1.5fr)_minmax(0,1.15fr)_76px_52px_104px_44px_42px]";
+  "grid-cols-[minmax(0,0.85fr)_minmax(0,1.5fr)_minmax(0,1.15fr)_118px_52px_104px_44px_42px]";
+
+// The exact QBO class names the CON/CO toggle writes (must exist in the
+// org's qbo_classes mirror — Fluid's QBO has "Contract" and "Change
+// Orders"). The construction fold app reads these per-line class names
+// back out of QBO to separate contract value from change orders.
+const CON_CLASS_NAME = "Contract";
+const CO_CLASS_NAME = "Change Orders";
 
 // ApprovalMax-style "Bill" panel, styled as a document: every data item is
 // editable in place and maps to QBO on sync (vendor/bill number/dates/
@@ -1056,6 +1068,29 @@ function LineItemRow({
   // only tracks descendants of the <form> it's actually inside, so it
   // can't see this submission. Tracked by hand instead.
   const [addPending, setAddPending] = useState(false);
+  // The per-line class: one value shared by the CON/CO toggle buttons and
+  // the class search box, carried into the hidden form by a dedicated
+  // hidden input (the search box submits under a different name so the
+  // two controls never fight over the same field). Synced back when the
+  // server-confirmed value changes (e.g. the CO/Extras rule stamps
+  // "Extras" on lines at approval).
+  const [classValue, setClassValue] = useState(defaults.class);
+  const classHiddenRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    setClassValue(defaults.class);
+  }, [defaults.class]);
+  // Set the line's class and autosave (existing rows) / stage it (the new
+  // row's Add button submits the hidden form anyway). The hidden input's
+  // DOM value is written SYNCHRONOUSLY, exactly like the Combobox's own
+  // commit logic — the form submits right after this call, before React
+  // has re-rendered, so the DOM field must already hold the new value or
+  // the old class gets saved.
+  const commitClass = (value: string) => {
+    if (readOnly) return;
+    setClassValue(value);
+    if (classHiddenRef.current) classHiddenRef.current.value = value;
+    if (!isNew) formRef.current?.requestSubmit();
+  };
   // group-hover/cell (not plain hover:) — these sit inside a per-field
   // wrapper (below) that spans the FULL row height, so hovering anywhere
   // in the column reveals the line, not just the thin sliver right around
@@ -1169,19 +1204,59 @@ function LineItemRow({
           if (!isNew && !readOnly) formRef.current?.requestSubmit();
         }}
       />
-      <Combobox
-        formId={formId}
-        name="class"
-        options={qboClasses ?? []}
-        defaultValue={defaults.class}
-        placeholder={isNew ? "Search class…" : undefined}
-        className={cellCls}
-        disabled={readOnly}
-        fillCell
-        onCommit={() => {
-          if (!isNew && !readOnly) formRef.current?.requestSubmit();
-        }}
-      />
+      {/* Class: the CON/CO toggle writes the two real QBO classes the
+          construction fold app reads back ("Contract" / "Change Orders");
+          the search box handles every other class. The value lives in one
+          hidden form field so the toggle, the search box, and the server
+          all agree on a single `class` per line. */}
+      <div className="flex h-full items-end gap-1">
+        <button
+          type="button"
+          disabled={readOnly}
+          title="Contract — original contract value (CON)"
+          onClick={() => commitClass(CON_CLASS_NAME)}
+          className={`flex-none rounded border px-1 py-0.5 text-[10px] font-semibold leading-none transition-colors ${
+            classValue === CON_CLASS_NAME
+              ? "border-blue-600 bg-blue-600 text-white"
+              : "border-slate-300 text-slate-500 hover:border-blue-400 hover:text-blue-600"
+          } disabled:cursor-not-allowed disabled:opacity-50`}
+        >
+          CON
+        </button>
+        <button
+          type="button"
+          disabled={readOnly}
+          title="Change Order — extra work beyond contract (CO)"
+          onClick={() => commitClass(CO_CLASS_NAME)}
+          className={`flex-none rounded border px-1 py-0.5 text-[10px] font-semibold leading-none transition-colors ${
+            classValue === CO_CLASS_NAME
+              ? "border-amber-500 bg-amber-500 text-white"
+              : "border-slate-300 text-slate-500 hover:border-amber-400 hover:text-amber-600"
+          } disabled:cursor-not-allowed disabled:opacity-50`}
+        >
+          CO
+        </button>
+        <div className="group/cell min-w-0 flex-1">
+          <Combobox
+            formId={formId}
+            name="class_search"
+            options={qboClasses ?? []}
+            defaultValue={defaults.class}
+            placeholder={isNew ? "Search class…" : undefined}
+            className={cellCls}
+            disabled={readOnly}
+            onCommit={commitClass}
+          />
+        </div>
+        <input
+          ref={classHiddenRef}
+          type="hidden"
+          form={formId}
+          name="class"
+          value={classValue}
+          readOnly
+        />
+      </div>
       <Combobox
         formId={formId}
         name={qboTaxUsesCodes ? "qbo_tax_code_id" : "tax_rate"}
