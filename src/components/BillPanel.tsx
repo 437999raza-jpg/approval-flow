@@ -88,8 +88,14 @@ const ghostLabel = "block text-[10px] font-semibold uppercase tracking-wide text
 // and look mostly empty; Amount is a currency figure ("-165,000.00") that
 // needs real room and was getting squeezed. Class/Tax are now small fixed
 // widths instead of flexible shares, and that space moved to Amount.
+//
+// Description is free text (wraps rather than truncates) and the one
+// people actually read — it was getting squeezed as badly as Category/
+// Project once the panel narrows (e.g. splitting 50/50 with an open
+// document), wrapping into a tall, cramped column. It now gets clearly
+// the largest share of the three flexible columns.
 const LINE_ITEM_COLS =
-  "grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)_minmax(0,1.3fr)_88px_52px_104px_44px_42px]";
+  "grid-cols-[minmax(0,0.85fr)_minmax(0,1.5fr)_minmax(0,1.15fr)_76px_52px_104px_44px_42px]";
 
 // ApprovalMax-style "Bill" panel, styled as a document: every data item is
 // editable in place and maps to QBO on sync (vendor/bill number/dates/

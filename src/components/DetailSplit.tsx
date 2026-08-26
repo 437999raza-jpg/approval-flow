@@ -134,10 +134,15 @@ export function DetailSplit({
   // sidebar and invoice list have just hidden (see setFocused below), so
   // this pane's own width has grown to the full screen by the time this
   // runs (useLayoutEffect fires after that DOM update, before paint, so
-  // there's no visible flash of the old width first).
+  // there's no visible flash of the old width first). Floored at 600px —
+  // an exact half on a smaller/laptop screen was squeezing the bill's
+  // line-items table (Description especially) down to an unreadably
+  // narrow, cramped column. Still a real drag handle afterward if a
+  // narrower bill is genuinely wanted.
   useLayoutEffect(() => {
     if (showDoc && outerRef.current) {
-      setBillW(Math.round(outerRef.current.getBoundingClientRect().width / 2));
+      const total = outerRef.current.getBoundingClientRect().width;
+      setBillW(Math.max(600, Math.round(total / 2)));
     }
   }, [showDoc]);
 
