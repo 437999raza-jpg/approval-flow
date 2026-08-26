@@ -1141,6 +1141,7 @@ export default async function DashboardPage({
                   )}
                   <Link
                     href={`/dashboard/${invoice.id}${qs}`}
+                    scroll={false}
                     className={clsx(
                       "block border-b border-slate-100 px-4 py-3",
                       duplicateInvoiceIds.has(invoice.id) && "border-l-2 border-l-orange-300",
