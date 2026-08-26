@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { ResizeHandle } from "./ResizeHandle";
 import { useDocumentFocus } from "./DocumentFocusContext";
 
@@ -19,6 +19,32 @@ export function CollapsiblePane({
   const [open, setOpen] = useState(defaultOpen);
   const [width, setWidth] = useState(320);
   const { focused: docFocused } = useDocumentFocus();
+  const scrollRef = useRef<HTMLDivElement>(null);
+  // Clicking an invoice is a navigation, and Next.js scrolls navigations
+  // back to the top — not just the window, this nested pane too (the
+  // same fight ScrollPreserveForm already won for Settings' buttons).
+  // scroll={false} on the invoice Link didn't fully stop it here, so this
+  // actively re-applies the saved position instead of trusting Next not
+  // to touch it. Keyed by title so a second pane using this component
+  // elsewhere wouldn't collide.
+  const scrollKey = `af-pane-scroll:${title}`;
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const saved = sessionStorage.getItem(scrollKey);
+    if (saved == null) return;
+    const target = Number(saved);
+    const restore = () => {
+      if (el.scrollTop !== target) el.scrollTop = target;
+    };
+    restore();
+    const raf = requestAnimationFrame(restore);
+    const timeout = window.setTimeout(restore, 100);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.clearTimeout(timeout);
+    };
+  });
 
   // A document open for the 50/50 split takes the whole screen — not even
   // the collapsed strip stays. open/width are untouched, so whatever state
@@ -80,7 +106,13 @@ export function CollapsiblePane({
             </svg>
           </button>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
+        <div
+          ref={scrollRef}
+          onScroll={(e) => sessionStorage.setItem(scrollKey, String(e.currentTarget.scrollTop))}
+          className="min-h-0 flex-1 overflow-y-auto"
+        >
+          {children}
+        </div>
       </div>
       <ResizeHandle
         onDrag={(dx) => setWidth((w) => Math.min(500, Math.max(200, w + dx)))}
