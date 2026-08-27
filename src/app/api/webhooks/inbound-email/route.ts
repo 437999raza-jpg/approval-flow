@@ -8,6 +8,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { InvoiceIngestError } from "@/lib/invoices";
 import { ingestInvoiceFile } from "@/lib/invoice-ingest";
 import { mergeDocuments, imageDimensions } from "@/lib/merge-documents";
+import { recordUsageEvent } from "@/lib/usage";
 import { enqueueIngestJob } from "@/lib/ingest-queue";
 import { INVOICES_TAG } from "@/lib/org-cache";
 
@@ -153,6 +154,14 @@ export async function POST(request: Request) {
         type: contentType || "application/octet-stream",
         bytes,
       });
+    }
+
+    // Usage billing: one event per accepted document (signature images and
+    // non-PDF files were already skipped above). Recorded NOW — at
+    // acceptance — never at retry time, so a document that fails and gets
+    // re-queued still counts exactly once. Best-effort.
+    for (const doc of documents) {
+      await recordUsageEvent(supabase, org.id, doc.name, "email");
     }
 
     // Subject code convention (PDF count FIRST, invoice count SECOND):

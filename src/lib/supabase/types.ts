@@ -46,6 +46,7 @@ export interface Database {
           inbound_email_local: string | null;
           default_tax_rate: number | null;
           default_tax_code_id: string | null;
+          usage_rate_usd: number;
           created_at: string;
         };
         Insert: Partial<
@@ -692,6 +693,22 @@ export interface Database {
         > & { organization_id: string; filename: string; status: string };
         Update: Partial<
           Database["public"]["Tables"]["upload_log"]["Row"]
+        >;
+        Relationships: [];
+      };
+      usage_events: {
+        Row: {
+          id: string;
+          organization_id: string;
+          document_name: string;
+          source: "email" | "manual";
+          created_at: string;
+        };
+        Insert: Partial<
+          Database["public"]["Tables"]["usage_events"]["Row"]
+        > & { organization_id: string; document_name: string };
+        Update: Partial<
+          Database["public"]["Tables"]["usage_events"]["Row"]
         >;
         Relationships: [];
       };

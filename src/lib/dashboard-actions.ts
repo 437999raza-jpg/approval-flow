@@ -1999,6 +1999,50 @@ export async function saveDefaultTaxRate(formData: FormData) {
   );
 }
 
+// Flow's usage billing: the per-org charge per document processed, in USD
+// (default $0.15). Admin only; returned as a result object so the Billing
+// page can show inline feedback without navigating.
+export async function saveUsageRate(
+  formData: FormData
+): Promise<{ ok: boolean; error?: string }> {
+
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
+  const org = await getCurrentOrg(supabase);
+  if (!org || org.role !== "admin") {
+    return { ok: false, error: "Only admins can change the usage rate." };
+  }
+
+  const raw = String(formData.get("usage_rate_usd") ?? "").trim();
+  const rate = Number(raw);
+  if (!Number.isFinite(rate) || rate <= 0 || rate > 1000) {
+    return { ok: false, error: "Enter a positive USD amount (e.g. 0.15)." };
+  }
+
+  const { error: updateError } = await supabase
+    .from("organizations")
+    .update({ usage_rate_usd: Math.round(rate * 100) / 100 })
+    .eq("id", org.id);
+  if (updateError) {
+    console.error("saveUsageRate failed:", updateError);
+    return { ok: false, error: "Could not save the rate — try again." };
+  }
+
+  await supabase.from("audit_log").insert({
+    organization_id: org.id,
+    actor_id: user.id,
+    action: "org.usage_rate_saved",
+    metadata: { usage_rate_usd: rate },
+  });
+
+  revalidatePath("/billing");
+  return { ok: true };
+}
+
 
 // Set (or clear) the org's friendly inbound-email local part — the
 // ApprovalMax/Dext model: clients email invoices to

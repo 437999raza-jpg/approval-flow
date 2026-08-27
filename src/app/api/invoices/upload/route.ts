@@ -13,6 +13,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentOrg } from "@/lib/current-org";
 import { enqueueIngestJob } from "@/lib/ingest-queue";
+import { recordUsageEvent } from "@/lib/usage";
 import { INVOICES_TAG } from "@/lib/org-cache";
 
 export async function POST(request: Request) {
@@ -43,6 +44,10 @@ export async function POST(request: Request) {
   }
 
   const bytes = new Uint8Array(await file.arrayBuffer());
+
+  // Usage billing: count the document once, at acceptance (the queue worker
+  // may retry it, but this file was still one processed document).
+  await recordUsageEvent(supabase, org.id, file.name, "manual");
 
   // Record the upload immediately so the queue shows it right away.
   const { data: logRow, error: logError } = await supabase

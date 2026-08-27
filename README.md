@@ -1176,11 +1176,25 @@ anything links to the old URL shape.
 
 ---
 
+## Billing & usage
+
+`/billing` — Flow's own usage billing: how many documents each client org
+has processed, at the org's per-document rate in USD (default **$0.15**,
+editable by admins). This is **tracking only** — no payment processor; the
+invoice is sent to the client manually.
+
+- One `usage_events` row per document accepted into the pipeline: an
+  inbound-email attachment (after the signature-image filter) or a manual
+  upload. Recorded at **acceptance**, never at retry time, so a document
+  that fails and gets re-queued still counts exactly once (migration 0061).
+- The Billing page shows the total documents processed, the suggested
+  charge (count × rate), a by-month rollup, and the recent documents list.
+  Any org member can view; only admins can change the rate.
+
 ## Settings
 
 `/settings` (member management is admin-only; everyone can edit their own
 name/photo):
-
 - **My profile** — display name, photo upload (`avatars` bucket, 0016).
 - **Members** — a real table (avatar, name, email, role, status, 2FA —
   genuinely read from Supabase's enrolled-factors data, not a placeholder),
