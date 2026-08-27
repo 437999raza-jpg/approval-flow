@@ -13,7 +13,7 @@ import {
 import { selectWorkflowForInvoice } from "@/lib/workflow-routing";
 import { computeLineItemTotals } from "@/lib/invoice-totals";
 import { normalizeForMatching } from "@/lib/matching";
-import { holdbackCategoryFor } from "@/lib/invoices";
+import { holdbackCategoryFor, getSupplierDefaults, taxCodeIdFor } from "@/lib/invoices";
 import {
   effectiveApproversForStep,
   stepDecisionState,
@@ -1687,7 +1687,7 @@ async function reExtractInvoiceCore(
 ): Promise<boolean> {
   const { data: invoice } = await supabase
     .from("invoices")
-    .select("id, organization_id, file_path, file_name, has_cos_or_extras")
+    .select("id, organization_id, file_path, file_name, has_cos_or_extras, vendor_name")
     .eq("id", invoiceId)
     .single();
   if (!invoice) return false;
@@ -1766,35 +1766,46 @@ async function reExtractInvoiceCore(
     // re-extraction) — lines the user already tagged Contract/Change
     // Order keep their tag via classByOrder above.
     const fallbackClass = invoice.has_cos_or_extras === true ? "Extras" : null;
-    // Org default tax is a specific CODE (H 13%) — carry it onto lines whose
-    // rate matches the default, so the sync doesn't have to guess between
-    // duplicate-rate codes.
+    // Category/tax/product-service are the SAME "supplier rule wins" fields
+    // as at initial ingestion (see finalLineItems in invoices.ts) — a
+    // vendor's saved rule is the locked, authoritative value, so a fresh
+    // OCR guess must never silently replace it on re-extraction. Unlike
+    // class/project (genuine per-line human calls with no rule to fall
+    // back on), there's no "preserve what was already on this line"
+    // treatment needed here: the supplier rule already IS that persistent
+    // source of truth, consulted fresh every time.
+    const supplierDefaults = await getSupplierDefaults(
+      supabase,
+      invoice.organization_id,
+      invoice.vendor_name
+    );
     const { data: orgDefault } = await supabase
       .from("organizations")
       .select("default_tax_rate, default_tax_code_id")
       .eq("id", invoice.organization_id)
       .single();
+    const orgDefaultTaxRate = orgDefault?.default_tax_rate ?? null;
+    const orgDefaultTaxCodeId = orgDefault?.default_tax_code_id ?? null;
     await supabase.from("invoice_line_items").insert(
-      extracted.line_items.map((li, i) => ({
-        invoice_id: invoiceId,
-        description: li.description,
-        amount:
-          holdbackCategoryFor(li) && (li.amount ?? 0) > 0
-            ? -(li.amount ?? 0)
-            : li.amount,
-        tax_rate: li.tax_rate,
-        qbo_tax_code_id:
-          orgDefault?.default_tax_code_id != null &&
-          li.tax_rate != null &&
-          orgDefault.default_tax_rate != null &&
-          Math.abs(li.tax_rate - orgDefault.default_tax_rate) < 0.005
-            ? orgDefault.default_tax_code_id
-            : null,
-        category: holdbackCategoryFor(li) ?? li.category,
-        class: classByOrder.get(i + 1) ?? fallbackClass,
-        project_id: projectByOrder.get(i + 1) ?? null,
-        line_order: i + 1,
-      }))
+      extracted.line_items.map((li, i) => {
+        const appliedRate =
+          supplierDefaults?.tax_rate ?? orgDefaultTaxRate ?? li.tax_rate;
+        return {
+          invoice_id: invoiceId,
+          description: li.description,
+          amount:
+            holdbackCategoryFor(li) && (li.amount ?? 0) > 0
+              ? -(li.amount ?? 0)
+              : li.amount,
+          tax_rate: appliedRate,
+          qbo_tax_code_id: taxCodeIdFor(appliedRate, orgDefaultTaxRate, orgDefaultTaxCodeId),
+          category: holdbackCategoryFor(li) ?? supplierDefaults?.category ?? li.category,
+          product_service: supplierDefaults?.product_service ?? null,
+          class: classByOrder.get(i + 1) ?? fallbackClass,
+          project_id: projectByOrder.get(i + 1) ?? null,
+          line_order: i + 1,
+        };
+      })
     );
   }
 

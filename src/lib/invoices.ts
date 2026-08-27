@@ -49,7 +49,7 @@ function isEmptyExtraction(extracted: {
   );
 }
 
-interface SupplierDefaults {
+export interface SupplierDefaults {
   category: string | null;
   class: string | null;
   product_service: string | null;
@@ -62,7 +62,7 @@ interface SupplierDefaults {
 // Dext/ApprovalMax-style supplier rules, matched by normalized (trim+lower)
 // vendor name — there's no first-class Supplier entity yet, so this is a
 // pragmatic v1. Configured via the "Supplier rules" modal on the Bill panel.
-async function getSupplierDefaults(
+export async function getSupplierDefaults(
   supabase: SupabaseClient<Database>,
   organizationId: string,
   vendorName: string | null
@@ -91,7 +91,7 @@ function addDays(dateStr: string, days: number): string {
 // rate means. Only an applied rate that differs from the org default has no
 // known code and resolves to null here, left for sync-time rate matching
 // (resolveTaxCode/matchTaxCode in qbo.ts) to resolve or fail loudly on.
-function taxCodeIdFor(
+export function taxCodeIdFor(
   appliedRate: number | null | undefined,
   orgDefaultTaxRate: number | null,
   orgDefaultTaxCodeId: string | null
