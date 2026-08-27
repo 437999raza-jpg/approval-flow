@@ -1217,7 +1217,7 @@ function LineItemRow({
           the search box handles every other class. The value lives in one
           hidden form field so the toggle, the search box, and the server
           all agree on a single `class` per line. */}
-      <div className="flex h-full items-end gap-1">
+      <div className="flex h-full items-end gap-1 pb-1.5">
         <button
           type="button"
           disabled={readOnly}
@@ -1324,7 +1324,7 @@ function LineItemRow({
           {...blurSave}
         />
       </div>
-      <div className="flex h-full items-end justify-center">
+      <div className="flex h-full items-end justify-center pb-1.5">
         <input
           form={formId}
           name="linked"
@@ -1336,7 +1336,7 @@ function LineItemRow({
       </div>
       {isNew ? (
         !readOnly && (
-          <div className="flex h-full items-end justify-end gap-1.5">
+          <div className="flex h-full items-end justify-end gap-1.5 pb-1.5">
             <button
               type="button"
               title="Add line"
@@ -1366,7 +1366,7 @@ function LineItemRow({
         )
       ) : (
         !readOnly && (
-          <div className="flex h-full items-end justify-end gap-1.5 opacity-0 group-hover:opacity-100">
+          <div className="flex h-full items-end justify-end gap-1.5 pb-1.5 opacity-0 group-hover:opacity-100">
             {cloneLineItem && (
               <form action={cloneLineItem.bind(null, itemId)}>
                 <SubmitButton title="Clone line" className="text-slate-400 hover:text-blue-600">
