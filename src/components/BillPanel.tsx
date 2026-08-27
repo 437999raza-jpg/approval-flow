@@ -1486,23 +1486,37 @@ function LineItemRow({
             // fires), so a typed formula is already resolved to a plain
             // number by the time Add reads the form.
             const raw = el.value.trim();
-            // A leading "=" is accepted but not required (QBO-style: just
-            // type "10+10") — only reached once a PLAIN number parse has
-            // already failed, so an ordinary amount like "-165,000.00"
-            // never gets misread as an expression.
-            if (raw && !Number.isFinite(Number(raw.replace(/,/g, "")))) {
-              const expr = raw.startsWith("=") ? raw.slice(1) : raw;
-              const result = evaluateFormula(expr);
-              if (result == null) {
-                // Not a valid number or a valid expression — leave the
-                // text as-is (so the mistake is visible) and don't submit
-                // it; saving it would either fail numeric validation
-                // downstream or, worse, be silently coerced to something
-                // the user never typed.
-                return;
+            if (raw) {
+              const plain = Number(raw.replace(/,/g, ""));
+              let finalValue: number;
+              if (Number.isFinite(plain)) {
+                finalValue = plain;
+              } else {
+                // A leading "=" is accepted but not required (QBO-style:
+                // just type "10+10") — only reached once a PLAIN number
+                // parse has already failed, so an ordinary amount like
+                // "-165,000.00" never gets misread as an expression.
+                const expr = raw.startsWith("=") ? raw.slice(1) : raw;
+                const result = evaluateFormula(expr);
+                if (result == null) {
+                  // Not a valid number or a valid expression — leave the
+                  // text as-is (so the mistake is visible) and don't
+                  // submit it; saving it would either fail numeric
+                  // validation downstream or, worse, be silently coerced
+                  // to something the user never typed.
+                  return;
+                }
+                finalValue = result;
               }
-              el.value = result.toFixed(2);
-              if (!isNew) onAmountChange?.(result);
+              // Reformat immediately (comma thousands + 2 decimals, same
+              // as num2's display elsewhere) instead of waiting for the
+              // save + revalidate round trip to bring back the
+              // server-formatted value.
+              el.value = finalValue.toLocaleString(undefined, {
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 2,
+              });
+              if (!isNew) onAmountChange?.(finalValue);
             }
             if (!isNew) formRef.current?.requestSubmit();
           }}
