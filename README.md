@@ -791,20 +791,21 @@ them.
 
 **Subject codes (how the office tells the app what to do):** put the code at
 the very START of the subject when forwarding — **PDF count FIRST, invoice
-count SECOND**. Brackets are optional: `31 FW: …` works exactly like
-`[31] FW: …`. No code = each PDF is its own invoice (the default — never
-merged).
+count SECOND**. **Brackets are REQUIRED** — `[31] FW: …`, never a bare
+`31`. A bare number is never read as a code, so subjects that start with a
+real number (invoice # like `26-2403`, amounts, dates) can't be misrouted.
+No code = each PDF is its own invoice (the default — never merged).
 
 | Code | Meaning | Action |
 |---|---|---|
 | *(no code)* | Each PDF = its own invoice | Each file → its own invoice |
-| `X1` e.g. `31`, `21` | **X** PDFs = **1** invoice (invoice + backup + certificate) | Combine all into one invoice |
-| `1N` e.g. `13`, `16` | 1 PDF containing **N** invoices | Force split review (confirm page ranges) |
-| `NN` e.g. `22`, `33` | **N** PDFs = **N** invoices | Each PDF its own invoice (same as no code) |
-| `NM` | **N** PDFs, each containing multiple invoices | Every PDF goes to split review |
+| `[X1]` e.g. `[31]`, `[21]` | **X** PDFs = **1** invoice (invoice + backup + certificate) | Combine all into one invoice |
+| `[1N]` e.g. `[13]`, `[16]` | 1 PDF containing **N** invoices | Force split review (confirm page ranges) |
+| `[NN]` e.g. `[22]`, `[33]` | **N** PDFs = **N** invoices | Each PDF its own invoice (same as no code) |
+| `[NM]` | **N** PDFs, each containing multiple invoices | Every PDF goes to split review |
 
-Examples: `31 FW: Invoice 26-2400` → combine three attachments into one
-invoice · `13 FW: Draws` → one PDF with three invoices → split review.
+Examples: `[31] FW: Invoice 26-2400` → combine three attachments into one
+invoice · `[13] FW: Draws` → one PDF with three invoices → split review.
 Emails are processed immediately on arrival (inline in the webhook — no
 browser needed); persistent failures are queued for retry and stay
 Reprocessable from the Queue page.

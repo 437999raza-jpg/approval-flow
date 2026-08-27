@@ -171,11 +171,14 @@ export async function POST(request: Request) {
       await recordUsageEvent(supabase, org.id, doc.name, "email");
     }
 
-    // Subject code convention (PDF count FIRST, invoice count SECOND):
-    //   31  → 3 PDFs, 1 invoice  → combine into one
-    //   13  → 1 PDF, 3 invoices  → force split review
-    //   22  → 2 PDFs, 2 invoices → each PDF its own invoice
-    //   NM  → N PDFs, multiple   → every PDF goes to split review
+    // Subject code convention (PDF count FIRST, invoice count SECOND).
+    // Brackets are REQUIRED — a bare number is never read as a code, so a
+    // subject that starts with a real number (invoice #, amount, date)
+    // can't be misrouted:
+    //   [31] → 3 PDFs, 1 invoice  → combine into one
+    //   [13] → 1 PDF, 3 invoices  → force split review
+    //   [22] → 2 PDFs, 2 invoices → each PDF its own invoice
+    //   [NM] → N PDFs, multiple   → every PDF goes to split review
     //   none → each PDF is its OWN invoice (never merge)
     // The code only decides; the attachments are always processed inline.
     const code = parseSubjectCode(subject);
@@ -457,19 +460,21 @@ function isLikelySignatureImage(name: string, bytes: Uint8Array): boolean {
 }
 
 // Subject-code convention (office stamps it at the START of the subject).
-// Brackets are optional — "31 Fw: ..." works exactly like "[31] Fw: ..."
-// (a bare code is only read when the subject STARTS with it, so "FW: ..."
-// and normal invoice subjects are never misread). PDF count FIRST, invoice
-// count SECOND:
-//   31 / [31] → 3 PDFs, 1 invoice  → combine all into one
-//   13 / [13] → 1 PDF, 3 invoices  → force split review
-//   22 / [22] → 2 PDFs, 2 invoices → each PDF its own invoice (default)
-//   NM / [NM] → N PDFs, multiple   → every PDF goes to split review
+// BRACKETS ARE REQUIRED — the code must be "[31]", "[13]", "[NM]", etc.
+// A bare "31" is NOT read as a code: subjects frequently start with real
+// numbers (invoice numbers like "26-2403", amounts, dates), and treating
+// any leading number pair as a code would misroute those emails. Only an
+// explicit bracketed code opts into merge/split behaviour. PDF count
+// FIRST, invoice count SECOND:
+//   [31] → 3 PDFs, 1 invoice  → combine all into one
+//   [13] → 1 PDF, 3 invoices  → force split review
+//   [22] → 2 PDFs, 2 invoices → each PDF its own invoice (default)
+//   [NM] → N PDFs, multiple   → every PDF goes to split review
 // No code → each PDF is its own invoice.
 function parseSubjectCode(
   subject: string
 ): { kind: "merge" | "split" | "none"; x: number; y: number | "M" } | null {
-  const m = subject.match(/^\s*\[?(\d+)(M|\d+)\]?\s*/i);
+  const m = subject.match(/^\s*\[(\d+)(M|\d+)\]\s*/i);
   if (!m) return null;
   const x = Number(m[1]);
   const yRaw = m[2].toUpperCase();
