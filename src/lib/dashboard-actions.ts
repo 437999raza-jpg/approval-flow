@@ -716,7 +716,18 @@ export async function saveSupplierDefaults(
       const lineItemUpdate: Database["public"]["Tables"]["invoice_line_items"]["Update"] =
         {};
       if (values.category) lineItemUpdate.category = values.category;
-      if (values.tax_rate != null) lineItemUpdate.tax_rate = values.tax_rate;
+      if (values.tax_rate != null) {
+        lineItemUpdate.tax_rate = values.tax_rate;
+        // Keep qbo_tax_code_id in sync with the new rate — every other
+        // tax-writing path does this together; leaving a stale code behind
+        // would make resolveTaxCode() trust the OLD code over the new rate
+        // at sync time (qbo.ts: `if (codeId) return codeId;`).
+        lineItemUpdate.qbo_tax_code_id = taxCodeIdFor(
+          values.tax_rate,
+          org.default_tax_rate,
+          org.default_tax_code_id
+        );
+      }
       if (Object.keys(lineItemUpdate).length > 0) {
         await supabase
           .from("invoice_line_items")
@@ -1516,6 +1527,7 @@ export async function saveLineItem(
         "class",
         "project_id",
         "tax_rate",
+        "qbo_tax_code_id",
         "amount",
       ] as const;
       for (const f of fields) {
@@ -1794,6 +1806,14 @@ async function reExtractInvoiceCore(
       })
     );
   }
+
+  // The line items just inserted (with supplier-default tax/category
+  // overrides and holdback negation applied) are the real source of truth
+  // for amount/tax_amount — recompute from THEM, same as every other
+  // line-item mutation (saveLineItem/deleteLineItem/cloneLineItem). Without
+  // this, the invoice row is left at whatever mapExtractionToInvoice
+  // computed from the raw extraction, before those overrides applied.
+  await recomputeInvoiceTotals(supabase, invoiceId);
 
   await supabase.from("audit_log").insert({
     organization_id: invoice.organization_id,

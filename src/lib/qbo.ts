@@ -1019,7 +1019,10 @@ export async function createBill(
   let seq = 1;
   let hasTaxCode = false;
   for (const line of input.lines) {
-    if (!line.amount) continue;
+    // Skip only a genuinely missing amount — `!line.amount` would also
+    // treat a real $0.00 line (a placeholder, or a holdback that nets to
+    // exactly zero) as missing and silently drop it from the posted bill.
+    if (line.amount == null) continue;
     if (line.taxCodeId) hasTaxCode = true;
     lines.push({
       DetailType: "AccountBasedExpenseLineDetail",

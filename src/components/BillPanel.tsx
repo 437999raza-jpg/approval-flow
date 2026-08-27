@@ -656,6 +656,7 @@ export function BillPanel({
             <label>
               <span className={ghostLabel}>Bill date</span>
               <input
+                key={`bill-date-${invoice.id}`}
                 form="bill-form"
                 type="date"
                 name="bill_date"
@@ -667,6 +668,7 @@ export function BillPanel({
             <label>
               <span className={ghostLabel}>Due date</span>
               <input
+                key={`due-date-${invoice.id}`}
                 form="bill-form"
                 type="date"
                 name="due_date"
@@ -678,6 +680,7 @@ export function BillPanel({
             <label>
               <span className={ghostLabel}>Bill number</span>
               <input
+                key={`bill-number-${invoice.id}`}
                 form="bill-form"
                 name="bill_number"
                 defaultValue={invoice.invoice_number ?? ""}
@@ -695,6 +698,7 @@ export function BillPanel({
             <label>
               <span className={ghostLabel}>Vendor name</span>
               <Combobox
+                key={`vendor-name-${invoice.id}`}
                 name="vendor_name"
                 formId="bill-form"
                 options={qboSuppliers ?? []}
@@ -724,6 +728,7 @@ export function BillPanel({
             <label>
               <span className={ghostLabel}>Email</span>
               <input
+                key={`source-email-${invoice.id}`}
                 form="bill-form"
                 name="source_email"
                 defaultValue={vendorEmail ?? invoice.source_email ?? ""}
@@ -1387,7 +1392,13 @@ function LineItemRow({
         >
           CO
         </button>
-        <div className="group/cell min-w-0 flex-1">
+        {/* self-stretch overrides the row's own items-end for just this
+            child, so it actually fills the row's full height — fillCell
+            then bottom-anchors the real field within THAT, giving Class
+            the same full-height hover/click target Category/Project/Tax
+            already have (fillCell supplies its own group/cell wrapper, so
+            none is needed here). */}
+        <div className="min-w-0 flex-1 self-stretch">
           <Combobox
             formId={formId}
             name="class_search"
@@ -1396,6 +1407,7 @@ function LineItemRow({
             placeholder={isNew ? "Search class…" : undefined}
             className={cellCls}
             disabled={readOnly}
+            fillCell
             onCommit={commitClass}
           />
         </div>
@@ -1482,10 +1494,16 @@ function LineItemRow({
             if (raw && !Number.isFinite(Number(raw.replace(/,/g, "")))) {
               const expr = raw.startsWith("=") ? raw.slice(1) : raw;
               const result = evaluateFormula(expr);
-              if (result != null) {
-                el.value = result.toFixed(2);
-                if (!isNew) onAmountChange?.(result);
+              if (result == null) {
+                // Not a valid number or a valid expression — leave the
+                // text as-is (so the mistake is visible) and don't submit
+                // it; saving it would either fail numeric validation
+                // downstream or, worse, be silently coerced to something
+                // the user never typed.
+                return;
               }
+              el.value = result.toFixed(2);
+              if (!isNew) onAmountChange?.(result);
             }
             if (!isNew) formRef.current?.requestSubmit();
           }}

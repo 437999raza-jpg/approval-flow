@@ -281,6 +281,12 @@ export function Combobox({
   }, [isFocused]);
 
   function commitCurrent() {
+    // Committing (blur, Enter with no selection, click outside) ends the
+    // "mid-edit" window the defaultValue-resync effect above is guarding —
+    // without this, editingRef stayed true forever after the field's very
+    // first focus/keystroke, permanently blocking that field from ever
+    // reflecting a server-confirmed value again.
+    editingRef.current = false;
     let value = selected;
     // For pairs: if the typed text exactly names an option, submit that
     // option's value (e.g. typed "H" → 13). Otherwise keep the picked value.
@@ -316,6 +322,9 @@ export function Combobox({
   }
 
   function pick(o: ComboboxOption) {
+    // Same reasoning as commitCurrent — picking an option also ends the
+    // mid-edit window.
+    editingRef.current = false;
     const v = valueOf(o);
     const displayText = showValue && hasPairs ? (secondaryName ? secondaryValueOf(o) || v : v) : labelOf(o);
     setSelected(v);

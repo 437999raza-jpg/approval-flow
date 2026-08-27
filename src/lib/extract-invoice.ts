@@ -315,21 +315,20 @@ export function mapExtractionToInvoice(
 ): Record<string, unknown> {
   const { amount, tax_amount } = computeInvoiceTotals(extracted);
 
-  // Same "document total wins" reconciliation as ingest (invoices.ts): when
-  // line items exist and disagree with the printed total, the printed total
-  // is used and a note is recorded; when the printed total couldn't be read
-  // at all, say the amount was derived from line items. Re-extract must
-  // behave exactly like first-time ingest, or the hard rule silently breaks.
+  // Same rule as ingest (invoices.ts): amount/tax_amount are ALWAYS the
+  // line-item-derived figures, never silently substituted with the
+  // document's printed total. A disagreement is only ever a totals_note
+  // warning — re-extract must behave exactly like first-time ingest, or
+  // the hard rule silently breaks (this function used to substitute the
+  // printed total here even after that was fixed everywhere else).
   const hasLineItems = extracted.line_items.length > 0;
   const printedTotal = extracted.total_amount ?? null;
-  let finalAmount = hasLineItems ? amount : printedTotal;
-  let finalTax = hasLineItems ? tax_amount : (extracted.tax_amount ?? null);
+  const finalAmount = hasLineItems ? amount : printedTotal;
+  const finalTax = hasLineItems ? tax_amount : (extracted.tax_amount ?? null);
   let totalsNote: string | null = null;
   if (hasLineItems && amount != null) {
     if (printedTotal != null && Math.abs(printedTotal - amount) > 0.01) {
-      finalAmount = printedTotal;
-      if (extracted.tax_amount != null) finalTax = extracted.tax_amount;
-      totalsNote = `Document total ${printedTotal.toFixed(2)} differs from line items (${amount.toFixed(2)}). The document total was used.`;
+      totalsNote = `Document total ${printedTotal.toFixed(2)} differs from these line items (${amount.toFixed(2)}). Check the line items above — a missing or wrong amount is the usual cause.`;
     } else if (printedTotal == null) {
       totalsNote = `The document's printed total could not be read — the amount shown (${amount.toFixed(2)}) was derived from the line items. Please verify it against the invoice.`;
     }
