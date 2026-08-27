@@ -734,7 +734,7 @@ export default async function DashboardPage({
         supplierDefaultsForSelected = {
           category: firstLine?.category ?? "",
           class: firstLine?.class ?? "",
-          product_service: "",
+          product_service: firstLine?.product_service ?? "",
           project_id: firstLine?.project_id ?? "",
           tax_rate: firstLine?.tax_rate?.toString() ?? "",
           payment_terms_days: termsDays != null && termsDays >= 0 ? termsDays.toString() : "",

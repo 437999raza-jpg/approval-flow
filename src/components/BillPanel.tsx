@@ -99,8 +99,11 @@ const ghostLabel = "block text-[10px] font-semibold uppercase tracking-wide text
 // Orders) plus the full class search, so it needs real room: it's a
 // fixed track (like Tax/Amount), widened from 76px to hold two toggle
 // buttons and the search box side by side.
+// Product/Service: a free-text supplier default (no QBO Item mirror exists
+// yet, so it's a plain input, not a search box like Category/Class) —
+// given a modest flexible share since it's usually blank or short.
 const LINE_ITEM_COLS =
-  "grid-cols-[minmax(0,0.85fr)_minmax(0,1.5fr)_minmax(0,1.15fr)_118px_52px_104px_44px_42px]";
+  "grid-cols-[minmax(0,0.85fr)_minmax(0,1.3fr)_minmax(0,1.05fr)_118px_minmax(0,0.7fr)_52px_104px_44px_42px]";
 
 // The exact QBO class names the CON/CO toggle writes (must exist in the
 // org's qbo_classes mirror — Fluid's QBO has "Contract" and "Change
@@ -682,6 +685,7 @@ export function BillPanel({
               <span>Description</span>
               <span>Project / customer</span>
               <span>Class</span>
+              <span>Product/service</span>
               <span className="text-right">Tax %</span>
               <span className="text-right">Amount</span>
               <span className="text-center">Linked</span>
@@ -697,6 +701,7 @@ export function BillPanel({
                   tax_rate: item.tax_rate ?? "",
                   qbo_tax_code_id: item.qbo_tax_code_id ?? "",
                   class: item.class ?? "",
+                  product_service: item.product_service ?? "",
                   project_id: item.project_id ?? "",
                   amount: num2(item.amount),
                   linked: item.linked,
@@ -721,6 +726,7 @@ export function BillPanel({
                   tax_rate: "",
                   qbo_tax_code_id: "",
                   class: "",
+                  product_service: "",
                   project_id: "",
                   amount: "",
                   linked: false,
@@ -1038,6 +1044,7 @@ function LineItemRow({
     tax_rate: number | "";
     qbo_tax_code_id: string;
     class: string;
+    product_service: string;
     project_id: string;
     amount: string;
     linked: boolean;
@@ -1109,6 +1116,7 @@ function LineItemRow({
   // (unnamed) group, used below for the per-row action icons.
   const cellWrapCls = "group/cell grid h-full items-end";
   const amountRef = useRef<HTMLInputElement>(null);
+  const productServiceRef = useRef<HTMLInputElement>(null);
 
   const autoResizeDesc = useCallback(() => {
     const el = descRef.current;
@@ -1255,6 +1263,25 @@ function LineItemRow({
           name="class"
           value={classValue}
           readOnly
+        />
+      </div>
+      {/* Product/Service: a plain free-text supplier default — no QBO Item
+          mirror exists yet to search against, same as Settings' own field. */}
+      <div
+        className={cellWrapCls}
+        onClick={(e) => {
+          if (readOnly || e.target !== e.currentTarget) return;
+          productServiceRef.current?.focus();
+        }}
+      >
+        <input
+          ref={productServiceRef}
+          form={formId}
+          name="product_service"
+          defaultValue={defaults.product_service}
+          placeholder={isNew ? "Product/service" : undefined}
+          className={cellCls}
+          {...blurSave}
         />
       </div>
       <Combobox

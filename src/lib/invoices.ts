@@ -52,6 +52,7 @@ function isEmptyExtraction(extracted: {
 interface SupplierDefaults {
   category: string | null;
   class: string | null;
+  product_service: string | null;
   project_id: string | null;
   tax_rate: number | null;
   payment_terms_days: number | null;
@@ -69,7 +70,7 @@ async function getSupplierDefaults(
   if (!vendorName?.trim()) return null;
   const { data } = await supabase
     .from("supplier_defaults")
-    .select("category, class, project_id, tax_rate, payment_terms_days, currency")
+    .select("category, class, product_service, project_id, tax_rate, payment_terms_days, currency")
     .eq("organization_id", organizationId)
     .eq("vendor_name_normalized", normalizeForMatching(vendorName))
     .maybeSingle();
@@ -278,6 +279,10 @@ export async function createInvoiceFromFile({
           // totally different from whatever the supplier prints. Only a
           // supplier rule (app-side config) or a human can set it.
           class: supplierDefaults?.class ?? null,
+          // Same reasoning as class: no QBO Item mirror exists yet, so this
+          // is a plain free-text supplier default, never read from the
+          // document itself.
+          product_service: supplierDefaults?.product_service ?? null,
           project_id: projectId,
         };
       })
@@ -294,6 +299,7 @@ export async function createInvoiceFromFile({
             ),
             category: supplierDefaults.category,
             class: supplierDefaults.class,
+            product_service: supplierDefaults.product_service,
             project_id: projectId,
           },
         ]

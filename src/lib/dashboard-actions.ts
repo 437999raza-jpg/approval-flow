@@ -735,6 +735,14 @@ export async function saveSupplierDefaults(
           .eq("invoice_id", inv.id)
           .is("class", null);
       }
+      // Same "don't overwrite a human's own value" treatment as class.
+      if (values.product_service) {
+        await supabase
+          .from("invoice_line_items")
+          .update({ product_service: values.product_service })
+          .eq("invoice_id", inv.id)
+          .is("product_service", null);
+      }
     }
   }
 
@@ -1478,6 +1486,7 @@ export async function saveLineItem(
     tax_rate: num("tax_rate"),
     qbo_tax_code_id: text("qbo_tax_code_id"),
     class: text("class"),
+    product_service: text("product_service"),
     project_id: text("project_id"),
     amount: num("amount"),
     linked: formData.get("linked") === "on",
@@ -1501,7 +1510,7 @@ export async function saveLineItem(
     // (from → to) instead of a generic "line edited".
     const { data: before } = await supabase
       .from("invoice_line_items")
-      .select("description, category, class, project_id, tax_rate, qbo_tax_code_id, amount")
+      .select("description, category, class, product_service, project_id, tax_rate, qbo_tax_code_id, amount")
       .eq("id", lineItemId)
       .single();
 
@@ -1516,6 +1525,7 @@ export async function saveLineItem(
         "description",
         "category",
         "class",
+        "product_service",
         "project_id",
         "tax_rate",
         "amount",
@@ -1620,7 +1630,7 @@ export async function cloneLineItem(invoiceId: string, lineItemId: string) {
 
   const { data: item } = await supabase
     .from("invoice_line_items")
-    .select("category, description, tax_rate, qbo_tax_code_id, class, project_id, amount, linked, line_order")
+    .select("category, description, tax_rate, qbo_tax_code_id, class, product_service, project_id, amount, linked, line_order")
     .eq("id", lineItemId)
     .single();
   if (!item) return;
@@ -1638,6 +1648,7 @@ export async function cloneLineItem(invoiceId: string, lineItemId: string) {
     tax_rate: item.tax_rate,
     qbo_tax_code_id: item.qbo_tax_code_id,
     class: item.class,
+    product_service: item.product_service,
     project_id: item.project_id,
     amount: item.amount,
     linked: item.linked,

@@ -2837,3 +2837,83 @@ update organizations o
   )
   where o.default_tax_rate is not null
     and o.default_tax_code_id is null;
+
+--------------------------------------------------------------------
+-- >>> supabase/migrations/0060_email_log_skipped_attachments.sql
+--------------------------------------------------------------------
+-- Record attachments dropped from an inbound email so nothing silently
+-- disappears: signature/logo images (never invoices) and non-PDF files
+-- (spreadsheets etc.) that the app cannot process.
+alter table public.inbound_email_log
+  add column if not exists skipped_attachments jsonb;
+
+--------------------------------------------------------------------
+-- >>> supabase/migrations/0061_usage_events.sql
+--------------------------------------------------------------------
+-- Flow's own usage billing: track how many documents each client org has
+-- processed, and the per-org rate (USD per document). The SaaS charges the
+-- client per document processed — the invoice is sent manually (this is
+-- tracking only, no payment processor). Recorded at the point a document
+-- is ACCEPTED into the pipeline (webhook download / manual upload), never
+-- at retry time, so one document always counts once.
+-- Run via `supabase db push` or paste into the Supabase SQL editor.
+
+create table if not exists public.usage_events (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references public.organizations(id) on delete cascade,
+  document_name text not null,
+  source text not null default 'email',   -- 'email' | 'manual'
+  created_at timestamptz not null default now()
+);
+
+alter table public.usage_events enable row level security;
+
+-- Members can read their own org's usage (the Billing page); inserts happen
+-- server-side (webhook admin client, upload route member client).
+drop policy if exists "usage_events: members can read" on usage_events;
+create policy "usage_events: members can read" on usage_events
+  for select using (is_org_member(organization_id));
+
+drop policy if exists "usage_events: members can insert" on usage_events;
+create policy "usage_events: members can insert" on usage_events
+  for insert with check (is_org_member(organization_id));
+
+create index if not exists usage_events_org_created_idx
+  on usage_events (organization_id, created_at desc);
+
+-- Per-org charge per document processed, in USD. Default 0.15.
+alter table public.organizations
+  add column if not exists usage_rate_usd numeric not null default 0.15;
+
+--------------------------------------------------------------------
+-- >>> supabase/migrations/0062_usage_rate_updated_at.sql
+--------------------------------------------------------------------
+-- Track when the org's per-document usage rate was last saved, so the
+-- Billing page can show "0.15 — saved on <date>" and grey the Save button
+-- until the value changes again.
+-- Run via `supabase db push` or paste into the Supabase SQL editor.
+
+alter table public.organizations
+  add column if not exists usage_rate_updated_at timestamptz;
+
+-- Existing rows: treat the current rate as "saved now" so the page has a
+-- date to show (rather than a blank "never saved").
+update public.organizations
+  set usage_rate_updated_at = now()
+  where usage_rate_updated_at is null
+    and usage_rate_usd is not null;
+
+--------------------------------------------------------------------
+-- >>> supabase/migrations/0063_line_item_product_service.sql
+--------------------------------------------------------------------
+-- 0063: invoice_line_items.product_service — carries a supplier rule's
+-- Product/Service default (supplier_defaults.product_service, free text,
+-- no QBO Item mirror yet) onto each line at ingestion, the same way
+-- category/class already do. Not yet sent to QBO on sync — that needs its
+-- own QBO Item mirror + matcher (mirroring how Category/Class/Tax/Supplier
+-- already work), since Flow never guesses/creates entities in QBO and a
+-- QBO Bill's ItemBasedExpenseLineDetail is a different line shape than the
+-- AccountBasedExpenseLineDetail this app always sends today.
+-- Run via `supabase db push` or paste into the Supabase SQL editor.
+
+alter table invoice_line_items add column if not exists product_service text;
