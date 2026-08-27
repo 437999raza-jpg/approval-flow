@@ -27,6 +27,9 @@ export interface EnqueueArgs {
   sourceEmail?: string | null;
   uploadLogId?: string | null;
   inboundEmailLogId?: string | null;
+  // [1N]/[NM] subject-code decision — force this document into split
+  // review regardless of what the classifier would otherwise decide.
+  forceSplit?: boolean;
 }
 
 // Upload the bytes to staging and insert a queued job. Returns the job id.
@@ -60,6 +63,7 @@ export async function enqueueIngestJob(
       source_email: args.sourceEmail ?? null,
       upload_log_id: args.uploadLogId ?? null,
       inbound_email_log_id: args.inboundEmailLogId ?? null,
+      force_split: args.forceSplit ?? false,
     })
     .select("id")
     .single();
@@ -80,14 +84,89 @@ export interface ProcessResult {
 // normal ingest pipeline (ingestInvoiceFile) → write the outcome to
 // upload_log / inbound_email_log → remove staging. Retries failed jobs up to
 // 3 attempts (back to 'queued' between tries). Best-effort — never throws.
+// A job that got claimed (status='processing') but never finished — the
+// function that claimed it was killed (e.g. Vercel's hard 60s cap) before
+// it could mark it done/failed. Left alone it's stuck forever:
+// runNextIngestJob only ever looks for status='queued'. Reset it back to
+// queued for a natural retry, or — once it's already used up its 3
+// attempts — fail it terminally the same way an in-process failure would,
+// so it surfaces in the Queue instead of silently vanishing. 5 minutes is
+// generous: a real ingest (download + one extraction call) normally
+// finishes in well under a minute.
+async function resetStaleIngestJobs(supabase: Supabase, organizationId: string) {
+  const staleCutoff = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+  const { data: stuck } = await supabase
+    .from("ingest_jobs")
+    .select("id, attempt_count, upload_log_id, inbound_email_log_id")
+    .eq("organization_id", organizationId)
+    .eq("status", "processing")
+    .lt("updated_at", staleCutoff);
+  for (const job of stuck ?? []) {
+    if ((job.attempt_count ?? 0) >= 3) {
+      const message = "Processing was interrupted repeatedly and gave up after 3 attempts.";
+      const now = new Date().toISOString();
+      await supabase
+        .from("ingest_jobs")
+        .update({ status: "error", last_error: message, processed_at: now, updated_at: now })
+        .eq("id", job.id);
+      if (job.upload_log_id) {
+        await supabase
+          .from("upload_log")
+          .update({ status: "error", error: message, processed_at: now })
+          .eq("id", job.upload_log_id);
+      }
+      if (job.inbound_email_log_id) {
+        await supabase
+          .from("inbound_email_log")
+          .update({ processing: false, error: message })
+          .eq("id", job.inbound_email_log_id);
+      }
+    } else {
+      await supabase
+        .from("ingest_jobs")
+        .update({ status: "queued", updated_at: new Date().toISOString() })
+        .eq("id", job.id);
+    }
+  }
+}
+
+// Whether some OTHER job sharing this email log row is still queued or
+// mid-flight. Every attachment on an email gets its own job now, so a
+// 4-attachment email means 4 jobs sharing one inbound_email_log row —
+// without this check, the FIRST one to finish would flip the row to
+// "not processing" (and "processed") while the other 3 are still in
+// flight, misrepresenting the email as done when it's only partially so.
+async function otherActiveJobsExist(
+  supabase: Supabase,
+  emailLogId: string,
+  excludeJobId: string
+): Promise<boolean> {
+  const { count } = await supabase
+    .from("ingest_jobs")
+    .select("id", { count: "exact", head: true })
+    .eq("inbound_email_log_id", emailLogId)
+    .in("status", ["queued", "processing"])
+    .neq("id", excludeJobId);
+  return (count ?? 0) > 0;
+}
+
 export async function runNextIngestJob(
   supabase: Supabase,
   organizationId: string
 ): Promise<ProcessResult> {
-  // Reset email rows stuck in "processing" (an inline webhook attempt timed
-  // out past the function cap and never completed) so they don't show as
-  // Processing forever — EXCEPT rows that have a queued/processing job
-  // actively retrying them.
+  // Recover jobs a killed function left stuck mid-flight BEFORE the
+  // email-log reset below, so its "is there still something active"
+  // check reflects the up-to-date job statuses.
+  try {
+    await resetStaleIngestJobs(supabase, organizationId);
+  } catch (err) {
+    console.error("stale-job reset failed:", err);
+  }
+
+  // Reset email rows stuck in "processing" (every attachment's job failed
+  // or is otherwise no longer active) so they don't show as Processing
+  // forever — EXCEPT rows that still have a queued/processing job actively
+  // working through them.
   try {
     const { data: activeJobRows } = await supabase
       .from("ingest_jobs")
@@ -165,10 +244,11 @@ export async function runNextIngestJob(
         .eq("id", job.upload_log_id);
     }
     if (job.inbound_email_log_id) {
+      const stillActive = await otherActiveJobsExist(supabase, job.inbound_email_log_id, job.id);
       await supabase
         .from("inbound_email_log")
         .update({
-          processing: false,
+          processing: stillActive,
           error: message,
         })
         .eq("id", job.inbound_email_log_id);
@@ -208,6 +288,7 @@ export async function runNextIngestJob(
       submittedBy: job.submitted_by ?? undefined,
       sourceEmail: job.source_email ?? undefined,
       extraContext,
+      forceSplit: job.force_split ?? false,
     });
 
     const processedAt = new Date().toISOString();
@@ -235,19 +316,23 @@ export async function runNextIngestJob(
     }
 
     if (job.inbound_email_log_id) {
-      // Append (multiple jobs can share one email log row when the merge
-      // fell back to per-file ingestion).
-      const { data: logRow } = await supabase
-        .from("inbound_email_log")
-        .select("invoice_ids, pending_split_ids")
-        .eq("id", job.inbound_email_log_id)
-        .maybeSingle();
+      // Append (every attachment on an email gets its own job now, all
+      // sharing one email log row) — only clear "processing" once THIS is
+      // the last outstanding job for the email (see otherActiveJobsExist).
+      const [{ data: logRow }, stillActive] = await Promise.all([
+        supabase
+          .from("inbound_email_log")
+          .select("invoice_ids, pending_split_ids")
+          .eq("id", job.inbound_email_log_id)
+          .maybeSingle(),
+        otherActiveJobsExist(supabase, job.inbound_email_log_id, job.id),
+      ]);
       const existingInv = (logRow?.invoice_ids ?? []) as string[];
       const existingSplit = (logRow?.pending_split_ids ?? []) as string[];
       const patch: Partial<
         Database["public"]["Tables"]["inbound_email_log"]["Row"]
       > = {
-        processing: false,
+        processing: stillActive,
         error: null,
       };
       if (result.kind === "pending_split") {
@@ -297,9 +382,23 @@ export async function runNextIngestJob(
           .eq("id", job.upload_log_id);
       }
       if (job.inbound_email_log_id) {
+        const [{ data: logRow }, stillActive] = await Promise.all([
+          supabase
+            .from("inbound_email_log")
+            .select("invoice_ids, pending_split_ids")
+            .eq("id", job.inbound_email_log_id)
+            .maybeSingle(),
+          otherActiveJobsExist(supabase, job.inbound_email_log_id, job.id),
+        ]);
+        // Don't clobber processed:true if a SIBLING attachment on this
+        // same email already succeeded — this one not being an invoice
+        // doesn't undo that.
+        const hasResults =
+          ((logRow?.invoice_ids as string[] | null)?.length ?? 0) > 0 ||
+          ((logRow?.pending_split_ids as string[] | null)?.length ?? 0) > 0;
         await supabase
           .from("inbound_email_log")
-          .update({ processing: false, processed: false, error: message })
+          .update({ processing: stillActive, processed: hasResults, error: message })
           .eq("id", job.inbound_email_log_id);
       }
     } else {

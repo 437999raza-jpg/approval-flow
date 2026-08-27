@@ -5,11 +5,9 @@ export const maxDuration = 60;
 import { NextResponse } from "next/server";
 import { revalidateTag } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { InvoiceIngestError } from "@/lib/invoices";
-import { ingestInvoiceFile } from "@/lib/invoice-ingest";
 import { mergeDocuments, imageDimensions } from "@/lib/merge-documents";
 import { recordUsageEvent } from "@/lib/usage";
-import { enqueueIngestJob } from "@/lib/ingest-queue";
+import { enqueueIngestJob, runNextIngestJob } from "@/lib/ingest-queue";
 import { INVOICES_TAG } from "@/lib/org-cache";
 
 // Inbound email path (Resend — the same vendor as outbound notifications):
@@ -30,18 +28,24 @@ import { INVOICES_TAG } from "@/lib/org-cache";
 // nothing.
 //
 // When an email carries several PDF/image attachments (an invoice plus a
-// Attachments are processed INLINE here (no browser needed — emails never
-// wait for the app's poller). How they're interpreted follows a subject
-// code the office stamps at the START of the subject — PDF count FIRST,
-// invoice count SECOND:
+// backup/certificate, say), how they're interpreted follows a subject code
+// the office stamps at the START of the subject — PDF count FIRST, invoice
+// count SECOND:
 //   [X1]  → X PDFs = ONE invoice (combine, e.g. [31] invoice + backup +
 //          certificate)
 //   [1N]  → one PDF contains N invoices (force split review, e.g. [13])
 //   [NN]  → N PDFs = N invoices (each its own — same as no code, e.g. [22])
 //   [NM]  → every PDF contains multiple invoices (each goes to split review)
 //   none  → each PDF is its own invoice (industry default — never merge)
-// Persistent failures fall back to the ingest_jobs queue so they auto-retry
-// and stay Reprocessable from the Queue page.
+//
+// Every resulting attachment becomes a durable ingest_jobs row BEFORE any
+// extraction runs (not just the ones that overflow this request's time
+// budget or error) — this request then works through as many of them as
+// it can (reusing runNextIngestJob, the same code the background poller
+// calls) so an email still doesn't need a browser open to finish, but a
+// hard timeout mid-attachment only ever risks the ONE job in flight
+// (resetStaleIngestJobs recovers it automatically) instead of losing
+// whatever hadn't been reached yet with no record it existed.
 export async function POST(request: Request) {
   const url = new URL(request.url);
   if (
@@ -180,7 +184,8 @@ export async function POST(request: Request) {
     //   [22] → 2 PDFs, 2 invoices → each PDF its own invoice
     //   [NM] → N PDFs, multiple   → every PDF goes to split review
     //   none → each PDF is its OWN invoice (never merge)
-    // The code only decides; the attachments are always processed inline.
+    // The code only decides how the attachments are grouped; each is then
+    // queued and processed durably (see the enqueue step below).
     const code = parseSubjectCode(subject);
     if (code && code.x !== documents.length) {
       console.error(
@@ -209,8 +214,10 @@ export async function POST(request: Request) {
     const forceSplitEach = code?.kind === "split";
 
     // Record the email immediately (processing=true so the Queue shows it
-    // in flight), then process inline — an email should never wait for a
-    // browser to be open.
+    // in flight). Every attachment is then queued as a durable job and
+    // worked through right here in this same request where possible — an
+    // email should never wait for a browser to be open — while staying
+    // completely safe if it can't all fit in this invocation's budget.
     const { data: logRow, error: logInsertError } = await supabase
       .from("inbound_email_log")
       .insert({
@@ -230,117 +237,63 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: true, errors: ["Could not log the email."] });
     }
 
-    // Emails are processed INLINE right here — the 20–60s wait for THIS
-    // email is fine; only persistent failures fall back to the ingest_jobs
-    // queue so they auto-retry / stay Reprocessable.
-    //
-    // Time budget: Vercel Hobby caps this function at 60s, and each
-    // attachment takes 20–60s of extraction. With several attachments the
-    // budget runs out mid-loop — WITHOUT this guard the remaining
-    // attachments were silently lost (the function just died). So once
-    // INLINE_BUDGET_MS elapses, the rest are enqueued as ingest jobs
-    // instead of dropped: they process via the poller (or stay Reprocessable
-    // in the Queue), and the email row stays "processing" until they land.
-    const INLINE_BUDGET_MS = 40_000; // leave ~20s for enqueue + final writes
-    const startMs = Date.now();
-
-    const invoiceIds: string[] = [];
-    const pendingSplitIds: string[] = [];
-    const ingestErrors: string[] = [];
-    let retryJobQueued = false;
-
-    for (let i = 0; i < ingestList.length; i++) {
-      const doc = ingestList[i];
-
-      // Out of budget — queue this and every remaining attachment rather
-      // than lose them to the function timeout.
-      if (Date.now() - startMs > INLINE_BUDGET_MS) {
-        const queued = await enqueueIngestJob({
-          supabase,
-          organizationId: org.id,
-          file: { name: doc.name, type: doc.type, size: doc.bytes.length, bytes: doc.bytes },
-          source: "email",
-          sourceEmail: from,
-          inboundEmailLogId: logRow.id,
-        });
-        if (queued) retryJobQueued = true;
-        continue;
-      }
-
-      const file = new File([new Uint8Array(doc.bytes)], doc.name, {
-        type: doc.type || "application/octet-stream",
+    // Every attachment becomes a durable, individually-tracked job the
+    // moment the email arrives — BEFORE any slow extraction starts. This
+    // is what makes partial failure safe: if this function gets hard-killed
+    // by Vercel's 60s cap mid-way through, only the ONE job actively being
+    // worked on is at risk (recovered automatically — see
+    // resetStaleIngestJobs in ingest-queue.ts) — everything else already
+    // sits safely `queued`, exactly where the poller expects to find it.
+    // The old approach processed most attachments inline and only created
+    // a job for whatever didn't fit in time or errored, so anything done
+    // inline had NO durable record at all — a hard kill lost it completely,
+    // with no way to recover except re-forwarding the WHOLE email, which
+    // then reprocessed the attachments that had already succeeded too.
+    const enqueueErrors: string[] = [];
+    for (const doc of ingestList) {
+      const jobId = await enqueueIngestJob({
+        supabase,
+        organizationId: org.id,
+        file: { name: doc.name, type: doc.type, size: doc.bytes.length, bytes: doc.bytes },
+        source: "email",
+        sourceEmail: from,
+        inboundEmailLogId: logRow.id,
+        forceSplit: forceSplitEach,
       });
-      try {
-        // One inline retry for transient extraction failures before giving
-        // up to the queue.
-        let result;
-        try {
-          result = await ingestInvoiceFile({
-            supabase,
-            organizationId: org.id,
-            file,
-            source: "email",
-            sourceEmail: from,
-            extraContext: subject,
-            forceSplit: forceSplitEach,
-          });
-        } catch {
-          result = await ingestInvoiceFile({
-            supabase,
-            organizationId: org.id,
-            file,
-            source: "email",
-            sourceEmail: from,
-            extraContext: subject,
-            forceSplit: forceSplitEach,
-          });
-        }
-        if (result.kind === "pending_split") {
-          pendingSplitIds.push(result.pendingSplitId);
-        } else {
-          invoiceIds.push(result.invoice.id);
-        }
-      } catch (err) {
-        const message =
-          err instanceof InvoiceIngestError
-            ? err.message
-            : err instanceof Error
-              ? err.message
-              : "Unknown ingest error";
-        ingestErrors.push(message);
-        // Queue a retry job (staging kept) so the poller can retry and the
-        // Queue's Reprocess button works — no re-forwarding needed.
-        const jobId = await enqueueIngestJob({
-          supabase,
-          organizationId: org.id,
-          file: { name: doc.name, type: doc.type, size: doc.bytes.length, bytes: doc.bytes },
-          source: "email",
-          sourceEmail: from,
-          inboundEmailLogId: logRow.id,
-        });
-        if (jobId) retryJobQueued = true;
-      }
+      if (!jobId) enqueueErrors.push(`Could not queue "${doc.name}" for processing.`);
     }
 
-    await supabase
-      .from("inbound_email_log")
-      .update({
-        // Stays "processing" when a retry job is queued — the worker
-        // completes the row with the outcome; otherwise settle it now.
-        processing: retryJobQueued,
-        invoice_ids: invoiceIds,
-        pending_split_ids: pendingSplitIds,
-        processed: invoiceIds.length > 0 || pendingSplitIds.length > 0,
-        error:
-          retryJobQueued && invoiceIds.length === 0
-            ? null
-            : ingestErrors.length > 0
-              ? ingestErrors.join("; ")
-              : null,
-      })
-      .eq("id", logRow.id);
+    // Work through as much of the queue as fits in this invocation's time
+    // budget, reusing the EXACT same claim-and-process logic the
+    // background poller uses (runNextIngestJob) — one code path for
+    // "process one queued job" instead of two that could drift apart.
+    // It also updates upload_log/inbound_email_log/ingest_jobs itself as
+    // each job completes, so there's nothing left for this route to do
+    // afterward. Whatever doesn't fit in the budget stays queued for the
+    // poller (or the next email's own pass through this same loop, for
+    // this org) to pick up.
+    const INLINE_BUDGET_MS = 35_000; // leave headroom under Vercel's 60s cap
+    const startMs = Date.now();
+    let ranAny = false;
+    for (;;) {
+      if (Date.now() - startMs > INLINE_BUDGET_MS) break;
+      const result = await runNextIngestJob(supabase, org.id);
+      if (!result.ran) break;
+      ranAny = true;
+      if (result.pending === 0) break;
+    }
 
-    if (invoiceIds.length > 0 || pendingSplitIds.length > 0) {
+    if (enqueueErrors.length > 0) {
+      const { data: current } = await supabase
+        .from("inbound_email_log")
+        .select("error")
+        .eq("id", logRow.id)
+        .maybeSingle();
+      const combined = [current?.error, ...enqueueErrors].filter(Boolean).join("; ");
+      await supabase.from("inbound_email_log").update({ error: combined }).eq("id", logRow.id);
+    }
+
+    if (ranAny) {
       revalidateTag(INVOICES_TAG); // new invoices/splits from email
     }
   } catch (err) {

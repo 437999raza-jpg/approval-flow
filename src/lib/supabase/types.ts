@@ -655,6 +655,7 @@ export interface Database {
           last_error: string | null;
           upload_log_id: string | null;
           inbound_email_log_id: string | null;
+          force_split: boolean;
           created_at: string;
           updated_at: string;
           processed_at: string | null;
