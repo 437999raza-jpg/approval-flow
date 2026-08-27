@@ -2,6 +2,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { useFormStatus } from "react-dom";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import {
   BillPanel,
@@ -106,6 +107,11 @@ interface DetailSplitProps {
   bill?: BillData;
   uploadAction?: (formData: FormData) => Promise<void>; // add a document
   canEdit?: boolean; // auditors are read-only
+  // Whether the document viewer should start open — driven by the `doc=1`
+  // URL param (see openDocument/hideDocument below), not just local state,
+  // so it survives Prev/Next and Back/Forward navigation between invoices
+  // rather than depending on this component instance never remounting.
+  initialShowDoc?: boolean;
 }
 
 // Two-pane detail: invoice document(s) and the ApprovalMax-style bill panel.
@@ -118,8 +124,9 @@ export function DetailSplit({
   bill,
   uploadAction,
   canEdit = true,
+  initialShowDoc = false,
 }: DetailSplitProps) {
-  const [showDoc, setShowDoc] = useState(false);
+  const [showDoc, setShowDoc] = useState(initialShowDoc);
   const [billOpen, setBillOpen] = useState(true);
   const [docIndex, setDocIndex] = useState(0);
   const [billW, setBillW] = useState(480);
@@ -129,13 +136,34 @@ export function DetailSplit({
   const billRef = useRef<HTMLDivElement>(null);
   const formRef = useRef<HTMLFormElement>(null);
   const { setFocused } = useDocumentFocus();
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+
+  // Keep the `doc=1` URL param in sync with showDoc — so "document open"
+  // travels with the invoice through Prev/Next and Back/Forward, instead
+  // of depending on this component instance never remounting.
+  const setDocParam = (open: boolean) => {
+    const params = new URLSearchParams(searchParams.toString());
+    if (open) params.set("doc", "1");
+    else params.delete("doc");
+    const qs = params.toString();
+    router.replace(`${pathname}${qs ? `?${qs}` : ""}`, { scroll: false });
+  };
 
   // Switching invoices (navigation keeps this component mounted) must not
   // carry the previous invoice's scroll position into the new one — reset
-  // both panes to the top.
+  // both panes to the top. Also resync showDoc/focused from the URL's
+  // doc=1 param specifically when the INVOICE changes (Prev/Next, Back/
+  // Forward, a fresh link) — not on every render, which would fight the
+  // user's own openDocument/hideDocument clicks on the current invoice.
   const invoiceId = bill?.invoice.id;
   useEffect(() => {
     docScrollerRef.current?.scrollTo({ top: 0 });
+    setShowDoc(initialShowDoc);
+    setFocused(initialShowDoc);
+    if (initialShowDoc) setDocIndex(0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [invoiceId]);
 
   // Snap to an even 50/50 split every time the document opens — the
@@ -167,11 +195,13 @@ export function DetailSplit({
     setShowDoc(true);
     setFocused(true);
     setDocIndex(0);
+    setDocParam(true);
   };
 
   const hideDocument = () => {
     setShowDoc(false);
     setFocused(false);
+    setDocParam(false);
   };
 
   const prevDoc = () =>

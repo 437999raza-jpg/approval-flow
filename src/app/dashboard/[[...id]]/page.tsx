@@ -130,6 +130,7 @@ export default async function DashboardPage({
     dateTo?: string;
     amountFrom?: string;
     amountTo?: string;
+    doc?: string;
   };
 }) {
   const supabase = createClient();
@@ -176,6 +177,10 @@ export default async function DashboardPage({
     ? (searchParams.view as View)
     : "all";
   const q = searchParams.q?.trim().toLowerCase() ?? "";
+  // Whether the document viewer should start open — carried in the URL
+  // (not just DetailSplit's own local state) so Prev/Next and Back/Forward
+  // between invoices keep the same split view instead of risking losing it.
+  const docOpen = searchParams.doc === "1";
 
   const [
     { data: workflows },
@@ -629,6 +634,7 @@ export default async function DashboardPage({
   if (advanced.dateTo) detailQuery.set("dateTo", advanced.dateTo);
   if (advanced.amountFrom) detailQuery.set("amountFrom", advanced.amountFrom);
   if (advanced.amountTo) detailQuery.set("amountTo", advanced.amountTo);
+  if (docOpen) detailQuery.set("doc", "1");
   const qs = detailQuery.toString() ? `?${detailQuery.toString()}` : "";
 
   // Prev/Next navigation — same order the Invoices list renders in
@@ -1217,6 +1223,7 @@ export default async function DashboardPage({
                 documents={documentsForSelected}
                 uploadAction={addDocument.bind(null, selected.id)}
                 canEdit={canEdit}
+                initialShowDoc={docOpen}
                 bill={{
                   invoice: selected,
                   primaryFileUrl: signedFileUrl,
