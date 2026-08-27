@@ -1039,7 +1039,15 @@ export async function cancelInvoice(invoiceId: string) {
 // (ConfirmSubmitButton). The audit_log row logging the deletion is written
 // BEFORE the delete and survives it (invoice_id becomes null via ON DELETE
 // SET NULL, migration 0022) so the deletion itself stays traceable.
-export async function deleteInvoiceAction(invoiceId: string) {
+export async function deleteInvoiceAction(
+  invoiceId: string,
+  // Where to land after deleting — the next invoice in whatever view
+  // (filtered/sorted) the user was looking at, so deleting stays in this
+  // same detail view instead of jumping to the default/newest invoice.
+  // null when there's nowhere else to go (this was the only invoice).
+  nextInvoiceId: string | null,
+  qs: string
+) {
 
   const supabase = createClient();
   const {
@@ -1083,7 +1091,7 @@ export async function deleteInvoiceAction(invoiceId: string) {
   revalidateTag(INVOICES_TAG);
 
   revalidatePath("/dashboard", "layout");
-  redirect("/dashboard");
+  redirect(nextInvoiceId ? `/dashboard/${nextInvoiceId}${qs}` : "/dashboard");
 }
 
 // Batch delete: same rules as deleteInvoiceAction but for many invoices at

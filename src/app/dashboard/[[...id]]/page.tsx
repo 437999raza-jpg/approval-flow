@@ -631,6 +631,19 @@ export default async function DashboardPage({
   if (advanced.amountTo) detailQuery.set("amountTo", advanced.amountTo);
   const qs = detailQuery.toString() ? `?${detailQuery.toString()}` : "";
 
+  // Prev/Next navigation — same order the Invoices list renders in
+  // (duplicates pinned first), so flipping through matches what's visible
+  // in the sidebar. Also drives what to show after deleting the current
+  // invoice: the next one in this same view, falling back to the previous
+  // one if this was the last, so deleting never jumps somewhere unrelated.
+  const selectedDisplayIndex = filteredForDisplay.findIndex((i) => i.id === selected?.id);
+  const prevInvoice = selectedDisplayIndex > 0 ? filteredForDisplay[selectedDisplayIndex - 1] : null;
+  const nextInvoice =
+    selectedDisplayIndex !== -1 && selectedDisplayIndex < filteredForDisplay.length - 1
+      ? filteredForDisplay[selectedDisplayIndex + 1]
+      : null;
+  const nextInvoiceIdAfterDelete = nextInvoice?.id ?? prevInvoice?.id ?? null;
+
   let signedFileUrl: string | null = null;
   let stepsForSelected: NonNullable<typeof allSteps> = [];
   let approvalsForSelected: Database["public"]["Tables"]["invoice_approvals"]["Row"][] = [];
@@ -1129,6 +1142,38 @@ export default async function DashboardPage({
             activeCount={activeFilterCount}
           />
           <div className="flex-1" />
+          {selected && (
+            <div className="flex items-center gap-1">
+              <Link
+                href={prevInvoice ? `/dashboard/${prevInvoice.id}${qs}` : "#"}
+                scroll={false}
+                title={prevInvoice ? `Previous: ${prevInvoice.vendor_name ?? prevInvoice.file_name}` : "No previous invoice"}
+                aria-disabled={!prevInvoice}
+                className={clsx(
+                  "rounded-md border border-slate-300 p-2 text-slate-600",
+                  prevInvoice ? "hover:bg-slate-50" : "pointer-events-none opacity-30"
+                )}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                  <path d="M15 6l-6 6 6 6" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </Link>
+              <Link
+                href={nextInvoice ? `/dashboard/${nextInvoice.id}${qs}` : "#"}
+                scroll={false}
+                title={nextInvoice ? `Next: ${nextInvoice.vendor_name ?? nextInvoice.file_name}` : "No next invoice"}
+                aria-disabled={!nextInvoice}
+                className={clsx(
+                  "rounded-md border border-slate-300 p-2 text-slate-600",
+                  nextInvoice ? "hover:bg-slate-50" : "pointer-events-none opacity-30"
+                )}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                  <path d="M9 6l6 6-6 6" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </Link>
+            </div>
+          )}
           {canReviewNow && (
             <Link
               href="/queue"
@@ -1241,7 +1286,12 @@ export default async function DashboardPage({
                       label: s.label,
                     })),
                     overrideStatus: overrideStatus.bind(null, selected.id),
-                    deleteInvoice: deleteInvoiceAction.bind(null, selected.id),
+                    deleteInvoice: deleteInvoiceAction.bind(
+                      null,
+                      selected.id,
+                      nextInvoiceIdAfterDelete,
+                      qs
+                    ),
                     syncToQbo: syncToQbo.bind(null, selected.id),
                     clearQboError: clearQboError.bind(null, selected.id),
                     clearQboSync: clearQboSync.bind(null, selected.id),
