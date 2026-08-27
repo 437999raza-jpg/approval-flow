@@ -337,7 +337,6 @@ export interface Database {
           tax_rate: number | null;
           qbo_tax_code_id: string | null;
           class: string | null;
-          product_service: string | null;
           project_id: string | null;
           amount: number | null;
           linked: boolean;
@@ -571,7 +570,6 @@ export interface Database {
           tax_rate: number | null;
           payment_terms_days: number | null;
           currency: string | null;
-          product_service: string | null;
           created_at: string;
           updated_at: string;
         };

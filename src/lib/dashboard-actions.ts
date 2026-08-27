@@ -660,7 +660,6 @@ export async function saveSupplierDefaults(
   const values = {
     category: text("category"),
     class: text("class"),
-    product_service: text("product_service"),
     project_id: text("project_id"),
     tax_rate: num("tax_rate"),
     payment_terms_days: int("payment_terms_days"),
@@ -676,7 +675,6 @@ export async function saveSupplierDefaults(
   };
   if (values.category) rule.category = values.category;
   if (values.class) rule.class = values.class;
-  if (values.product_service) rule.product_service = values.product_service;
   if (values.tax_rate != null) rule.tax_rate = values.tax_rate;
   if (values.payment_terms_days != null)
     rule.payment_terms_days = values.payment_terms_days;
@@ -734,14 +732,6 @@ export async function saveSupplierDefaults(
           .update({ class: values.class })
           .eq("invoice_id", inv.id)
           .is("class", null);
-      }
-      // Same "don't overwrite a human's own value" treatment as class.
-      if (values.product_service) {
-        await supabase
-          .from("invoice_line_items")
-          .update({ product_service: values.product_service })
-          .eq("invoice_id", inv.id)
-          .is("product_service", null);
       }
     }
   }
@@ -1486,7 +1476,6 @@ export async function saveLineItem(
     tax_rate: num("tax_rate"),
     qbo_tax_code_id: text("qbo_tax_code_id"),
     class: text("class"),
-    product_service: text("product_service"),
     project_id: text("project_id"),
     amount: num("amount"),
     linked: formData.get("linked") === "on",
@@ -1510,7 +1499,7 @@ export async function saveLineItem(
     // (from → to) instead of a generic "line edited".
     const { data: before } = await supabase
       .from("invoice_line_items")
-      .select("description, category, class, product_service, project_id, tax_rate, qbo_tax_code_id, amount")
+      .select("description, category, class, project_id, tax_rate, qbo_tax_code_id, amount")
       .eq("id", lineItemId)
       .single();
 
@@ -1525,7 +1514,6 @@ export async function saveLineItem(
         "description",
         "category",
         "class",
-        "product_service",
         "project_id",
         "tax_rate",
         "amount",
@@ -1630,7 +1618,7 @@ export async function cloneLineItem(invoiceId: string, lineItemId: string) {
 
   const { data: item } = await supabase
     .from("invoice_line_items")
-    .select("category, description, tax_rate, qbo_tax_code_id, class, product_service, project_id, amount, linked, line_order")
+    .select("category, description, tax_rate, qbo_tax_code_id, class, project_id, amount, linked, line_order")
     .eq("id", lineItemId)
     .single();
   if (!item) return;
@@ -1648,7 +1636,6 @@ export async function cloneLineItem(invoiceId: string, lineItemId: string) {
     tax_rate: item.tax_rate,
     qbo_tax_code_id: item.qbo_tax_code_id,
     class: item.class,
-    product_service: item.product_service,
     project_id: item.project_id,
     amount: item.amount,
     linked: item.linked,
@@ -1766,14 +1753,14 @@ async function reExtractInvoiceCore(
     // re-extraction) — lines the user already tagged Contract/Change
     // Order keep their tag via classByOrder above.
     const fallbackClass = invoice.has_cos_or_extras === true ? "Extras" : null;
-    // Category/tax/product-service are the SAME "supplier rule wins" fields
-    // as at initial ingestion (see finalLineItems in invoices.ts) — a
-    // vendor's saved rule is the locked, authoritative value, so a fresh
-    // OCR guess must never silently replace it on re-extraction. Unlike
-    // class/project (genuine per-line human calls with no rule to fall
-    // back on), there's no "preserve what was already on this line"
-    // treatment needed here: the supplier rule already IS that persistent
-    // source of truth, consulted fresh every time.
+    // Category/tax are the SAME "supplier rule wins" fields as at initial
+    // ingestion (see finalLineItems in invoices.ts) — a vendor's saved
+    // rule is the locked, authoritative value, so a fresh OCR guess must
+    // never silently replace it on re-extraction. Unlike class/project
+    // (genuine per-line human calls with no rule to fall back on), there's
+    // no "preserve what was already on this line" treatment needed here:
+    // the supplier rule already IS that persistent source of truth,
+    // consulted fresh every time.
     const supplierDefaults = await getSupplierDefaults(
       supabase,
       invoice.organization_id,
@@ -1800,7 +1787,6 @@ async function reExtractInvoiceCore(
           tax_rate: appliedRate,
           qbo_tax_code_id: taxCodeIdFor(appliedRate, orgDefaultTaxRate, orgDefaultTaxCodeId),
           category: holdbackCategoryFor(li) ?? supplierDefaults?.category ?? li.category,
-          product_service: supplierDefaults?.product_service ?? null,
           class: classByOrder.get(i + 1) ?? fallbackClass,
           project_id: projectByOrder.get(i + 1) ?? null,
           line_order: i + 1,

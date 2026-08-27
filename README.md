@@ -187,7 +187,7 @@ written to be idempotent (safe to re-run). Roughly:
 | 0043 | (user) `invoices.qbo_tax_liability_account` — QBO tax liability account on the bill; superseded by 0044. |
 | 0044 | (user) Drops the tax liability account column from 0043. |
 | 0045 | (user) `invoice_line_items.qbo_tax_code_id` — line-level QBO tax code for the bill sync. |
-| 0046 | (user) Supplier settings: `product_service` on `supplier_defaults`, `integration` on `qbo_suppliers`. |
+| 0046 | (user) Supplier settings: `product_service` on `supplier_defaults` (feature reverted 2026-08-27, column left in place unused — see the Settings → Suppliers section below), `integration` on `qbo_suppliers`. |
 | 0047 | (user) Fixes `supplier_defaults.vendor_name_normalized` — dropped/re-added with an extra outer `trim()` to match `normalizeForMatching()` exactly. |
 | 0048 | `organizations.default_tax_rate` (ingest fallback when the supplier has no rule) + `invoices.totals_note` (document-vs-line-items reconciliation note). |
 | 0049 | `qbo_sync_log` (per-org per-section "last synced" times) + `first_seen_at` on `qbo_classes`/`qbo_categories`/`qbo_suppliers`/`projects` (identifies items new in the latest sync). |
@@ -412,20 +412,33 @@ each one was a genuine, different bug, not the same issue recurring:
 ### Settings → Suppliers (new page)
 
 `/settings/suppliers` — one row per synced QBO vendor (Name, invoice count,
-Integration, Category, Product/Service, Class, Tax rate, Currency, Payment
-terms), every field auto-saving on blur like a bill's line items. Suppliers
-are one-way from QBO (never created here); a new one shows up after the next
-"Sync suppliers" and is immediately configurable. This page and the Bill
-panel's "Supplier rules" modal call the **exact same** `saveSupplierDefaults`
+Integration, Category, Class, Tax rate, Currency, Payment terms), every
+field auto-saving on blur like a bill's line items. Suppliers are one-way
+from QBO (never created here); a new one shows up after the next "Sync
+suppliers" and is immediately configurable. This page and the Bill panel's
+"Supplier rules" modal call the **exact same** `saveSupplierDefaults`
 action (now takes `invoiceId: string | null`) against the exact same
 `supplier_defaults` row, so editing either one keeps both in sync by
-construction. `class` and the new `product_service` (migration 0046, plain
-text — no QBO Item/Product-Service mirror exists) are now real supplier
-defaults; `class` used to be deliberately excluded ("a per-bill choice") —
-reversed per an explicit ask, since class drives this org's workflow routing.
+construction. `class` is a real supplier default; it used to be
+deliberately excluded ("a per-bill choice") — reversed per an explicit ask,
+since class drives this org's workflow routing.
 `qbo_suppliers.integration` (migration 0046) is informational only — every
 supplier is QBO today; nothing reads it yet, it's there for whenever a
 Xero/Zoho Books connection exists to pick between.
+
+**`product_service`** (`supplier_defaults.product_service`, migration 0046;
+`invoice_line_items.product_service`, migration 0063) was built out fully —
+Settings, the Supplier rules modal, the Bill panel's line items, ingestion,
+re-extraction, clone — then explicitly reverted on 2026-08-27: the org
+manages this entirely through Category and doesn't need a separate field.
+**Do not re-add a Product/Service field anywhere in this app without
+checking with the user first.** The DB columns were deliberately left in
+place (unused, harmless, matches how this schema already carries other
+inert columns) rather than dropped, since dropping wasn't asked for — only
+the application layer was reverted. This is unrelated to
+`approval_workflow_rules.rule_type = 'product_service'` (see the Workflow
+rules section below), which is a genuinely separate, still-active feature
+that matches against line item *descriptions*, not this field.
 
 ### `Combobox.tsx` — two real bugs, one intentional new mode
 
@@ -525,9 +538,11 @@ Description, e.g. "MR6010 FENCE, 6' X 10' TEMP./FT"):
 
 ### Pending / worth knowing
 
-1. `product_service` and `qbo_suppliers.integration` are stored but not yet
-   used anywhere else (no QBO Item mirror, no second accounting-platform
-   connection) — see their migration comments (0046) before building on them.
+1. `qbo_suppliers.integration` is stored but not yet used anywhere else (no
+   second accounting-platform connection) — see its migration comment (0046)
+   before building on it. `product_service` was fully wired end-to-end and
+   then explicitly reverted at the app layer — see the Settings → Suppliers
+   section above; **do not re-add it.**
 2. The Combobox truncation-save bug (fixed above) may have corrupted
    Category/Class/vendor-name values saved before the fix — an audit across
    this org's live data found only the one already-known instance (already

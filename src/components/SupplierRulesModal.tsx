@@ -7,7 +7,6 @@ import { SubmitButton } from "@/components/SubmitButton";
 export interface SupplierDefaultsValues {
   category: string;
   class: string;
-  product_service: string;
   project_id: string;
   tax_rate: string;
   payment_terms_days: string;
@@ -112,18 +111,6 @@ export function SupplierRulesModal({
                   defaultValue={initialValues.class}
                   placeholder="Search class…"
                   onCommit={() => {}}
-                  className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="mb-1 block text-xs font-medium text-slate-600">
-                  Product/Service
-                </label>
-                <input
-                  name="product_service"
-                  defaultValue={initialValues.product_service}
-                  placeholder="e.g. Subcontractor labour"
                   className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
                 />
               </div>

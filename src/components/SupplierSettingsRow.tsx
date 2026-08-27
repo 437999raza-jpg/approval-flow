@@ -15,7 +15,6 @@ export interface SupplierSettingsRowValues {
   itemCount: number;
   integration: string;
   category: string;
-  productService: string;
   class: string;
   taxRate: string;
   currency: string;
@@ -27,7 +26,7 @@ const cellCls =
 
 // One row of the Suppliers settings table: every field auto-saves on
 // blur/commit, same as a bill's line items — no separate Save button per
-// row. Two hidden forms per row because Category/Product/Class/Tax/
+// row. Two hidden forms per row because Category/Class/Tax/
 // Currency/Terms write to supplier_defaults while Integration writes to
 // qbo_suppliers — different tables, different server actions, but both
 // key off THIS supplier so they always stay attached to the right row
@@ -101,17 +100,6 @@ export function SupplierSettingsRow({
           placeholder="Search category…"
           disabled={readOnly}
           onCommit={submitDefaults}
-          className={cellCls}
-        />
-      </td>
-      <td className="px-2 py-2">
-        <input
-          form={defaultsFormId}
-          name="product_service"
-          defaultValue={supplier.productService}
-          placeholder="—"
-          disabled={readOnly}
-          onBlur={submitDefaults}
           className={cellCls}
         />
       </td>

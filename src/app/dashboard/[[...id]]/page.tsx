@@ -650,7 +650,6 @@ export default async function DashboardPage({
   let supplierDefaultsForSelected: SupplierDefaultsValues = {
     category: "",
     class: "",
-    product_service: "",
     project_id: "",
     tax_rate: "",
     payment_terms_days: "",
@@ -711,7 +710,6 @@ export default async function DashboardPage({
         supplierDefaultsForSelected = {
           category: sd.category ?? "",
           class: sd.class ?? "",
-          product_service: sd.product_service ?? "",
           project_id: sd.project_id ?? "",
           tax_rate: sd.tax_rate?.toString() ?? "",
           payment_terms_days: sd.payment_terms_days?.toString() ?? "",
@@ -734,7 +732,6 @@ export default async function DashboardPage({
         supplierDefaultsForSelected = {
           category: firstLine?.category ?? "",
           class: firstLine?.class ?? "",
-          product_service: firstLine?.product_service ?? "",
           project_id: firstLine?.project_id ?? "",
           tax_rate: firstLine?.tax_rate?.toString() ?? "",
           payment_terms_days: termsDays != null && termsDays >= 0 ? termsDays.toString() : "",
