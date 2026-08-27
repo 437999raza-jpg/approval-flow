@@ -299,14 +299,18 @@ export async function createInvoiceFromFile({
         ]
       : [];
 
-  // Totals: derive from the final line items, then reconcile against the
-  // DOCUMENT's own printed totals. The printed total is ground truth — when
-  // it disagrees with the line-item sum, the document wins ("the total must
-  // match at all costs"), and a note is recorded so the reviewer can see
-  // what happened.
+  // Totals: ALWAYS derived from the actual line items — amount/tax_amount
+  // are what's really entered right now, never silently swapped for the
+  // document's own printed total. When they disagree, totals_note flags it
+  // as a warning for the reviewer to go fix (a missed line, a wrong
+  // amount) — the fix is correcting the line items until the derived total
+  // naturally matches the document, not the app picking a different
+  // number to display. (Previously the document total won outright when
+  // they disagreed — reversed because that hid real line-item mistakes
+  // instead of surfacing them.)
   const derived = computeLineItemTotals(finalLineItems);
-  let computedAmount = hasLineItems ? derived.total : (extracted?.total_amount ?? null);
-  let computedTax = hasLineItems ? derived.tax : (extracted?.tax_amount ?? null);
+  const computedAmount = hasLineItems ? derived.total : (extracted?.total_amount ?? null);
+  const computedTax = hasLineItems ? derived.tax : (extracted?.tax_amount ?? null);
   let totalsNote: string | null = null;
 
   if (hasLineItems) {
@@ -315,9 +319,7 @@ export async function createInvoiceFromFile({
       printedTotal != null &&
       Math.abs(printedTotal - derived.total) > 0.01
     ) {
-      computedAmount = printedTotal; // the document wins
-      if (extracted?.tax_amount != null) computedTax = extracted.tax_amount;
-      totalsNote = `Document total ${printedTotal.toFixed(2)} differs from line items (${derived.total.toFixed(2)}). The document total was used.`;
+      totalsNote = `Document total ${printedTotal.toFixed(2)} differs from these line items (${derived.total.toFixed(2)}). Check the line items above — a missing or wrong amount is the usual cause.`;
     } else if (printedTotal == null) {
       // The printed total couldn't be read at all — the number shown is
       // derived from line items and was never verified against the

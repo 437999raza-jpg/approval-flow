@@ -518,41 +518,29 @@ export async function recomputeInvoiceTotals(
     .eq("invoice_id", invoiceId);
   const { total, tax } = computeLineItemTotals(items ?? []);
 
-  // Re-run the "document total wins" reconciliation: the printed total
-  // (document_total) is ground truth. If the line items now match it, the
-  // amber note CLEARS; if they still disagree, the document total stays and
-  // the note stays. Fixing the lines to match the total makes the warning
-  // disappear — that was the bug (the note was never recomputed on edits).
+  // amount/tax_amount are ALWAYS what the line items actually add up to
+  // right now — never silently swapped for the document's own printed
+  // total. Compare against document_total purely to flag a warning note;
+  // fixing the mismatch means correcting the line items until this
+  // derived total naturally matches the document, not the app picking a
+  // different number to display. The note recomputes on every edit, so
+  // fixing the lines clears it automatically.
   const { data: invoice } = await supabase
     .from("invoices")
-    .select("document_total, extraction")
+    .select("document_total")
     .eq("id", invoiceId)
     .single();
   const printedTotal = invoice?.document_total ?? null;
-  let amount = total;
-  let taxAmount = tax;
-  let totalsNote: string | null = null;
-  if (printedTotal != null && Math.abs(printedTotal - total) > 0.01) {
-    amount = printedTotal;
-    // The SAME line items that disagree with the printed total also make
-    // the derived tax unreliable (usually a $0 line the OCR missed a real
-    // dollar amount on) — prefer the document's own printed tax figure
-    // when the original extraction captured one, same as ingestion does
-    // (see invoices.ts). Without this, cleaning up a line at a time (e.g.
-    // deleting stray $0 rows) would silently clobber an already-correct
-    // extracted tax with a live-derived one that's wrong at that
-    // intermediate step, even though the final total still gets the
-    // document's own number.
-    const extractedTax = invoice?.extraction?.tax_amount;
-    if (typeof extractedTax === "number") taxAmount = extractedTax;
-    totalsNote = `Document total ${printedTotal.toFixed(2)} differs from line items (${total.toFixed(2)}). The document total was used.`;
-  }
+  const totalsNote =
+    printedTotal != null && Math.abs(printedTotal - total) > 0.01
+      ? `Document total ${printedTotal.toFixed(2)} differs from these line items (${total.toFixed(2)}). Check the line items above — a missing or wrong amount is the usual cause.`
+      : null;
 
   await supabase
     .from("invoices")
     .update({
-      amount,
-      tax_amount: taxAmount,
+      amount: total,
+      tax_amount: tax,
       totals_note: totalsNote,
       updated_at: new Date().toISOString(),
     })

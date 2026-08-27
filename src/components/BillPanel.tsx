@@ -249,38 +249,20 @@ export function BillPanel({
     tax_rate: li.id in liveTaxRates ? liveTaxRates[li.id] : li.tax_rate,
   }));
 
-  // Subtotal/tax/total are derived live from the line items shown below
-  // (amount × each line's own tax rate%, blank rate = no tax) so the
-  // totals block always matches what's actually in the table — not a
-  // separately-typed figure that can drift out of sync. Before any line
-  // items exist there's nothing to derive from, so fall back to the
-  // invoice's own (extracted) figures.
-  //
-  // Exception: at ingestion, when the line items' own sum disagreed with
-  // the document's printed total, the document won and invoice.amount/
-  // tax_amount were set to ITS figures (with totals_note recording why —
-  // see invoices.ts). Showing the live line-item sum instead here, as this
-  // block used to unconditionally do, directly contradicted that note
-  // ("the document total was used" right above a number that wasn't it).
-  // So: prefer the reconciled, document-backed figures on load, and only
-  // switch to the live line-item sum once the user actually starts
-  // editing amounts/tax here — at that point they're actively correcting
-  // whatever caused the mismatch (frequently a $0 line the OCR missed)
-  // and want to see the effect of that edit immediately.
+  // Subtotal/tax/total are ALWAYS derived live from the line items shown
+  // below (amount × each line's own tax rate%, blank rate = no tax) — this
+  // is what's really entered right now, never silently swapped for the
+  // document's own printed total. If it disagrees with the document total,
+  // invoice.totals_note flags that as a warning below; the fix is
+  // correcting the line items (a missing line, a wrong amount) until this
+  // live total naturally matches the document, not a different number
+  // being substituted here. Before any line items exist there's nothing to
+  // derive from, so fall back to the invoice's own (extracted) figures.
   const hasLineItems = lineItems.length > 0;
   const derivedTotals = computeLineItemTotals(effectiveLineItems);
-  const hasLiveEdits = Object.keys(liveAmounts).length > 0 || Object.keys(liveTaxRates).length > 0;
-  const useReconciledTotal =
-    !hasLiveEdits &&
-    invoice.document_total != null &&
-    Math.abs(invoice.document_total - derivedTotals.total) > 0.01;
-  const subtotal = hasLineItems
-    ? useReconciledTotal
-      ? (invoice.amount ?? 0) - (invoice.tax_amount ?? 0)
-      : derivedTotals.subtotal
-    : invoice.amount;
-  const tax = hasLineItems ? (useReconciledTotal ? invoice.tax_amount : derivedTotals.tax) : invoice.tax_amount;
-  const amount = hasLineItems ? (useReconciledTotal ? invoice.amount : derivedTotals.total) : invoice.amount;
+  const subtotal = hasLineItems ? derivedTotals.subtotal : invoice.amount;
+  const tax = hasLineItems ? derivedTotals.tax : invoice.tax_amount;
+  const amount = hasLineItems ? derivedTotals.total : invoice.amount;
   const num2 = (n: number | null) =>
     n != null
       ? n.toLocaleString(undefined, {
