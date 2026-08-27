@@ -187,7 +187,7 @@ written to be idempotent (safe to re-run). Roughly:
 | 0043 | (user) `invoices.qbo_tax_liability_account` — QBO tax liability account on the bill; superseded by 0044. |
 | 0044 | (user) Drops the tax liability account column from 0043. |
 | 0045 | (user) `invoice_line_items.qbo_tax_code_id` — line-level QBO tax code for the bill sync. |
-| 0046 | (user) Supplier settings: `product_service` on `supplier_defaults` (feature reverted 2026-08-27, column left in place unused — see the Settings → Suppliers section below), `integration` on `qbo_suppliers`. |
+| 0046 | (user) Supplier settings: `product_service` on `supplier_defaults` (feature reverted 2026-08-27, column dropped by 0064 — see the Settings → Suppliers section below), `integration` on `qbo_suppliers`. |
 | 0047 | (user) Fixes `supplier_defaults.vendor_name_normalized` — dropped/re-added with an extra outer `trim()` to match `normalizeForMatching()` exactly. |
 | 0048 | `organizations.default_tax_rate` (ingest fallback when the supplier has no rule) + `invoices.totals_note` (document-vs-line-items reconciliation note). |
 | 0049 | `qbo_sync_log` (per-org per-section "last synced" times) + `first_seen_at` on `qbo_classes`/`qbo_categories`/`qbo_suppliers`/`projects` (identifies items new in the latest sync). |
@@ -431,11 +431,10 @@ Xero/Zoho Books connection exists to pick between.
 Settings, the Supplier rules modal, the Bill panel's line items, ingestion,
 re-extraction, clone — then explicitly reverted on 2026-08-27: the org
 manages this entirely through Category and doesn't need a separate field.
-**Do not re-add a Product/Service field anywhere in this app without
-checking with the user first.** The DB columns were deliberately left in
-place (unused, harmless, matches how this schema already carries other
-inert columns) rather than dropped, since dropping wasn't asked for — only
-the application layer was reverted. This is unrelated to
+Both app code AND the DB columns themselves are gone (migration 0064 drops
+both — confirmed empty on every row first, so nothing was lost). **Do not
+re-add a Product/Service field anywhere in this app without checking with
+the user first.** This is unrelated to
 `approval_workflow_rules.rule_type = 'product_service'` (see the Workflow
 rules section below), which is a genuinely separate, still-active feature
 that matches against line item *descriptions*, not this field.
@@ -541,8 +540,9 @@ Description, e.g. "MR6010 FENCE, 6' X 10' TEMP./FT"):
 1. `qbo_suppliers.integration` is stored but not yet used anywhere else (no
    second accounting-platform connection) — see its migration comment (0046)
    before building on it. `product_service` was fully wired end-to-end and
-   then explicitly reverted at the app layer — see the Settings → Suppliers
-   section above; **do not re-add it.**
+   then explicitly reverted, app layer AND its DB columns both removed
+   (migration 0064) — see the Settings → Suppliers section above; **do not
+   re-add it.**
 2. The Combobox truncation-save bug (fixed above) may have corrupted
    Category/Class/vendor-name values saved before the fix — an audit across
    this org's live data found only the one already-known instance (already
