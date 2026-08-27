@@ -728,6 +728,51 @@ the next inbound email for that org to trigger another pass. Durability
 processing with no browser open at all is not, and would need Vercel Pro
 (or a similar scheduled-job service) to close.
 
+### Multi-tenant onboarding tool: `/admin/organizations`
+
+The app was already multi-tenant-ready in every load-bearing way — RLS
+scopes every table by `organization_id`, the inbound invoice address is
+already per-org (`inbound_email_token`/`inbound_email_local`, see
+[Email ingestion](#email-ingestion-resend-receiving)), QBO connections are
+per-org, and `inviteMember` (Settings) already invites arbitrary emails
+into an *existing* org. The one real gap, hit when onboarding a second
+paying tenant ("Fluid"): there was no way to create a NEW org at all short
+of hand-inserting rows in the Supabase SQL editor.
+
+**Fix**: `src/lib/platform-admin.ts` adds a cross-org "platform admin" check
+(`PLATFORM_ADMIN_EMAILS`, a comma-separated env var — deliberately NOT a DB
+role, since this is about who can create tenants, not who administers one).
+`src/lib/admin-actions.ts`'s `createOrganizationAction`, exposed at
+`/admin/organizations` (linked from the sidebar only for platform admins),
+does the full bootstrap in one step:
+1. Inserts the `organizations` row (auto-generates a slug from the name,
+   retrying with a random suffix on collision; `inbound_email_token` is a
+   DB default, `inbound_email_local` is optional at creation time — the
+   org's own admin can set/change it later from Settings either way).
+2. Creates (or reuses) the first admin's Supabase Auth account by email —
+   same `createUser`-then-`listUsers`-fallback approach as `inviteMember`.
+   They sign in via `/login`'s one-time link; no password to hand over.
+3. Adds them to `organization_members` with `role: 'admin'`.
+4. **Bootstraps a default workflow** — one `approval_workflows` row
+   (`is_default: true`), one step, with the new admin as that step's
+   `is_default` approver. Skipping this was tried and caught before
+   shipping: `decide()` and friends in `dashboard-actions.ts` silently
+   no-op when `invoice.workflow_id` is null, so a org created without a
+   workflow would accept invoices forever without Approve/Reject ever
+   doing anything.
+
+This intentionally mirrors the *admin-provisioned* model (you set up the
+tenant and hand its first user an email + address), not public self-serve
+signup — there's no plan selection, billing capture, or email verification
+flow, since it's used to onboard specific named clients, not open
+registration.
+
+**Deferred, on purpose**: the shared inbound-email domain still reads as
+`flow.ufirst.co` in code comments/`.env.local` — fine for now since the
+app itself isn't finalized yet; revisit before a client outside Ufirst
+actually forwards invoices there, so their capture address doesn't
+visibly reference a different company's domain.
+
 ---
 
 ## Environment variables
@@ -748,6 +793,7 @@ Copy `.env.example` → `.env.local` and fill in:
 | `QBO_REDIRECT_URI` | For QBO sync | Must match the app's registered Redirect URI exactly, e.g. `http://localhost:3210/api/qbo/callback` |
 | `RESEND_API_KEY` | Yes (for email ingestion + mentions) | resend.com — required for inbound attachments and for @mention notification emails; without it, inbound ingestion can't fetch attachments and mentions still create the in-app `notifications` row, just no email |
 | `RESEND_FROM_EMAIL` | No (required if `RESEND_API_KEY` is set) | Must be a verified sender/domain in your Resend account |
+| `PLATFORM_ADMIN_EMAILS` | No | Comma-separated emails allowed to create new organizations at `/admin/organizations` (see [Multi-tenant onboarding tool](#multi-tenant-onboarding-tool-adminorganizations)). Leave unset to hide that page entirely. |
 
 Supabase renamed its API keys at some point — you may see either
 **"Publishable and secret API keys"** or **"Legacy anon, service_role API
@@ -797,9 +843,19 @@ that's no longer true on your machine.
 
 ### First org setup
 
-There is no signup/invite UI yet (see [What's not built
-yet](#whats-not-built-yet)) — but once you have one admin bootstrapped via
-SQL, [Settings](#settings) can invite everyone else.
+**If `PLATFORM_ADMIN_EMAILS` is set** (see [Environment
+variables](#environment-variables)): sign in once via `/login` with an email
+in that list, then go to `/admin/organizations` (linked from the sidebar) —
+it creates the org, its inbound invoice address, a default workflow, and the
+first admin account in one step. This is the path for onboarding any org
+after the first. See [Multi-tenant onboarding
+tool](#multi-tenant-onboarding-tool-adminorganizations) for what it does
+under the hood.
+
+**Bootstrapping the very first org** (before you've set `PLATFORM_ADMIN_EMAILS`,
+or if you'd rather not expose that page yet) still works the manual way —
+once you have one admin bootstrapped via SQL, [Settings](#settings) can
+invite everyone else into that org.
 
 1. Sign in once via `/login` (password or magic link — see [Authentication](#authentication)) so the user exists in `auth.users`.
 2. In the Supabase SQL editor:

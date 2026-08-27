@@ -33,6 +33,7 @@ import type { Database, InvoiceStatus } from "@/lib/supabase/types";
 import { isPdfName, isImageName } from "@/lib/file-types";
 import { normalizeForMatching } from "@/lib/matching";
 import { buildAuditTimeline } from "@/lib/audit-timeline";
+import { isPlatformAdmin } from "@/lib/platform-admin";
 import {
   effectiveApproversForStep,
   stepDecisionState,
@@ -1125,6 +1126,29 @@ export default async function DashboardPage({
             </svg>
             Settings
           </Link>
+          {isPlatformAdmin(user.email) && (
+            <Link
+              href="/admin/organizations"
+              className="flex items-center gap-2 rounded-md px-3 py-2 text-sm text-slate-600 hover:bg-slate-100"
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <rect x="3" y="3" width="7" height="7" />
+                <rect x="14" y="3" width="7" height="7" />
+                <rect x="14" y="14" width="7" height="7" />
+                <rect x="3" y="14" width="7" height="7" />
+              </svg>
+              Organizations
+            </Link>
+          )}
         </div>
         <div className="flex items-center justify-between border-t border-slate-200 p-4">
           <span className="truncate text-xs text-slate-500">{user.email}</span>
