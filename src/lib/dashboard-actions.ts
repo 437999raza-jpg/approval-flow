@@ -2594,6 +2594,7 @@ export async function refreshQboData() {
     redirect("/settings?qbo=error");
   }
 
+  let total = 0;
   try {
     const [rates, codes, classes, categories, suppliers, projects] = await Promise.all([
       listTaxRates(conn),
@@ -2705,15 +2706,20 @@ export async function refreshQboData() {
       if (error) throw error;
     }
 
-    const total =
+    total =
       rates.length + suppliers.length + classes.length + categories.length + projects.length;
-    revalidateTag(qboTag(org.id)); // invalidate the cached QBO mirrors
-    revalidatePath("/settings");
-    redirect(`/settings?qbo=refresh_done&count=${total}`);
   } catch (e) {
     console.error("refreshQboData failed:", e);
     redirect("/settings?qbo=error");
   }
+
+  // redirect() throws internally — it must live OUTSIDE the try/catch, or
+  // the catch swallows the success redirect and every refresh shows the
+  // error banner even though the data synced (same rule as the individual
+  // sync functions above).
+  revalidateTag(qboTag(org.id)); // invalidate the cached QBO mirrors
+  revalidatePath("/settings");
+  redirect(`/settings?qbo=refresh_done&count=${total}`);
 }
 
 
