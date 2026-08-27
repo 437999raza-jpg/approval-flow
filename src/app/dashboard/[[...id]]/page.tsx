@@ -922,6 +922,7 @@ export default async function DashboardPage({
     id: inv.id,
     vendor: inv.vendor_name ?? inv.file_name,
     amount: inv.amount,
+    invoiceNumber: inv.invoice_number,
     currency: inv.currency,
     status: inv.status,
     isDuplicate: duplicateInvoiceIds.has(inv.id),

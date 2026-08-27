@@ -16,6 +16,7 @@ export interface SelectableInvoice {
   id: string;
   vendor: string; // vendor_name or file_name fallback
   amount: number | null;
+  invoiceNumber: string | null;
   currency: string;
   status: InvoiceStatus;
   isDuplicate: boolean;
@@ -315,12 +316,21 @@ export function InvoiceSelectionList({
                     </span>
                   )}
                 </div>
-                <div className="mt-1 flex items-center justify-between">
-                  <span className="text-xs text-slate-500">
-                    {inv.amount != null
-                      ? inv.amount.toLocaleString(undefined, { style: "currency", currency: inv.currency })
-                      : "No amount extracted"}
-                  </span>
+                <div className="mt-1 flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="text-xs text-slate-500">
+                      {inv.amount != null
+                        ? inv.amount.toLocaleString(undefined, { style: "currency", currency: inv.currency })
+                        : "No amount extracted"}
+                    </div>
+                    {/* A quick eyeball check against the source document —
+                        the invoice number sitting right under the amount. */}
+                    {inv.invoiceNumber && (
+                      <div className="mt-0.5 truncate text-[11px] text-slate-400">
+                        #{inv.invoiceNumber}
+                      </div>
+                    )}
+                  </div>
                   <InvoiceStatusBadge status={inv.status} />
                 </div>
                 {inv.holders.length > 0 && (
