@@ -525,14 +525,26 @@ export async function recomputeInvoiceTotals(
   // disappear — that was the bug (the note was never recomputed on edits).
   const { data: invoice } = await supabase
     .from("invoices")
-    .select("document_total")
+    .select("document_total, extraction")
     .eq("id", invoiceId)
     .single();
   const printedTotal = invoice?.document_total ?? null;
   let amount = total;
+  let taxAmount = tax;
   let totalsNote: string | null = null;
   if (printedTotal != null && Math.abs(printedTotal - total) > 0.01) {
     amount = printedTotal;
+    // The SAME line items that disagree with the printed total also make
+    // the derived tax unreliable (usually a $0 line the OCR missed a real
+    // dollar amount on) — prefer the document's own printed tax figure
+    // when the original extraction captured one, same as ingestion does
+    // (see invoices.ts). Without this, cleaning up a line at a time (e.g.
+    // deleting stray $0 rows) would silently clobber an already-correct
+    // extracted tax with a live-derived one that's wrong at that
+    // intermediate step, even though the final total still gets the
+    // document's own number.
+    const extractedTax = invoice?.extraction?.tax_amount;
+    if (typeof extractedTax === "number") taxAmount = extractedTax;
     totalsNote = `Document total ${printedTotal.toFixed(2)} differs from line items (${total.toFixed(2)}). The document total was used.`;
   }
 
@@ -540,7 +552,7 @@ export async function recomputeInvoiceTotals(
     .from("invoices")
     .update({
       amount,
-      tax_amount: tax,
+      tax_amount: taxAmount,
       totals_note: totalsNote,
       updated_at: new Date().toISOString(),
     })
