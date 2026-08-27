@@ -179,16 +179,38 @@ export async function extractInvoiceFields(
       }
     );
 
-    if (!response.ok) return null;
+    if (!response.ok) {
+      // Surface WHY extraction failed — the caller only sees "Extraction
+      // returned no result" and the real cause (rate limit, model error,
+      // bad key, oversize payload) was being swallowed.
+      const text = await response.text().catch(() => "");
+      console.error(
+        `extractInvoiceFields: OpenRouter ${response.status}: ${text.slice(0, 500)}`
+      );
+      return null;
+    }
 
     const body = (await response.json()) as {
       choices?: { message?: { content?: string } }[];
     };
     const contentText = body.choices?.[0]?.message?.content;
-    if (!contentText) return null;
+    if (!contentText) {
+      console.error("extractInvoiceFields: OpenRouter returned no content");
+      return null;
+    }
 
-    return parseExtraction(contentText);
-  } catch {
+    const parsed = parseExtraction(contentText);
+    if (!parsed) {
+      console.error(
+        `extractInvoiceFields: could not parse model output (${contentText.length} chars): ${contentText.slice(0, 300)}`
+      );
+    }
+    return parsed;
+  } catch (err) {
+    console.error(
+      "extractInvoiceFields error:",
+      err instanceof Error ? err.message : String(err)
+    );
     return null;
   }
 }
