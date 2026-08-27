@@ -647,6 +647,34 @@ Three quick, independent fixes right after the audit:
   `SelectableInvoice`, wired from `inv.invoice_number` in the dashboard
   page's `selectableRows` mapping.
 
+### Prev/Next invoice navigation; document viewer stays open across it
+
+New chevron buttons in the top bar, next to Queue — flip through invoices
+in the exact order (and under the same filters/search) the Invoices list
+is currently showing, disabled at either end. `deleteInvoiceAction` now
+takes a `nextInvoiceId` (computed the same way, previous one as fallback)
+and the current `qs`, redirecting there instead of hard-redirecting to
+bare `/dashboard` — so deleting stays in this view and lands on the next
+invoice instead of jumping to the newest invoice overall.
+
+Getting the document viewer's open/closed state to survive this was the
+real work: `DetailSplit`'s `showDoc` was a plain `useState`, relying on
+the component instance never remounting across invoice navigation (a
+pre-existing comment even says so). That was fine for the invoice LIST's
+own links (which HIDE while a document is focused, so you could never
+actually click a different invoice through them while one was open) —
+but Prev/Next, sitting in the always-visible top bar, is a genuinely new
+way to switch invoices while a document stays open, and relying on
+implicit React state preservation wasn't holding up in practice. Made it
+explicit instead: a `doc=1` query param now travels with the invoice id
+everywhere `qs` is used (Prev/Next, the list, delete's redirect).
+`openDocument`/`hideDocument` write it via `router.replace(...,
+{ scroll: false })`; a `useEffect` scoped to `invoiceId` changing (never
+firing on the user's own click on the CURRENT invoice) resyncs local
+`showDoc`/`focused` from it whenever the invoice actually changes.
+**Do not go back to deriving "document open" purely from local state** —
+key it through the URL like this if it needs to survive navigation.
+
 ---
 
 ## Environment variables
