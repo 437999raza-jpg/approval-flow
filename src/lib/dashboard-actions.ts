@@ -2000,14 +2000,14 @@ export async function saveDefaultTaxRate(formData: FormData) {
 }
 
 // Flow's usage billing: the per-org charge per document processed, in USD
-// (default $0.15). Admin only; returned as a result object so the Billing
-// page can show inline feedback without navigating.
-// Flow's usage billing: the per-org charge per document processed, in USD
-// (default $0.15). Admin only. Uses the same void+redirect pattern as every
-// other Settings form (saveDefaultTaxRate etc.) — a form action must be a
-// direct server-action reference, never wrapped in an inline closure, or
-// Next.js throws at runtime.
-export async function saveUsageRate(formData: FormData) {
+// (default $0.15). Admin only. Returns { ok, error } so the client-side
+// UsageRateForm can show inline feedback ("0.15 saved") and grey the Save
+// button until the value changes again — the same pattern as
+// saveInboundEmailLocal (called from a client component, never an inline
+// closure on a server-component form).
+export async function saveUsageRate(
+  formData: FormData
+): Promise<{ ok: boolean; error?: string }> {
 
   const supabase = createClient();
   const {
@@ -2017,22 +2017,25 @@ export async function saveUsageRate(formData: FormData) {
 
   const org = await getCurrentOrg(supabase);
   if (!org || org.role !== "admin") {
-    redirect("/billing?rate=error");
+    return { ok: false, error: "Only admins can change the usage rate." };
   }
 
   const raw = String(formData.get("usage_rate_usd") ?? "").trim();
   const rate = Number(raw);
   if (!Number.isFinite(rate) || rate <= 0 || rate > 1000) {
-    redirect("/billing?rate=error");
+    return { ok: false, error: "Enter a positive USD amount (e.g. 0.15)." };
   }
 
   const { error: updateError } = await supabase
     .from("organizations")
-    .update({ usage_rate_usd: Math.round(rate * 100) / 100 })
+    .update({
+      usage_rate_usd: Math.round(rate * 100) / 100,
+      usage_rate_updated_at: new Date().toISOString(),
+    })
     .eq("id", org.id);
   if (updateError) {
     console.error("saveUsageRate failed:", updateError);
-    redirect("/billing?rate=error");
+    return { ok: false, error: "Could not save the rate — try again." };
   }
 
   await supabase.from("audit_log").insert({
@@ -2043,7 +2046,84 @@ export async function saveUsageRate(formData: FormData) {
   });
 
   revalidatePath("/billing");
-  redirect("/billing?rate=saved");
+  return { ok: true };
+}
+
+// Stripe Checkout for the org's suggested usage charge. Creates a hosted
+// Checkout Session (Stripe handles the card form) and returns its URL so
+// the client can redirect. Amount = documents processed × the org's
+// per-document rate, in USD. Requires STRIPE_SECRET_KEY; without it returns
+// a clear error (the Billing page shows the "not configured" state).
+// No Stripe SDK — a single form POST to the API, like OpenRouter/Resend.
+export async function createUsageCheckout(): Promise<{ ok: boolean; url?: string; error?: string }> {
+
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
+  const org = await getCurrentOrg(supabase);
+  if (!org) return { ok: false, error: "No organization." };
+
+  const secret = process.env.STRIPE_SECRET_KEY;
+  if (!secret) {
+    return { ok: false, error: "Stripe is not configured (STRIPE_SECRET_KEY missing)." };
+  }
+
+  const [{ count }, { data: orgRow }] = await Promise.all([
+    supabase
+      .from("usage_events")
+      .select("id", { count: "exact", head: true })
+      .eq("organization_id", org.id),
+    supabase
+      .from("organizations")
+      .select("usage_rate_usd, name")
+      .eq("id", org.id)
+      .single(),
+  ]);
+  const rate = orgRow?.usage_rate_usd ?? 0.15;
+  const amountCents = Math.round((count ?? 0) * rate * 100);
+  if (amountCents <= 0) {
+    return { ok: false, error: "No usage to bill yet — nothing to charge." };
+  }
+
+  const origin =
+    process.env.NEXT_PUBLIC_APP_URL ??
+    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3210");
+
+  try {
+    const body = new URLSearchParams({
+      mode: "payment",
+      success_url: `${origin}/billing?payment=success`,
+      cancel_url: `${origin}/billing?payment=cancelled`,
+      "line_items[0][quantity]": "1",
+      "line_items[0][price_data][currency]": "usd",
+      "line_items[0][price_data][unit_amount]": String(amountCents),
+      "line_items[0][price_data][product_data][name]": `${orgRow?.name ?? "Usage"} — document processing`,
+      "line_items[0][price_data][product_data][description]": `${count} document${(count ?? 0) === 1 ? "" : "s"} × $${rate.toFixed(2)}`,
+      metadata: JSON.stringify({ organization_id: org.id }),
+    });
+    const res = await fetch("https://api.stripe.com/v1/checkout/sessions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${secret}`,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body,
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      console.error("Stripe checkout failed:", res.status, text.slice(0, 300));
+      return { ok: false, error: `Stripe checkout failed (${res.status}).` };
+    }
+    const json = (await res.json()) as { url?: string };
+    if (!json.url) return { ok: false, error: "Stripe returned no checkout URL." };
+    return { ok: true, url: json.url };
+  } catch (err) {
+    console.error("createUsageCheckout error:", err);
+    return { ok: false, error: err instanceof Error ? err.message : "Stripe error." };
+  }
 }
 
 

@@ -47,6 +47,7 @@ export interface Database {
           default_tax_rate: number | null;
           default_tax_code_id: string | null;
           usage_rate_usd: number;
+          usage_rate_updated_at: string | null;
           created_at: string;
         };
         Insert: Partial<

@@ -1180,8 +1180,7 @@ anything links to the old URL shape.
 
 `/billing` — Flow's own usage billing: how many documents each client org
 has processed, at the org's per-document rate in USD (default **$0.15**,
-editable by admins). This is **tracking only** — no payment processor; the
-invoice is sent to the client manually.
+editable by admins).
 
 - One `usage_events` row per document accepted into the pipeline: an
   inbound-email attachment (after the signature-image filter) or a manual
@@ -1190,6 +1189,14 @@ invoice is sent to the client manually.
 - The Billing page shows the total documents processed, the suggested
   charge (count × rate), a by-month rollup, and the recent documents list.
   Any org member can view; only admins can change the rate.
+- The rate editor greys the **Save** button until the value actually
+  changes, then reads e.g. **"0.15 saved"** with the **saved-on date**
+  (`organizations.usage_rate_updated_at`, migration 0062).
+- **Stripe Checkout** ("Pay now") charges the suggested amount via Stripe's
+  hosted page (amount = documents × rate, USD). Requires `STRIPE_SECRET_KEY`;
+  without it the page shows "Stripe is not configured". Success/cancel
+  redirect back to `/billing?payment=success|cancelled`.
+  `NEXT_PUBLIC_APP_URL` sets the redirect base (defaults to VERCEL_URL).
 
 ## Settings
 

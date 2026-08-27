@@ -2,19 +2,20 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentOrg } from "@/lib/current-org";
-import { saveUsageRate } from "@/lib/dashboard-actions";
-import { SubmitButton } from "@/components/SubmitButton";
+import { saveUsageRate, createUsageCheckout } from "@/lib/dashboard-actions";
+import { UsageRateForm } from "@/components/UsageRateForm";
+import { StripeCheckoutButton } from "@/components/StripeCheckoutButton";
 
 // Flow's usage billing: how many documents this client org has processed,
-// at the org's per-document rate (USD) — the charge the client sees. This
-// is tracking only: the invoice is sent manually (no payment processor).
-// Any org member can view; only admins can change the rate. Authored by
-// Araza.
+// at the org's per-document rate (USD) — the charge the client sees. The
+// rate is editable (admin only) with a greyed-until-changed Save button and
+// its saved-on date. Stripe Checkout ("Pay now") charges the suggested
+// amount via Stripe's hosted page when configured. Authored by Araza.
 
 export default async function BillingPage({
   searchParams,
 }: {
-  searchParams: { rate?: string };
+  searchParams: { payment?: string };
 }) {
   const supabase = createClient();
   const {
@@ -25,6 +26,7 @@ export default async function BillingPage({
   const org = await getCurrentOrg(supabase);
   if (!org) redirect("/dashboard");
   const isAdmin = org.role === "admin";
+  const stripeConfigured = Boolean(process.env.STRIPE_SECRET_KEY);
 
   const [{ data: events }, { data: orgRow }] = await Promise.all([
     supabase
@@ -35,11 +37,12 @@ export default async function BillingPage({
       .limit(500),
     supabase
       .from("organizations")
-      .select("usage_rate_usd")
+      .select("usage_rate_usd, usage_rate_updated_at")
       .eq("id", org.id)
       .single(),
   ]);
   const rate = orgRow?.usage_rate_usd ?? 0.15;
+  const savedAt = orgRow?.usage_rate_updated_at ?? null;
 
   // Monthly rollup from the (already capped at 500) most recent events.
   const monthKey = (iso: string) => iso.slice(0, 7); // YYYY-MM
@@ -52,6 +55,7 @@ export default async function BillingPage({
 
   const totalCount = (events ?? []).length;
   const totalCharge = totalCount * rate;
+  const canPay = totalCount > 0 && stripeConfigured;
 
   return (
     <main className="mx-auto max-w-3xl p-8">
@@ -61,62 +65,55 @@ export default async function BillingPage({
       >
         ← Back to dashboard
       </Link>
-      <h1 className="mt-2 text-xl font-semibold">Billing & usage</h1>
+      <h1 className="mt-2 text-xl font-semibold">Billing &amp; usage</h1>
       <p className="mt-1 text-sm text-slate-500">
-        Documents processed for {org.name} at {rate.toFixed(2)} USD each —
-        usage tracking only; the invoice is sent manually.
+        Documents processed for {org.name} at {rate.toFixed(2)} USD each.
       </p>
 
-      {searchParams.rate === "saved" && (
+      {searchParams.payment === "success" && (
         <div className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
-          Usage rate saved.
+          Payment complete — thank you!
         </div>
       )}
-      {searchParams.rate === "error" && (
-        <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-          Could not save the rate — enter a positive USD amount (e.g. 0.15).
+      {searchParams.payment === "cancelled" && (
+        <div className="mt-3 rounded-md border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+          Payment cancelled — nothing was charged.
         </div>
       )}
 
-      {isAdmin && (
-        <form
-          action={saveUsageRate}
-          className="mt-4 flex max-w-sm items-end gap-2 rounded-md border border-slate-200 p-4"
-        >
-          <div className="flex-1">
-            <label
-              htmlFor="usage_rate_usd"
-              className="mb-1 block text-xs font-medium text-slate-600"
-            >
-              Rate per document (USD)
-            </label>
-            <input
-              id="usage_rate_usd"
-              name="usage_rate_usd"
-              type="number"
-              step="0.01"
-              min="0.01"
-              defaultValue={rate}
-              className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
-            />
+      {/* Rate per document */}
+      <section className="mt-6 rounded-lg border border-slate-200 bg-white p-4">
+        <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">
+          Rate per document
+        </div>
+        {isAdmin ? (
+          <UsageRateForm
+            currentRate={rate}
+            savedAt={savedAt}
+            action={saveUsageRate}
+          />
+        ) : (
+          <div className="mt-2 text-sm text-slate-700">
+            {rate.toFixed(2)} USD
+            {savedAt
+              ? ` — saved on ${new Date(savedAt).toLocaleDateString()}`
+              : ""}
           </div>
-          <SubmitButton className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700">
-            Save rate
-          </SubmitButton>
-        </form>
-      )}
+        )}
+      </section>
 
-      <div className="mt-6 grid grid-cols-2 gap-4">
-        <div className="rounded-md border border-slate-200 p-4">
-          <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+      {/* Summary */}
+      <div className="mt-4 grid grid-cols-2 gap-4">
+        <div className="rounded-lg border border-slate-200 bg-white p-4">
+          <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">
             Documents processed
           </div>
           <div className="mt-1 text-2xl font-bold tabular-nums">
             {totalCount.toLocaleString()}
           </div>
         </div>
-        <div className="rounded-md border border-slate-200 p-4">
-          <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+        <div className="rounded-lg border border-slate-200 bg-white p-4">
+          <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">
             Suggested charge
           </div>
           <div className="mt-1 text-2xl font-bold tabular-nums">
@@ -128,8 +125,43 @@ export default async function BillingPage({
         </div>
       </div>
 
-      <div className="mt-6">
-        <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+      {/* Payment */}
+      <section className="mt-4 rounded-lg border border-slate-200 bg-white p-4">
+        <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">
+          Payment
+        </div>
+        {canPay ? (
+          <>
+            <p className="mt-1 text-sm text-slate-600">
+              Pay the suggested charge of{" "}
+              <strong>
+                {totalCharge.toLocaleString(undefined, {
+                  style: "currency",
+                  currency: "USD",
+                })}
+              </strong>{" "}
+              ({totalCount} document{totalCount === 1 ? "" : "s"} ×{" "}
+              {rate.toFixed(2)}). You&apos;ll be taken to Stripe&apos;s secure
+              checkout page.
+            </p>
+            <StripeCheckoutButton action={createUsageCheckout} />
+          </>
+        ) : stripeConfigured ? (
+          <p className="mt-1 text-sm text-slate-500">
+            No usage to bill yet — documents processed will appear here.
+          </p>
+        ) : (
+          <p className="mt-1 text-sm text-slate-500">
+            Stripe is not configured yet. Set{" "}
+            <code className="rounded bg-slate-100 px-1">STRIPE_SECRET_KEY</code>{" "}
+            to enable payments.
+          </p>
+        )}
+      </section>
+
+      {/* By month */}
+      <section className="mt-4 rounded-lg border border-slate-200 bg-white p-4">
+        <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">
           By month
         </div>
         <table className="mt-2 w-full text-sm">
@@ -162,15 +194,19 @@ export default async function BillingPage({
             )}
           </tbody>
         </table>
-      </div>
+      </section>
 
-      <div className="mt-6">
-        <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+      {/* Recent documents */}
+      <section className="mt-4 rounded-lg border border-slate-200 bg-white p-4">
+        <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">
           Recent documents
         </div>
         <ul className="mt-2 divide-y divide-slate-100 text-sm">
           {(events ?? []).slice(0, 50).map((e, i) => (
-            <li key={i} className="flex items-baseline justify-between gap-4 py-1.5">
+            <li
+              key={i}
+              className="flex items-baseline justify-between gap-4 py-1.5"
+            >
               <span className="min-w-0 truncate" title={e.document_name}>
                 {e.document_name}
               </span>
@@ -181,12 +217,10 @@ export default async function BillingPage({
             </li>
           ))}
           {(events ?? []).length === 0 && (
-            <li className="py-4 text-center text-slate-400">
-              Nothing yet.
-            </li>
+            <li className="py-4 text-center text-slate-400">Nothing yet.</li>
           )}
         </ul>
-      </div>
+      </section>
     </main>
   );
 }
