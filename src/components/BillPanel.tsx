@@ -126,6 +126,8 @@ export function BillPanel({
   qboClasses,
   qboTaxRates,
   qboTaxUsesCodes,
+  orgDefaultTaxRate,
+  orgDefaultTaxCodeId,
   qboSupplierDefaultTaxRates,
   saveBill,
   saveLineItem,
@@ -169,6 +171,12 @@ export function BillPanel({
   // plain rates instead (no tax codes synced) — value IS the rate then.
   qboTaxRates?: { value: string; label: string; secondaryValue?: string }[];
   qboTaxUsesCodes?: boolean;
+  // Settings → the default tax rate/code for new invoices (organizations.
+  // default_tax_rate/default_tax_code_id) — whatever the admin actually
+  // picked there, never hardcoded here. Pre-fills a freshly-added line's
+  // Tax field so it isn't blank by default.
+  orgDefaultTaxRate?: number | null;
+  orgDefaultTaxCodeId?: string | null;
   // Rate-only options for the vendor default-rules modal — supplier
   // defaults have no tax code identity to attach (see saveSupplierDefaults).
   qboSupplierDefaultTaxRates?: { value: string; label: string }[];
@@ -247,11 +255,32 @@ export function BillPanel({
   // separately-typed figure that can drift out of sync. Before any line
   // items exist there's nothing to derive from, so fall back to the
   // invoice's own (extracted) figures.
+  //
+  // Exception: at ingestion, when the line items' own sum disagreed with
+  // the document's printed total, the document won and invoice.amount/
+  // tax_amount were set to ITS figures (with totals_note recording why —
+  // see invoices.ts). Showing the live line-item sum instead here, as this
+  // block used to unconditionally do, directly contradicted that note
+  // ("the document total was used" right above a number that wasn't it).
+  // So: prefer the reconciled, document-backed figures on load, and only
+  // switch to the live line-item sum once the user actually starts
+  // editing amounts/tax here — at that point they're actively correcting
+  // whatever caused the mismatch (frequently a $0 line the OCR missed)
+  // and want to see the effect of that edit immediately.
   const hasLineItems = lineItems.length > 0;
   const derivedTotals = computeLineItemTotals(effectiveLineItems);
-  const subtotal = hasLineItems ? derivedTotals.subtotal : invoice.amount;
-  const tax = hasLineItems ? derivedTotals.tax : invoice.tax_amount;
-  const amount = hasLineItems ? derivedTotals.total : invoice.amount;
+  const hasLiveEdits = Object.keys(liveAmounts).length > 0 || Object.keys(liveTaxRates).length > 0;
+  const useReconciledTotal =
+    !hasLiveEdits &&
+    invoice.document_total != null &&
+    Math.abs(invoice.document_total - derivedTotals.total) > 0.01;
+  const subtotal = hasLineItems
+    ? useReconciledTotal
+      ? (invoice.amount ?? 0) - (invoice.tax_amount ?? 0)
+      : derivedTotals.subtotal
+    : invoice.amount;
+  const tax = hasLineItems ? (useReconciledTotal ? invoice.tax_amount : derivedTotals.tax) : invoice.tax_amount;
+  const amount = hasLineItems ? (useReconciledTotal ? invoice.amount : derivedTotals.total) : invoice.amount;
   const num2 = (n: number | null) =>
     n != null
       ? n.toLocaleString(undefined, {
@@ -825,8 +854,11 @@ export function BillPanel({
                 defaults={{
                   category: "",
                   description: "",
-                  tax_rate: "",
-                  qbo_tax_code_id: "",
+                  // Pre-filled from Settings' default tax rate/code (see
+                  // orgDefaultTaxRate/orgDefaultTaxCodeId), not hardcoded —
+                  // whatever an admin actually picked there.
+                  tax_rate: orgDefaultTaxRate ?? "",
+                  qbo_tax_code_id: orgDefaultTaxCodeId ?? "",
                   class: "",
                   project_id: "",
                   amount: "",
@@ -1455,14 +1487,19 @@ function LineItemRow({
           onBlur={() => {
             const el = amountRef.current;
             if (readOnly || !el) return;
-            // Evaluate a "=..." formula regardless of isNew — clicking the
+            // Evaluate as a formula regardless of isNew — clicking the
             // blank row's own "Add" button blurs this field first (a
             // button click's mousedown moves focus before its onClick
-            // fires), so the typed formula is already resolved to a plain
+            // fires), so a typed formula is already resolved to a plain
             // number by the time Add reads the form.
             const raw = el.value.trim();
-            if (raw.startsWith("=")) {
-              const result = evaluateFormula(raw.slice(1));
+            // A leading "=" is accepted but not required (QBO-style: just
+            // type "10+10") — only reached once a PLAIN number parse has
+            // already failed, so an ordinary amount like "-165,000.00"
+            // never gets misread as an expression.
+            if (raw && !Number.isFinite(Number(raw.replace(/,/g, "")))) {
+              const expr = raw.startsWith("=") ? raw.slice(1) : raw;
+              const result = evaluateFormula(expr);
               if (result != null) {
                 el.value = result.toFixed(2);
                 if (!isNew) onAmountChange?.(result);

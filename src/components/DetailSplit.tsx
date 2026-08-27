@@ -59,6 +59,10 @@ export interface BillData {
   // False means it fell back to plain rates with no code identity at all
   // (no tax codes synced yet), which can't produce a TaxCodeRef.
   qboTaxUsesCodes?: boolean;
+  // Settings → the org's default tax rate/code for new invoices — used to
+  // pre-fill a freshly-added line's Tax field.
+  orgDefaultTaxRate?: number | null;
+  orgDefaultTaxCodeId?: string | null;
   // Rate-only options (no tax code id) for the vendor default-rules Tax
   // field — supplier_defaults.tax_rate has no code identity to attach.
   qboSupplierDefaultTaxRates?: { value: string; label: string }[];
@@ -371,6 +375,8 @@ export function DetailSplit({
             qboClasses={bill.qboClasses}
             qboTaxRates={bill.qboTaxRates}
             qboTaxUsesCodes={bill.qboTaxUsesCodes}
+            orgDefaultTaxRate={bill.orgDefaultTaxRate}
+            orgDefaultTaxCodeId={bill.orgDefaultTaxCodeId}
             qboSupplierDefaultTaxRates={bill.qboSupplierDefaultTaxRates}
             saveBill={bill.saveBill}
             saveLineItem={bill.saveLineItem}

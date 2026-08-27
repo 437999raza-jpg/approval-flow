@@ -1187,6 +1187,8 @@ export default async function DashboardPage({
                   qboClasses: qboClassNames,
                   qboTaxRates: qboTaxCodeOptions.length > 0 ? qboTaxCodeOptions : qboTaxRateOptions,
                   qboTaxUsesCodes: qboTaxCodeOptions.length > 0,
+                  orgDefaultTaxRate: org.default_tax_rate,
+                  orgDefaultTaxCodeId: org.default_tax_code_id,
                   qboSupplierDefaultTaxRates: qboSupplierDefaultTaxOptions,
                   saveBill: saveBill.bind(null, selected.id),
                   saveLineItem: saveLineItem.bind(null, selected.id),
