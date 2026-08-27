@@ -484,7 +484,6 @@ export function BillPanel({
                   readOnly={instructions.readOnly}
                   saveInstructions={instructions.saveInstructions}
                   approve={instructions.approve}
-                  hasCosOrExtras={invoice.has_cos_or_extras}
                 />
               </div>
             </div>
@@ -1212,8 +1211,8 @@ function LineItemRow({
   // the class search box, carried into the hidden form by a dedicated
   // hidden input (the search box submits under a different name so the
   // two controls never fight over the same field). Synced back when the
-  // server-confirmed value changes (e.g. the CO/Extras rule stamps
-  // "Extras" on lines at approval).
+  // server-confirmed value changes (e.g. a re-extract, or another user's
+  // edit landing via revalidation).
   const [classValue, setClassValue] = useState(defaults.class);
   const classHiddenRef = useRef<HTMLInputElement>(null);
   useEffect(() => {

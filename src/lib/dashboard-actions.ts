@@ -95,7 +95,6 @@ export async function decide(
   // approver typed is added as their own line, never overwriting anyone
   // else's (the whole thread becomes the QBO memo on sync).
   const instructions = String(formData.get("instructions") ?? "").trim();
-  const tickingCos = formData.get("has_cos_or_extras") === "on";
 
   const { data: invoice } = await supabase
     .from("invoices")
@@ -104,19 +103,6 @@ export async function decide(
     .single();
   if (!invoice || !invoice.workflow_id) {
     redirect(`/dashboard/${invoiceId}?error=not-your-step`);
-  }
-
-  // CO/Extras is decided by the approver (usually the PM), then LOCKED:
-  // once it's been set by anyone upstream, no later approver can remove it.
-  const hasCosOrExtras = invoice.has_cos_or_extras || tickingCos;
-
-  // CO/Extras rule: when flagged, a note for accounting is REQUIRED before
-  // approving (the Approve button is also disabled client-side; this is the
-  // server-side enforcement so it can't be bypassed).
-  if (hasCosOrExtras && !instructions) {
-    redirect(
-      `/dashboard/${invoiceId}?error=cos-requires-note`
-    );
   }
 
   if (instructions) {
@@ -173,20 +159,6 @@ export async function decide(
     if (state === "approved") {
       const lastStep = orderedSteps[orderedSteps.length - 1]?.step_order ?? 1;
       const isFinalStep = invoice.current_step_order >= lastStep;
-      if (hasCosOrExtras) {
-        // Stamp "Extras" on lines WITHOUT a class — never on lines the
-        // team already tagged Contract/Change Order (the fold app reads
-        // those per-line classes out of QBO).
-        await supabase
-          .from("invoice_line_items")
-          .update({ class: "Extras" })
-          .eq("invoice_id", invoiceId)
-          .not("class", "in", '("Contract","Change Orders")');
-        await supabase
-          .from("invoices")
-          .update({ has_cos_or_extras: true })
-          .eq("id", invoiceId);
-      }
       await supabase
         .from("invoices")
         .update({
@@ -239,25 +211,6 @@ export async function decide(
   } else if (state === "approved") {
     const lastStep = orderedSteps[orderedSteps.length - 1]?.step_order ?? 1;
     const isFinalStep = invoice.current_step_order >= lastStep;
-
-    // CO/Extras rule: when the approver (usually the PM) flags the invoice
-    // as having COs or Extras, every line item WITHOUT a class is set to
-    // "Extras" (a real QBO class) so they're separated in QBO reports, and
-    // the flag is persisted on the invoice — LOCKED from here on, no later
-    // approver can remove it. Lines already tagged Contract/Change Order
-    // keep their tag — the fold app reads those per-line classes out of
-    // QBO to separate contract value from change orders.
-    if (hasCosOrExtras) {
-      await supabase
-        .from("invoice_line_items")
-        .update({ class: "Extras" })
-        .eq("invoice_id", invoiceId)
-        .not("class", "in", '("Contract","Change Orders")');
-      await supabase
-        .from("invoices")
-        .update({ has_cos_or_extras: true })
-        .eq("id", invoiceId);
-    }
 
     await supabase
       .from("invoices")
@@ -1686,7 +1639,7 @@ async function reExtractInvoiceCore(
 ): Promise<boolean> {
   const { data: invoice } = await supabase
     .from("invoices")
-    .select("id, organization_id, file_path, file_name, has_cos_or_extras, vendor_name")
+    .select("id, organization_id, file_path, file_name, vendor_name")
     .eq("id", invoiceId)
     .single();
   if (!invoice) return false;
@@ -1739,8 +1692,7 @@ async function reExtractInvoiceCore(
   // NEVER revert it. Preserve each existing line's project_id by line
   // order onto the freshly-extracted lines. CLASS is the same: the
   // per-line Contract/Change Order tag is a human decision too, so
-  // re-extraction keeps it (only lines that had no class fall back to the
-  // CO/Extras "Extras" stamp below).
+  // re-extraction keeps it.
   const { data: existingLines } = await supabase
     .from("invoice_line_items")
     .select("line_order, project_id, class")
@@ -1759,12 +1711,9 @@ async function reExtractInvoiceCore(
     .eq("invoice_id", invoiceId);
   if (extracted.line_items.length > 0) {
     // Class NEVER comes from the document (the org's classes are totally
-    // different). The only exception: an invoice already flagged as
-    // CO/Extras gives its untagged lines the class "Extras" (that flag is
-    // locked once decided, so the class stays with it through
-    // re-extraction) — lines the user already tagged Contract/Change
-    // Order keep their tag via classByOrder above.
-    const fallbackClass = invoice.has_cos_or_extras === true ? "Extras" : null;
+    // different) — only a per-line human tag (the CON/CO buttons) survives
+    // re-extraction, via classByOrder above; an untagged line just stays
+    // untagged.
     // Category/tax are the SAME "supplier rule wins" fields as at initial
     // ingestion (see finalLineItems in invoices.ts) — a vendor's saved
     // rule is the locked, authoritative value, so a fresh OCR guess must
@@ -1799,7 +1748,7 @@ async function reExtractInvoiceCore(
           tax_rate: appliedRate,
           qbo_tax_code_id: taxCodeIdFor(appliedRate, orgDefaultTaxRate, orgDefaultTaxCodeId),
           category: holdbackCategoryFor(li) ?? supplierDefaults?.category ?? li.category,
-          class: classByOrder.get(i + 1) ?? fallbackClass,
+          class: classByOrder.get(i + 1) ?? null,
           project_id: projectByOrder.get(i + 1) ?? null,
           line_order: i + 1,
         };

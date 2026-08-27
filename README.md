@@ -183,7 +183,7 @@ written to be idempotent (safe to re-run). Roughly:
 | 0039 | **`qbo_ready` status** — the admin-only final gate. A bill completing every workflow step lands in `qbo_ready` (not `approved`) until an admin presses the final Sync button. |
 | 0040 | `qbo_tax_codes.rate_value` — stores each tax code's resolved purchase-side rate (H → 13%). |
 | 0041 | `invoices.qbo_vendor_matched` — flags invoices whose OCR'd vendor did NOT exactly match a QBO supplier (visible warning; can't sync until fixed). |
-| 0042 | `invoices.has_cos_or_extras` — CO/Extras flag decided by an approver and LOCKED once set; line items get class "Extras". |
+| 0042 | `invoices.has_cos_or_extras` — CO/Extras flag decided by an approver and LOCKED once set; line items get class "Extras" (feature removed 2026-08-27, column dropped by 0065 — see the CO/Extras section below). |
 | 0043 | (user) `invoices.qbo_tax_liability_account` — QBO tax liability account on the bill; superseded by 0044. |
 | 0044 | (user) Drops the tax liability account column from 0043. |
 | 0045 | (user) `invoice_line_items.qbo_tax_code_id` — line-level QBO tax code for the bill sync. |
@@ -293,7 +293,7 @@ are rejected.
   back null).
 - **Class NEVER comes from the document** — line items ingest with a blank
   class (`supplierDefaults?.class ?? null`); re-extract also strips document
-  classes, preserving only "Extras" when `has_cos_or_extras` is locked.
+  classes, preserving only a line's own CON/CO tag if it already has one.
 
 ### Performance: org-static caching (do not break the invalidation contract)
 
@@ -597,6 +597,31 @@ ingestion logic and dashboard-actions.ts's `recomputeInvoiceTotals`.
    subtotal 25,001.28 + tax 3,250.17 = 28,251.45 — exactly the document's
    own total. **Do not reintroduce document-substitution logic** — the
    live-math-plus-warning-note design is deliberate, not an oversight.
+
+### Full-codebase audit + 9 fixes, CO/Extras removed entirely
+
+Same day: a requested "audit line by line" pass (4 parallel finder agents
++ verification) surfaced 10 confirmed correctness bugs; see git log for
+`Fix 9 confirmed bugs from full-codebase audit`. Two worth calling out
+beyond their commit messages:
+
+- **Bill panel not remounted per invoice** (`BillPanel.tsx`/
+  `DetailSplit.tsx`) was the most severe: switching invoices in the
+  sidebar left stale uncontrolled-input values on screen (Bill date, Due
+  date, Bill number, Vendor, Email) that could silently overwrite the
+  newly-selected invoice on the next blur. Fixed by keying each field to
+  `invoice.id` — NOT by keying the whole panel/DetailSplit tree, which
+  would also reset unrelated state (the open document viewer, in-progress
+  line-item selections) on every navigation.
+- **Re-extract still substituted the document total** in
+  `extract-invoice.ts`'s `mapExtractionToInvoice` — the "line items win,
+  not the document" fix two sections up only touched `invoices.ts`
+  (initial ingestion); this separate, re-extract-only function had the
+  same old logic and was silently reintroducing the bug. Fixed to match.
+
+The 10th finding (the CO/Extras auto-stamp NULL-matching bug) was
+**skipped, then the whole feature was removed** instead — see the CO/Extras
+section above.
 
 ---
 
@@ -1362,18 +1387,20 @@ invoice** (`qbo_vendor_matched=false`) with a visible warning — and sync is
 refused until a human picks the correct supplier. Flow never creates
 suppliers, and never fuzzy-matches (a near-miss is a mismatch, not a guess).
 
-### CO/Extras
+### CO/Extras — removed 2026-08-27
 
-Approvers (usually the project manager) see a **"Does this invoice have COs
-or Extras?"** checkbox in the Instructions section. The reviewer/accountant
-does not. Once an approver ticks it and approves:
-- a note for accounting becomes **required** (the Approve button is disabled
-  until one is typed; server-side enforced too),
-- every line item **without a class** is set to **"Extras"** (a real QBO
-  class),
-- lines already tagged **Contract** or **Change Orders** keep their tag
-  (see below),
-- the flag is **locked** — no downstream approver can remove it.
+There used to be a "Does this invoice have COs or Extras?" checkbox
+(approvers only) that, once ticked, required a note before approving and
+auto-stamped every unclassed line item as QBO class "Extras". **It never
+actually worked**: the auto-stamp filter (`.not("class", "in", '("Contract",
+"Change Orders")')`) can never match a line whose class is NULL under SQL
+three-valued logic — the normal starting state for every line — so it
+silently fired for nobody in the typical case. Removed entirely (code,
+`invoices.has_cos_or_extras` column via migration 0065, the required-note
+rule, the checkbox) rather than fixed, since the per-line CON/CO tags below
+already cover this need correctly and make an invoice-level flag redundant.
+**Do not re-add an invoice-level CO/Extras flag or auto-stamp rule** — if a
+line needs distinguishing from contract value, tag it CON/CO directly.
 
 ### Per-line Contract / Change Order tags (CON / CO)
 

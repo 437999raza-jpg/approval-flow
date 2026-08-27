@@ -11,30 +11,21 @@ import { SubmitButton } from "./SubmitButton";
 //
 // For the approver the Add box IS the Approve button: type a note, press
 // Approve — the note is appended and the invoice approved in one motion.
-//
-// CO/Extras flag: when the approver says the invoice has COs or Extras, a
-// note is REQUIRED before approving, and the line items are classed
-// "Extras" on approval. The box clears after a successful save.
 // Authored by Araza.
 export function InstructionsBox({
   entries,
   saveInstructions,
   approve,
   readOnly = false,
-  hasCosOrExtras = false,
 }: {
   entries: BillInstructionsEntry[];
   saveInstructions: (formData: FormData) => Promise<void>;
   approve?: (formData: FormData) => Promise<void>;
   readOnly?: boolean;
-  // True once any approver upstream has flagged the bill as having COs/
-  // Extras — from then on the box is checked and LOCKED.
-  hasCosOrExtras?: boolean;
 }) {
   const formRef = useRef<HTMLFormElement>(null);
   const formId = "instructions-form";
   const [text, setText] = useState("");
-  const [localCos, setLocalCos] = useState(false);
   // Every note ever added used to render in full, permanently pushing the
   // actual bill (vendor/amount/etc.) further down the panel with each new
   // note — on a bill with a handful of notes this box alone ran ~200px
@@ -45,10 +36,6 @@ export function InstructionsBox({
   const visibleEntries = showAllNotes ? entries : entries.slice(-1);
   const hiddenCount = entries.length - visibleEntries.length;
 
-  // Locked once set upstream; otherwise the current approver can tick it.
-  const cos = hasCosOrExtras || localCos;
-  const cosLocked = hasCosOrExtras;
-
   // Wraps the server action so we can clear the box once the note is saved.
   // The textarea is controlled (value=text), so its value is submitted with
   // the form; after the action resolves we reset it to empty.
@@ -58,43 +45,8 @@ export function InstructionsBox({
     setText("");
   }
 
-  // With the CO/Extras flag on, approval requires a note.
-  const requiresNote = cos && !!approve;
-
   return (
     <div className="flex h-full flex-col">
-      {/* CO/Extras flag — only for APPROVERS (not the reviewer, who just
-          clears review). Once set upstream it's checked and locked. */}
-      {approve && (
-        <label className="mt-2 flex cursor-pointer items-center gap-2 text-sm text-slate-700">
-          <input
-            type="checkbox"
-            name="has_cos_or_extras"
-            form={formId}
-            checked={cos}
-            onChange={(e) => setLocalCos(e.target.checked)}
-            disabled={readOnly || cosLocked}
-            className="h-4 w-4 rounded border-slate-300"
-          />
-          {cosLocked ? (
-            <span>
-              Has COs or Extras{" "}
-              <span className="text-[10px] font-medium text-slate-400">
-                (set by an earlier approver — locked)
-              </span>
-            </span>
-          ) : (
-            "Does this invoice have COs or Extras?"
-          )}
-        </label>
-      )}
-      {requiresNote && (
-        <p className="mt-1 text-xs text-red-600">
-          A note for accounting is required when this invoice has COs or
-          Extras — add it above to approve.
-        </p>
-      )}
-
       {/* History — everyone's notes, oldest first. Only the latest shows
           by default; older ones are a click away (see showAllNotes above).
           One toggle button, always in the same top spot, always the same
@@ -161,7 +113,6 @@ export function InstructionsBox({
         )}
         {approve ? (
           <SubmitButton
-            disabled={requiresNote && text.trim().length === 0}
             className="w-full rounded-md border border-transparent bg-emerald-600 px-4 py-2 text-center text-sm font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
           >
             Approve

@@ -94,8 +94,6 @@ const DECISION_ERRORS: Record<string, string> = {
   "already-decided": "This invoice has already been decided at this step.",
   "step-required":
     "Earlier approval steps must be completed before this step can be decided.",
-  "cos-requires-note":
-    "This invoice has COs or Extras — a note for accounting is required before you can approve.",
 };
 
 // Record a single approve/reject decision for the current workflow step.

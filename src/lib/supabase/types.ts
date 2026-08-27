@@ -238,7 +238,6 @@ export interface Database {
           qbo_synced_at: string | null;
           qbo_error: string | null;
           qbo_vendor_matched: boolean;
-          has_cos_or_extras: boolean;
           totals_note: string | null;
           created_at: string;
           updated_at: string;
