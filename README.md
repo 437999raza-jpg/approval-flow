@@ -623,6 +623,30 @@ The 10th finding (the CO/Extras auto-stamp NULL-matching bug) was
 **skipped, then the whole feature was removed** instead — see the CO/Extras
 section above.
 
+### Small polish pass: list styling, Amount formatting, invoice list
+
+Three quick, independent fixes right after the audit:
+
+- **Collapsed Invoices strip didn't match the Documents strip** — two
+  collapsed panes side by side (`CollapsiblePane.tsx` for Invoices,
+  `DetailSplit.tsx` for Documents) used completely different styling: no
+  fixed width vs. `w-10`, plain ghost button vs. a bordered/shadowed white
+  button, light vs. bold label. `CollapsiblePane.tsx`'s collapsed markup
+  now copies Documents' classes exactly — it's the only place that
+  component is used, so no risk to another caller.
+- **Amount didn't reformat until the save round-trip landed** — typing
+  `5800` and tabbing away left the raw text on screen (no comma, no
+  decimals) until the server confirmed the save and sent back the
+  `num2`-formatted value. The Amount field's `onBlur` (`BillPanel.tsx`)
+  now reformats immediately with `toLocaleString` (comma thousands + 2
+  decimals) for both a plain typed number and an evaluated formula
+  result, instead of waiting on the network.
+- **Invoice number now shows under the Amount in the Invoices list**
+  (`InvoiceSelectionList.tsx`) — a quick eyeball check against the source
+  document while scanning the list. New `invoiceNumber` field on
+  `SelectableInvoice`, wired from `inv.invoice_number` in the dashboard
+  page's `selectableRows` mapping.
+
 ---
 
 ## Environment variables
