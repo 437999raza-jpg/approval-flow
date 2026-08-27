@@ -675,6 +675,59 @@ firing on the user's own click on the CURRENT invoice) resyncs local
 **Do not go back to deriving "document open" purely from local state** —
 key it through the URL like this if it needs to survive navigation.
 
+### Email ingestion made durable against partial failure (migration 0066)
+
+The user reported the same emailed file getting processed multiple times,
+creating duplicate invoices. **Not a dedup bug** — the "possible duplicate"
+detection (supplier + invoice number match) is intentional and stays
+exactly as-is; a genuine amendment/resend needs to go through that review,
+not be silently blocked. The real problem was durability:
+
+An attachment only ever got a durable `ingest_jobs` row if it overflowed
+the webhook's inline time budget or errored — anything processed inline
+within budget had **no record backing it at all**. Extraction alone can
+take 20–60s per document; with several attachments, Vercel's hard 60s
+function cap could kill the webhook mid-attachment. Whatever had already
+become an invoice stayed (no way to undo it, nor should there be); the
+rest were silently lost with zero trace; the only recovery offered was
+"please re-forward the email" — which reprocessed the WHOLE email,
+including the attachments that had already succeeded, creating the
+duplicates.
+
+**Fix**: every attachment becomes its own `ingest_jobs` row immediately,
+before any extraction starts — not just the overflow ones. The webhook
+then works through them via `runNextIngestJob` (`src/lib/ingest-queue.ts`)
+— the SAME claim-and-process logic the background poller already uses, so
+there's one code path instead of two that could drift apart. A hard kill
+mid-way now only ever risks the ONE job actively in flight; everything
+else already sits safely `queued` for the poller (or this same webhook's
+own loop, next time) to finish.
+
+Three supporting pieces, all in `ingest-queue.ts`:
+- **`resetStaleIngestJobs`** — a job stuck in `status='processing'` (the
+  function that claimed it died) now recovers back to `queued` for a
+  natural retry, or fails terminally after 3 attempts. Previously stuck
+  forever — `runNextIngestJob` only ever looks for `status='queued'`.
+- **`otherActiveJobsExist`** — an email with several attachments (several
+  jobs sharing one `inbound_email_log` row) no longer flips to "not
+  processing" the moment the FIRST job finishes while siblings are still
+  in flight. Checked before EVERY completion path (success, retry,
+  terminal failure, no-invoice-data) clears `processing`.
+- **`ingest_jobs.force_split`** (migration 0066) — the `[1N]`/`[NM]`
+  subject-code "force split review" decision is now persisted on the job
+  itself. It used to only survive for attachments processed inline —
+  routing every attachment through the queue would otherwise have
+  silently dropped it.
+
+**Known, accepted tradeoff**: on Vercel's Hobby plan, cron jobs only run
+once a day, so genuinely browser-independent processing isn't available
+without a plan upgrade — anything that doesn't finish within one webhook
+invocation still waits for the poller (which needs a dashboard open) or
+the next inbound email for that org to trigger another pass. Durability
+(nothing is ever lost or silently duplicated) is solved; zero-latency
+processing with no browser open at all is not, and would need Vercel Pro
+(or a similar scheduled-job service) to close.
+
 ---
 
 ## Environment variables
