@@ -406,6 +406,23 @@ export function Combobox({
             // nothing.
             e.target.select();
           }}
+          onBlur={() => {
+            // Picking an option never reaches here — the option button's own
+            // onMouseDown calls preventDefault(), so the browser never fires
+            // blur for that interaction (see pick() below). This only fires
+            // for a genuine focus loss: Tab to the next field, or clicking
+            // something the outside-click listener (mousedown, below) can't
+            // see because it's a KEYBOARD focus change with no click at all.
+            // Without this, tabbing out of a plain-string field (Category,
+            // Class, Supplier) after typing left the value sitting in the
+            // DOM uncommitted — saved later if some OTHER field's own blur
+            // happened to submit the same shared form afterward, silently
+            // lost if this was the last field touched before navigating
+            // away some other way.
+            setOpen(false);
+            setIsFocused(false);
+            commitCurrent();
+          }}
           onKeyDown={(e) => {
             if (e.key === "ArrowDown") {
               e.preventDefault();

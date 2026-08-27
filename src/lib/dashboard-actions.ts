@@ -2587,6 +2587,30 @@ export async function syncQboSuppliers() {
         { onConflict: "organization_id,qbo_vendor_id" }
       );
       if (error) throw error;
+
+      // Seed newly-synced suppliers with the org's default tax rate — a
+      // supplier sitting with no rule at all otherwise reads as "no tax"
+      // rather than "hasn't been configured yet". ignoreDuplicates means
+      // this only ever INSERTS for a vendor with no supplier_defaults row
+      // yet; one that already exists (self-configured, or seeded before)
+      // is never touched. Non-fatal: the vendor sync above already
+      // succeeded, so a hiccup here shouldn't be reported as a failure.
+      const { data: orgRow } = await supabase
+        .from("organizations")
+        .select("default_tax_rate")
+        .eq("id", org.id)
+        .single();
+      if (orgRow?.default_tax_rate != null) {
+        const { error: seedError } = await supabase.from("supplier_defaults").upsert(
+          suppliers.map((s) => ({
+            organization_id: org.id,
+            vendor_name: s.name,
+            tax_rate: orgRow.default_tax_rate,
+          })),
+          { onConflict: "organization_id,vendor_name_normalized", ignoreDuplicates: true }
+        );
+        if (seedError) console.error("syncQboSuppliers: default tax seed failed:", seedError);
+      }
     }
   } catch (e) {
     console.error("syncQboSuppliers failed:", e);
