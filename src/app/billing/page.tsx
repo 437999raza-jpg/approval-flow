@@ -11,7 +11,11 @@ import { SubmitButton } from "@/components/SubmitButton";
 // Any org member can view; only admins can change the rate. Authored by
 // Araza.
 
-export default async function BillingPage() {
+export default async function BillingPage({
+  searchParams,
+}: {
+  searchParams: { rate?: string };
+}) {
   const supabase = createClient();
   const {
     data: { user },
@@ -63,11 +67,20 @@ export default async function BillingPage() {
         usage tracking only; the invoice is sent manually.
       </p>
 
+      {searchParams.rate === "saved" && (
+        <div className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+          Usage rate saved.
+        </div>
+      )}
+      {searchParams.rate === "error" && (
+        <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          Could not save the rate — enter a positive USD amount (e.g. 0.15).
+        </div>
+      )}
+
       {isAdmin && (
         <form
-          action={async (formData: FormData) => {
-            await saveUsageRate(formData);
-          }}
+          action={saveUsageRate}
           className="mt-4 flex max-w-sm items-end gap-2 rounded-md border border-slate-200 p-4"
         >
           <div className="flex-1">

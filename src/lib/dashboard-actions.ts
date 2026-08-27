@@ -2002,9 +2002,12 @@ export async function saveDefaultTaxRate(formData: FormData) {
 // Flow's usage billing: the per-org charge per document processed, in USD
 // (default $0.15). Admin only; returned as a result object so the Billing
 // page can show inline feedback without navigating.
-export async function saveUsageRate(
-  formData: FormData
-): Promise<{ ok: boolean; error?: string }> {
+// Flow's usage billing: the per-org charge per document processed, in USD
+// (default $0.15). Admin only. Uses the same void+redirect pattern as every
+// other Settings form (saveDefaultTaxRate etc.) — a form action must be a
+// direct server-action reference, never wrapped in an inline closure, or
+// Next.js throws at runtime.
+export async function saveUsageRate(formData: FormData) {
 
   const supabase = createClient();
   const {
@@ -2014,13 +2017,13 @@ export async function saveUsageRate(
 
   const org = await getCurrentOrg(supabase);
   if (!org || org.role !== "admin") {
-    return { ok: false, error: "Only admins can change the usage rate." };
+    redirect("/billing?rate=error");
   }
 
   const raw = String(formData.get("usage_rate_usd") ?? "").trim();
   const rate = Number(raw);
   if (!Number.isFinite(rate) || rate <= 0 || rate > 1000) {
-    return { ok: false, error: "Enter a positive USD amount (e.g. 0.15)." };
+    redirect("/billing?rate=error");
   }
 
   const { error: updateError } = await supabase
@@ -2029,7 +2032,7 @@ export async function saveUsageRate(
     .eq("id", org.id);
   if (updateError) {
     console.error("saveUsageRate failed:", updateError);
-    return { ok: false, error: "Could not save the rate — try again." };
+    redirect("/billing?rate=error");
   }
 
   await supabase.from("audit_log").insert({
@@ -2040,7 +2043,7 @@ export async function saveUsageRate(
   });
 
   revalidatePath("/billing");
-  return { ok: true };
+  redirect("/billing?rate=saved");
 }
 
 
