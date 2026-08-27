@@ -121,9 +121,10 @@ export async function POST(request: Request) {
     const attachments = await listResendAttachments(apiKey, email_id);
 
     // Download every PDF/image attachment first, skipping signature/logo
-    // images (they are NOT invoices — see isLikelySignatureImage) and
-    // recording whatever was dropped (non-PDF files like spreadsheets too)
-    // so nothing silently disappears from an email.
+    // images (they are NOT invoices — see isLikelySignatureImage, which
+    // only ever applies to images, never PDFs) and recording whatever was
+    // dropped (non-PDF files like spreadsheets too) so nothing silently
+    // disappears from an email.
     const documents: { name: string; type: string; bytes: Uint8Array }[] = [];
     const skipped: { name: string; reason: string }[] = [];
     for (const attachment of attachments) {
@@ -142,7 +143,13 @@ export async function POST(request: Request) {
         continue;
       }
       const bytes = new Uint8Array(await dl.arrayBuffer());
-      if (isLikelySignatureImage(filename, bytes)) {
+      // Only IMAGES are ever signature candidates — a PDF is never skipped
+      // here (clearance certificates, cover pages etc. still go through
+      // extraction, and the no-invoice guard rejects non-invoices).
+      const isImage =
+        contentType.startsWith("image/") ||
+        /\.(png|jpe?g|gif|webp)$/i.test(filename);
+      if (isImage && isLikelySignatureImage(filename, bytes)) {
         skipped.push({
           name: filename,
           reason: "looks like a signature or logo image — not an invoice",
@@ -223,12 +230,40 @@ export async function POST(request: Request) {
     // Emails are processed INLINE right here — the 20–60s wait for THIS
     // email is fine; only persistent failures fall back to the ingest_jobs
     // queue so they auto-retry / stay Reprocessable.
+    //
+    // Time budget: Vercel Hobby caps this function at 60s, and each
+    // attachment takes 20–60s of extraction. With several attachments the
+    // budget runs out mid-loop — WITHOUT this guard the remaining
+    // attachments were silently lost (the function just died). So once
+    // INLINE_BUDGET_MS elapses, the rest are enqueued as ingest jobs
+    // instead of dropped: they process via the poller (or stay Reprocessable
+    // in the Queue), and the email row stays "processing" until they land.
+    const INLINE_BUDGET_MS = 40_000; // leave ~20s for enqueue + final writes
+    const startMs = Date.now();
+
     const invoiceIds: string[] = [];
     const pendingSplitIds: string[] = [];
     const ingestErrors: string[] = [];
     let retryJobQueued = false;
 
-    for (const doc of ingestList) {
+    for (let i = 0; i < ingestList.length; i++) {
+      const doc = ingestList[i];
+
+      // Out of budget — queue this and every remaining attachment rather
+      // than lose them to the function timeout.
+      if (Date.now() - startMs > INLINE_BUDGET_MS) {
+        const queued = await enqueueIngestJob({
+          supabase,
+          organizationId: org.id,
+          file: { name: doc.name, type: doc.type, size: doc.bytes.length, bytes: doc.bytes },
+          source: "email",
+          sourceEmail: from,
+          inboundEmailLogId: logRow.id,
+        });
+        if (queued) retryJobQueued = true;
+        continue;
+      }
+
       const file = new File([new Uint8Array(doc.bytes)], doc.name, {
         type: doc.type || "application/octet-stream",
       });
@@ -399,8 +434,10 @@ function isPdfOrImage(filename: string, contentType: string) {
 //     small or tiny,
 //   - tiny files, and wide-and-short strips (a signature is ~4:1+).
 // Real invoice images are page-shaped (roughly square-ish, larger) and are
-// never dropped here — a PDF or a page-shaped image still goes through
-// extraction, and the no-invoice guard catches anything else.
+// never dropped here. ONLY IMAGES are checked — a PDF is never a
+// signature image, no matter how small (a clearance certificate or cover
+// page still goes through extraction, and the no-invoice guard catches
+// anything that isn't an invoice).
 function isLikelySignatureImage(name: string, bytes: Uint8Array): boolean {
   const n = name.toLowerCase();
   const dims = imageDimensions(bytes);
@@ -409,7 +446,7 @@ function isLikelySignatureImage(name: string, bytes: Uint8Array): boolean {
   const sigName =
     /(^|[._-])(logo|signature|sign|sig|letterhead)([._-]|$)/.test(n);
   if (sigName) return true;
-  if (!dims) return size < 40_000; // undecodable AND tiny = junk
+  if (!dims) return false; // not a decodable image (e.g. a PDF) — never skip
 
   const { width: w, height: h } = dims;
   const inlineName = /^image\d*\./.test(n) || /^img-/.test(n);
