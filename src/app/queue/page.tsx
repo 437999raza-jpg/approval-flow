@@ -18,6 +18,7 @@ import { clsx } from "clsx";
 // manual uploads (upload_log) and inbound emails (inbound_email_log),
 // merged newest-first with what happened to each. Filters let you see
 // what's pending attention, what processed, and what failed.
+type SkippedAttachment = { name: string; reason: string };
 type QueueRow = {
   id: string;
   kind: "email" | "upload";
@@ -28,6 +29,7 @@ type QueueRow = {
   invoiceIds: string[];
   error: string | null;
   jobId: string | null;
+  skipped?: SkippedAttachment[];
 };
 
 export default async function QueuePage({
@@ -100,6 +102,7 @@ export default async function QueuePage({
       invoiceIds: e.invoice_ids ?? [],
       error: e.error,
       jobId: jobByEmailLog.get(e.id) ?? null,
+      skipped: e.skipped_attachments ?? undefined,
     })),
     ...(uploads ?? []).map((u) => ({
       id: u.id,
@@ -283,6 +286,12 @@ export default async function QueuePage({
                   {r.error}
                 </p>
               )}
+              {r.skipped && r.skipped.length > 0 && (
+                <p className="mt-1.5 text-xs text-slate-500" title={r.skipped.map((s) => `${s.name} — ${s.reason}`).join("\n")}>
+                  Skipped {r.skipped.length} attachment{r.skipped.length > 1 ? "s" : ""}:{" "}
+                  {r.skipped.map((s) => s.name).join(", ")}
+                </p>
+              )}
               {r.status === "unmatched" && (
                 <p className="mt-1.5 text-xs text-slate-500">
                   No company matched the address it was sent to.
@@ -290,8 +299,8 @@ export default async function QueuePage({
               )}
               {r.status === "received" && (
                 <p className="mt-1.5 text-xs text-slate-500">
-                  Received, but no invoice was created from it (no PDF or
-                  image attachments).
+                  Received, but no invoice was created from it (no usable PDF
+                  or invoice images — see skipped attachments above).
                 </p>
               )}
             </li>

@@ -108,3 +108,17 @@ export function pdfPageCount(bytes: Uint8Array): number {
     return 0;
   }
 }
+
+// Pixel dimensions of an image attachment (used to spot signature/logo
+// strips — tiny or extremely wide-and-short images — so they don't become
+// junk invoices). Returns null when the bytes aren't a decodable image.
+export function imageDimensions(
+  bytes: Uint8Array
+): { width: number; height: number } | null {
+  try {
+    const img = new mupdf.Image(bytes);
+    return { width: img.getWidth(), height: img.getHeight() };
+  } catch {
+    return null;
+  }
+}

@@ -24,35 +24,27 @@ export class InvoiceIngestError extends Error {}
 export const NO_INVOICE_DATA_ERROR =
   "No invoice data found — this document does not look like an invoice.";
 
-// A successful extraction counts as "empty" only when the model found
-// NOTHING at all — no vendor, number, total, subtotal, tax, dates, PO,
-// customer, description, or line items. Any single recognized field (even a
-// vendor read from a logo) means the document gets created and the reviewer
-// handles quality.
+// A successful extraction counts as an invoice ONLY when it found
+// invoice-defining data — a number, totals, tax, a PO, or line items.
+// A vendor name and/or description read from a logo, signature strip, or
+// certificate (e.g. WSIB clearance, insurance) is NOT an invoice: those
+// produced blank junk bills. Such documents are rejected as "No invoice
+// data found" instead of creating a bill the reviewer has to throw away
+// (staging is kept, so the Queue's Reprocess can still re-run them).
 function isEmptyExtraction(extracted: {
-  vendor_name: string | null;
   invoice_number: string | null;
   total_amount: number | null;
   subtotal: number | null;
   tax_amount: number | null;
-  bill_date: string | null;
-  due_date: string | null;
   po_number: string | null;
-  customer: string | null;
-  description: string | null;
   line_items: unknown[];
 }): boolean {
   return (
-    !extracted.vendor_name &&
     !extracted.invoice_number &&
     extracted.total_amount == null &&
     extracted.subtotal == null &&
     extracted.tax_amount == null &&
-    !extracted.bill_date &&
-    !extracted.due_date &&
     !extracted.po_number &&
-    !extracted.customer &&
-    !extracted.description &&
     extracted.line_items.length === 0
   );
 }
@@ -179,12 +171,13 @@ export async function createInvoiceFromFile({
     );
   }
 
-  // "Not an invoice" guard: only a SUCCESSFUL extraction that found
-  // literally nothing (no vendor, number, total, subtotal, tax, dates, PO,
-  // customer, description, or line items) is skipped. Invoices come in all
-  // shapes — a logo-only supplier name is enough to create one and let the
-  // reviewer handle quality. The caller surfaces this as "No invoice data
-  // found" in the Queue instead of creating a junk invoice.
+  // "Not an invoice" guard: a SUCCESSFUL extraction only counts as an
+  // invoice when it found invoice-defining data (number, totals, tax, PO,
+  // or line items). A vendor name and/or description read from a logo,
+  // signature strip, or certificate is NOT an invoice — those were
+  // creating blank junk bills. The caller surfaces this as "No invoice
+  // data found" in the Queue instead of creating a junk invoice (staging
+  // is kept, so Reprocess can still re-run it).
   if (isEmptyExtraction(extracted)) {
     await supabase.storage.from(INVOICE_BUCKET).remove([filePath]);
     throw new InvoiceIngestError(NO_INVOICE_DATA_ERROR);

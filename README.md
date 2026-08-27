@@ -791,22 +791,34 @@ them.
 
 **Subject codes (how the office tells the app what to do):** put the code at
 the very START of the subject when forwarding — **PDF count FIRST, invoice
-count SECOND**. No code = each PDF is its own invoice (the default — never
+count SECOND**. Brackets are optional: `31 FW: …` works exactly like
+`[31] FW: …`. No code = each PDF is its own invoice (the default — never
 merged).
 
 | Code | Meaning | Action |
 |---|---|---|
 | *(no code)* | Each PDF = its own invoice | Each file → its own invoice |
-| `[X1]` e.g. `[31]`, `[21]` | **X** PDFs = **1** invoice (invoice + backup + certificate) | Combine all into one invoice |
-| `[1N]` e.g. `[13]`, `[16]` | 1 PDF containing **N** invoices | Force split review (confirm page ranges) |
-| `[NN]` e.g. `[22]`, `[33]` | **N** PDFs = **N** invoices | Each PDF its own invoice (same as no code) |
-| `[NM]` | **N** PDFs, each containing multiple invoices | Every PDF goes to split review |
+| `X1` e.g. `31`, `21` | **X** PDFs = **1** invoice (invoice + backup + certificate) | Combine all into one invoice |
+| `1N` e.g. `13`, `16` | 1 PDF containing **N** invoices | Force split review (confirm page ranges) |
+| `NN` e.g. `22`, `33` | **N** PDFs = **N** invoices | Each PDF its own invoice (same as no code) |
+| `NM` | **N** PDFs, each containing multiple invoices | Every PDF goes to split review |
 
-Examples: `[31] FW: Invoice 26-2400` → combine three attachments into one
-invoice · `[13] FW: Draws` → one PDF with three invoices → split review.
+Examples: `31 FW: Invoice 26-2400` → combine three attachments into one
+invoice · `13 FW: Draws` → one PDF with three invoices → split review.
 Emails are processed immediately on arrival (inline in the webhook — no
 browser needed); persistent failures are queued for retry and stay
 Reprocessable from the Queue page.
+
+**Signature images and non-PDF files never become invoices.** Email
+signatures/logos (small images, `logo.*`, Outlook-style `image001.jpg`
+inline images) are detected and skipped at the webhook — they used to
+create blank junk bills (a logo extracts a vendor name and passed the "not
+empty" check). A "no invoice data" rejection now requires the extraction to
+have found **no** invoice-defining data (number, totals, tax, PO, or line
+items) — a vendor name and/or description alone (e.g. a WSIB clearance
+certificate) is not an invoice. Everything skipped (spreadsheets, signature
+images) is recorded on the email log row (`skipped_attachments`) and shown
+on the Queue page, so no attachment silently disappears from an email.
 
 **Setup (one-time, on the SaaS side — clients do nothing):**
 1. Resend → **Domains → Add domain** with the value of `INBOUND_EMAIL_DOMAIN`

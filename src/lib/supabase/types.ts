@@ -590,6 +590,7 @@ export interface Database {
           attachment_count: number;
           invoice_ids: string[];
           pending_split_ids: string[];
+          skipped_attachments: { name: string; reason: string }[] | null;
           processed: boolean;
           processing: boolean;
           error: string | null;

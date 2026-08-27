@@ -7,7 +7,7 @@ import { revalidateTag } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { InvoiceIngestError } from "@/lib/invoices";
 import { ingestInvoiceFile } from "@/lib/invoice-ingest";
-import { mergeDocuments } from "@/lib/merge-documents";
+import { mergeDocuments, imageDimensions } from "@/lib/merge-documents";
 import { enqueueIngestJob } from "@/lib/ingest-queue";
 import { INVOICES_TAG } from "@/lib/org-cache";
 
@@ -119,12 +119,20 @@ export async function POST(request: Request) {
     // actually said.
     const attachments = await listResendAttachments(apiKey, email_id);
 
-    // Download every PDF/image attachment first.
+    // Download every PDF/image attachment first, skipping signature/logo
+    // images (they are NOT invoices — see isLikelySignatureImage) and
+    // recording whatever was dropped (non-PDF files like spreadsheets too)
+    // so nothing silently disappears from an email.
     const documents: { name: string; type: string; bytes: Uint8Array }[] = [];
+    const skipped: { name: string; reason: string }[] = [];
     for (const attachment of attachments) {
       const filename = attachment.filename ?? "attachment";
       const contentType = attachment.content_type ?? "";
       if (!isPdfOrImage(filename, contentType) || !attachment.download_url) {
+        skipped.push({
+          name: filename,
+          reason: "not a PDF or image — cannot be processed",
+        });
         continue;
       }
       const dl = await fetch(attachment.download_url);
@@ -132,19 +140,27 @@ export async function POST(request: Request) {
         errors.push(`Could not download attachment "${filename}"`);
         continue;
       }
+      const bytes = new Uint8Array(await dl.arrayBuffer());
+      if (isLikelySignatureImage(filename, bytes)) {
+        skipped.push({
+          name: filename,
+          reason: "looks like a signature or logo image — not an invoice",
+        });
+        continue;
+      }
       documents.push({
         name: filename,
         type: contentType || "application/octet-stream",
-        bytes: new Uint8Array(await dl.arrayBuffer()),
+        bytes,
       });
     }
 
     // Subject code convention (PDF count FIRST, invoice count SECOND):
-    //   [31]  → 3 PDFs, 1 invoice  → combine into one
-    //   [13]  → 1 PDF, 3 invoices  → force split review
-    //   [22]  → 2 PDFs, 2 invoices → each PDF its own invoice
-    //   [NM]  → N PDFs, multiple   → every PDF goes to split review
-    //   none  → each PDF is its OWN invoice (never merge)
+    //   31  → 3 PDFs, 1 invoice  → combine into one
+    //   13  → 1 PDF, 3 invoices  → force split review
+    //   22  → 2 PDFs, 2 invoices → each PDF its own invoice
+    //   NM  → N PDFs, multiple   → every PDF goes to split review
+    //   none → each PDF is its OWN invoice (never merge)
     // The code only decides; the attachments are always processed inline.
     const code = parseSubjectCode(subject);
     if (code && code.x !== documents.length) {
@@ -184,6 +200,7 @@ export async function POST(request: Request) {
         to_address: candidates.join(", "),
         subject,
         attachment_count: ingestList.length,
+        skipped_attachments: skipped.length > 0 ? skipped : null,
         processing: true,
         error: errors.length > 0 ? errors.join("; ") : null,
       })
@@ -364,26 +381,58 @@ function isPdfOrImage(filename: string, contentType: string) {
   );
 }
 
+// Email signatures and logos are images, but they are NOT invoices, and
+// ingesting them creates the blank junk bills seen in the wild (a logo
+// extracts a vendor name from the logo text, passes the "not empty" check,
+// and becomes a bill with no number/total/lines). Detect the common shapes:
+//   - names containing logo/signature/sign/sig,
+//   - Outlook-style inline images (image001.jpg, img-<uuid>.png) that are
+//     small or tiny,
+//   - tiny files, and wide-and-short strips (a signature is ~4:1+).
+// Real invoice images are page-shaped (roughly square-ish, larger) and are
+// never dropped here — a PDF or a page-shaped image still goes through
+// extraction, and the no-invoice guard catches anything else.
+function isLikelySignatureImage(name: string, bytes: Uint8Array): boolean {
+  const n = name.toLowerCase();
+  const dims = imageDimensions(bytes);
+  const size = bytes.length;
+
+  const sigName =
+    /(^|[._-])(logo|signature|sign|sig|letterhead)([._-]|$)/.test(n);
+  if (sigName) return true;
+  if (!dims) return size < 40_000; // undecodable AND tiny = junk
+
+  const { width: w, height: h } = dims;
+  const inlineName = /^image\d*\./.test(n) || /^img-/.test(n);
+  const tiny = size < 60_000 && (w < 500 || h < 400);
+  const strip = size < 150_000 && w / h > 3.5;
+  const smallish = size < 120_000 && (w < 500 || h < 400);
+  return tiny || strip || (inlineName && smallish);
+}
+
 // Subject-code convention (office stamps it at the START of the subject).
-// PDF count FIRST, invoice count SECOND:
-//   [31]  → 3 PDFs, 1 invoice        → combine all into one
-//   [13]  → 1 PDF, 3 invoices        → force split review
-//   [22]  → 2 PDFs, 2 invoices       → each PDF its own invoice (default)
-//   [NM]  → N PDFs, multiple invoices → every PDF goes to split review
+// Brackets are optional — "31 Fw: ..." works exactly like "[31] Fw: ..."
+// (a bare code is only read when the subject STARTS with it, so "FW: ..."
+// and normal invoice subjects are never misread). PDF count FIRST, invoice
+// count SECOND:
+//   31 / [31] → 3 PDFs, 1 invoice  → combine all into one
+//   13 / [13] → 1 PDF, 3 invoices  → force split review
+//   22 / [22] → 2 PDFs, 2 invoices → each PDF its own invoice (default)
+//   NM / [NM] → N PDFs, multiple   → every PDF goes to split review
 // No code → each PDF is its own invoice.
 function parseSubjectCode(
   subject: string
 ): { kind: "merge" | "split" | "none"; x: number; y: number | "M" } | null {
-  const m = subject.match(/^\s*\[(\d+)(M|\d+)\]\s*/i);
+  const m = subject.match(/^\s*\[?(\d+)(M|\d+)\]?\s*/i);
   if (!m) return null;
   const x = Number(m[1]);
   const yRaw = m[2].toUpperCase();
   if (yRaw === "M") return { kind: "split", x, y: "M" };
   const y = Number(yRaw);
-  if (y === 1) return { kind: "merge", x, y }; // [X1] → combine
-  if (x === 1) return { kind: "split", x, y }; // [1N] → one PDF, N invoices
-  if (y === x) return { kind: "none", x, y }; // [NN] → default (each its own)
-  return { kind: "none", x, y }; // ambiguous (e.g. [32]) → default + mismatch log
+  if (y === 1) return { kind: "merge", x, y }; // X1 → combine
+  if (x === 1) return { kind: "split", x, y }; // 1N → one PDF, N invoices
+  if (y === x) return { kind: "none", x, y }; // NN → default (each its own)
+  return { kind: "none", x, y }; // ambiguous (e.g. 32) → default + mismatch log
 }
 
 // Resend's attachments list for a received email. The email may still be
