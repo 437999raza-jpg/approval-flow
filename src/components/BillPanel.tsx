@@ -13,6 +13,7 @@ import { ReorderPagesModal } from "./ReorderPagesModal";
 import { InvoiceStatusBadge } from "./InvoiceStatusBadge";
 import type { Database } from "@/lib/supabase/types";
 import { computeLineItemTotals } from "@/lib/invoice-totals";
+import { evaluateFormula } from "@/lib/formula";
 import type { AuditTimelineEntry } from "@/lib/audit-timeline";
 
 type Invoice = Database["public"]["Tables"]["invoices"]["Row"];
@@ -99,8 +100,9 @@ const ghostLabel = "block text-[10px] font-semibold uppercase tracking-wide text
 // Orders) plus the full class search, so it needs real room: it's a
 // fixed track (like Tax/Amount), widened from 76px to hold two toggle
 // buttons and the search box side by side.
+// Leading 22px column: the per-line select checkbox (bulk delete/etc.).
 const LINE_ITEM_COLS =
-  "grid-cols-[minmax(0,0.85fr)_minmax(0,1.5fr)_minmax(0,1.15fr)_118px_52px_104px_44px_42px]";
+  "grid-cols-[22px_minmax(0,0.85fr)_minmax(0,1.5fr)_minmax(0,1.15fr)_118px_52px_104px_44px_42px]";
 
 // The exact QBO class names the CON/CO toggle writes (must exist in the
 // org's qbo_classes mirror — Fluid's QBO has "Contract" and "Change
@@ -222,6 +224,23 @@ export function BillPanel({
           currency: invoice.currency,
         })
       : "—";
+  // Amount/tax edits as they happen, keyed by line item id — lets the
+  // totals block below react the instant you type an amount or pick a tax
+  // rate, instead of waiting for that field's own save + revalidate round
+  // trip to land. Cleared whenever fresh server data arrives (that IS the
+  // authoritative update landing, so any override is redundant by then).
+  const [liveAmounts, setLiveAmounts] = useState<Record<string, number | null>>({});
+  const [liveTaxRates, setLiveTaxRates] = useState<Record<string, number | null>>({});
+  useEffect(() => {
+    setLiveAmounts({});
+    setLiveTaxRates({});
+  }, [lineItems]);
+  const effectiveLineItems = lineItems.map((li) => ({
+    ...li,
+    amount: li.id in liveAmounts ? liveAmounts[li.id] : li.amount,
+    tax_rate: li.id in liveTaxRates ? liveTaxRates[li.id] : li.tax_rate,
+  }));
+
   // Subtotal/tax/total are derived live from the line items shown below
   // (amount × each line's own tax rate%, blank rate = no tax) so the
   // totals block always matches what's actually in the table — not a
@@ -229,7 +248,7 @@ export function BillPanel({
   // items exist there's nothing to derive from, so fall back to the
   // invoice's own (extracted) figures.
   const hasLineItems = lineItems.length > 0;
-  const derivedTotals = computeLineItemTotals(lineItems);
+  const derivedTotals = computeLineItemTotals(effectiveLineItems);
   const subtotal = hasLineItems ? derivedTotals.subtotal : invoice.amount;
   const tax = hasLineItems ? derivedTotals.tax : invoice.tax_amount;
   const amount = hasLineItems ? derivedTotals.total : invoice.amount;
@@ -313,6 +332,51 @@ export function BillPanel({
     knownLineItemIds.current = ids;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lineItems]);
+
+  // Bulk select/delete across line items — separate from the invoice
+  // list's own multi-select, this is about picking several lines WITHIN
+  // one bill (e.g. clearing out a batch of stray $0 rows at once instead
+  // of one at a time).
+  const [selectedLineIds, setSelectedLineIds] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    // A deleted/replaced line shouldn't linger in the selection.
+    setSelectedLineIds((prev) => {
+      const ids = new Set(lineItems.map((li) => li.id));
+      const next = new Set([...prev].filter((id) => ids.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [lineItems]);
+  const allLinesSelected = lineItems.length > 0 && selectedLineIds.size === lineItems.length;
+  const toggleLineSelected = (id: string) => {
+    setSelectedLineIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+  const toggleAllLinesSelected = () => {
+    setSelectedLineIds(allLinesSelected ? new Set() : new Set(lineItems.map((li) => li.id)));
+  };
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const handleBulkDelete = async () => {
+    const ids = [...selectedLineIds];
+    if (ids.length === 0) return;
+    if (
+      !window.confirm(
+        `Delete ${ids.length} selected line item${ids.length === 1 ? "" : "s"}? This can't be undone.`
+      )
+    ) {
+      return;
+    }
+    setBulkDeleting(true);
+    try {
+      await Promise.all(ids.map((id) => deleteLineItem(id)));
+      setSelectedLineIds(new Set());
+    } finally {
+      setBulkDeleting(false);
+    }
+  };
 
   return (
     <div className="flex h-full w-full flex-col border-r border-slate-200 bg-white">
@@ -674,10 +738,45 @@ export function BillPanel({
           <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">
             Category details
           </div>
+          {!readOnly && selectedLineIds.size > 0 && (
+            <div className="mt-2 flex items-center justify-between rounded-md bg-blue-50 px-3 py-1.5 text-xs text-blue-800">
+              <span>
+                {selectedLineIds.size} line{selectedLineIds.size === 1 ? "" : "s"} selected
+              </span>
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => setSelectedLineIds(new Set())}
+                  className="font-medium text-blue-700 hover:underline"
+                >
+                  Clear
+                </button>
+                <button
+                  type="button"
+                  disabled={bulkDeleting}
+                  onClick={handleBulkDelete}
+                  className="font-medium text-red-600 hover:underline disabled:opacity-50"
+                >
+                  {bulkDeleting ? "Deleting…" : "Delete selected"}
+                </button>
+              </div>
+            </div>
+          )}
           <div className="mt-2">
             <div
-              className={`grid ${LINE_ITEM_COLS} gap-x-2 border-b border-slate-200 pb-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-400`}
+              className={`grid ${LINE_ITEM_COLS} items-end gap-x-2 border-b border-slate-200 pb-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-400`}
             >
+              {readOnly ? (
+                <span />
+              ) : (
+                <input
+                  type="checkbox"
+                  title="Select all lines"
+                  checked={allLinesSelected}
+                  onChange={toggleAllLinesSelected}
+                  className="h-3.5 w-3.5 rounded border-slate-300"
+                />
+              )}
               <span>Category</span>
               <span>Description</span>
               <span>Project / customer</span>
@@ -710,6 +809,14 @@ export function BillPanel({
                 deleteLineItem={deleteLineItem}
                 cloneLineItem={cloneLineItem}
                 readOnly={readOnly}
+                selected={selectedLineIds.has(item.id)}
+                onToggleSelected={() => toggleLineSelected(item.id)}
+                onAmountChange={(v) =>
+                  setLiveAmounts((prev) => ({ ...prev, [item.id]: v }))
+                }
+                onTaxRateChange={(v) =>
+                  setLiveTaxRates((prev) => ({ ...prev, [item.id]: v }))
+                }
               />
             ))}
             {!readOnly && addingLine && (
@@ -1030,6 +1137,10 @@ function LineItemRow({
   cloneLineItem,
   readOnly,
   onCancel,
+  selected,
+  onToggleSelected,
+  onAmountChange,
+  onTaxRateChange,
 }: {
   itemId: string;
   defaults: {
@@ -1057,6 +1168,16 @@ function LineItemRow({
   // The blank add-line row's "cancel" button — dismisses it without
   // saving. Only meaningful when itemId === "new".
   onCancel?: () => void;
+  // Bulk select (undefined for the "new" row — nothing to bulk-act on
+  // before it's actually saved).
+  selected?: boolean;
+  onToggleSelected?: () => void;
+  // Live totals: called with the field's current numeric value on every
+  // change (Amount) or commit (Tax) — well before the autosave round trip
+  // completes — so the Subtotal/Tax/Total block below reacts instantly
+  // instead of waiting on a server round trip.
+  onAmountChange?: (value: number | null) => void;
+  onTaxRateChange?: (value: number | null) => void;
 }) {
   const isNew = itemId === "new";
   const formId = `line-item-${itemId}`;
@@ -1098,7 +1219,13 @@ function LineItemRow({
   const cellCls = "w-full truncate border-b border-transparent bg-transparent px-0 py-1.5 text-xs text-slate-800 group-hover/cell:border-slate-200 focus:border-blue-500 focus:outline-none disabled:text-slate-400";
   // Description wraps and grows instead of truncating — PMs need to read
   // the whole thing, not just what fits on one line.
-  const descCls = "w-full resize-none overflow-hidden whitespace-pre-wrap break-words border-b border-transparent bg-transparent px-0 py-1.5 text-xs text-slate-800 hover:border-slate-200 focus:border-blue-500 focus:outline-none disabled:text-slate-400";
+  // self-end: every other cell sits at the bottom of the row via its own
+  // h-full/items-end wrapper (see cellWrapCls, fillCell); Description had
+  // no such wrapper (its own height is already JS-driven — see
+  // autoResizeDesc below) and defaulted to the top, out of step with
+  // everything else whenever some OTHER cell (e.g. a wrapped Category
+  // value) ends up taller and drives the row's height.
+  const descCls = "w-full self-end resize-none overflow-hidden whitespace-pre-wrap break-words border-b border-transparent bg-transparent px-0 py-1.5 text-xs text-slate-800 hover:border-slate-200 focus:border-blue-500 focus:outline-none disabled:text-slate-400";
   // Wraps the plain Amount <input> the same way Combobox's own fillCell
   // prop wraps Category/Project/Class/Tax: a nested single-cell grid so
   // the field (justify-items stretch, the default) still spans the full
@@ -1165,6 +1292,16 @@ function LineItemRow({
         action={saveLineItem.bind(null, itemId)}
         className="hidden"
       />
+      <div className="flex h-full items-end pb-1.5">
+        {!isNew && !readOnly && (
+          <input
+            type="checkbox"
+            checked={selected ?? false}
+            onChange={onToggleSelected}
+            className="h-3.5 w-3.5 rounded border-slate-300"
+          />
+        )}
+      </div>
       <Combobox
         formId={formId}
         name="category"
@@ -1275,8 +1412,18 @@ function LineItemRow({
         showValue
         minQueryLength={1}
         fillCell
-        onCommit={() => {
+        onCommit={(value) => {
           if (!isNew && !readOnly) formRef.current?.requestSubmit();
+          // The submitted `value` is the QBO tax CODE id when this org uses
+          // codes, not the rate — look the rate up from the same options
+          // list (secondaryValue) so the live total math always has a
+          // plain percentage to work with, regardless of which form this
+          // field actually submits.
+          const rateStr = qboTaxUsesCodes
+            ? qboTaxRates?.find((o) => o.value === value)?.secondaryValue
+            : value;
+          const rate = Number(rateStr);
+          onTaxRateChange?.(rateStr && Number.isFinite(rate) ? rate : null);
         }}
       />
       <div
@@ -1294,7 +1441,35 @@ function LineItemRow({
           inputMode="decimal"
           defaultValue={defaults.amount}
           className={`${cellCls} text-right tabular-nums`}
-          {...blurSave}
+          disabled={readOnly}
+          onChange={(e) => {
+            // Live total preview only — a plain number, ignoring an
+            // in-progress "=..." formula (nothing to compute yet until
+            // it's committed on blur below).
+            if (!isNew) {
+              const raw = e.target.value.replace(/,/g, "").trim();
+              const n = Number(raw);
+              onAmountChange?.(raw && Number.isFinite(n) ? n : null);
+            }
+          }}
+          onBlur={() => {
+            const el = amountRef.current;
+            if (readOnly || !el) return;
+            // Evaluate a "=..." formula regardless of isNew — clicking the
+            // blank row's own "Add" button blurs this field first (a
+            // button click's mousedown moves focus before its onClick
+            // fires), so the typed formula is already resolved to a plain
+            // number by the time Add reads the form.
+            const raw = el.value.trim();
+            if (raw.startsWith("=")) {
+              const result = evaluateFormula(raw.slice(1));
+              if (result != null) {
+                el.value = result.toFixed(2);
+                if (!isNew) onAmountChange?.(result);
+              }
+            }
+            if (!isNew) formRef.current?.requestSubmit();
+          }}
         />
       </div>
       <div className="flex h-full items-end justify-center pb-1.5">
