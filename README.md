@@ -278,11 +278,19 @@ are rejected.
 
 ### Totals + class rules (hard rules, enforced at ingest and re-extract)
 
-- **Document total wins** — when line items exist and differ from the
-  printed total, the printed total is used + amber `totals_note`. NEW: when
-  the printed total **couldn't be read at all**, an amber note says the
-  amount was derived from line items and must be verified (this catches
-  invoices like Stephenson's where `total_amount` came back null).
+- **Line items win, not the document** (reversed 2026-08-27 — this bullet
+  originally said the opposite: "when line items differ from the printed
+  total, the printed total is used." That was wrong and has been undone —
+  **do not reintroduce it.**). `invoices.amount`/`tax_amount` are ALWAYS
+  what the line items actually add up to (`computeLineItemTotals`) — never
+  silently swapped for the document's printed total. When they disagree,
+  `totals_note` is purely a warning telling the reviewer to go fix the
+  line items (a missing line, a wrong amount); once fixed, the derived
+  total naturally converges with the document's and the note clears on
+  its own. Unchanged: when the printed total **couldn't be read at all**,
+  an amber note says the amount was derived from line items and must be
+  verified (catches invoices like Stephenson's where `total_amount` came
+  back null).
 - **Class NEVER comes from the document** — line items ingest with a blank
   class (`supplierDefaults?.class ?? null`); re-extract also strips document
   classes, preserving only "Extras" when `has_cos_or_extras` is locked.
@@ -329,16 +337,14 @@ Extraction moved OFF the request path:
 ### Pending / next (in rough order)
 
 1. Invoice-list pagination/virtualization once past a few thousand rows.
-2. Re-extract should recompute the `totals_note` (today the note logic only
-   runs at ingest).
-3. Settings page could use the org-cache getters too (it still fetches tax
+2. Settings page could use the org-cache getters too (it still fetches tax
    codes fresh).
-4. Make split-confirmation + Re-extract/Reorder async through the same
+3. Make split-confirmation + Re-extract/Reorder async through the same
    ingest_jobs queue.
-3. Re-extract should recompute the `totals_note` (today the note logic only
-   runs at ingest).
-4. Settings page could use the org-cache getters too (it still fetches tax
-   codes fresh).
+
+(The "re-extract should recompute totals_note" item that used to be here is
+done — `recomputeInvoiceTotals` in `dashboard-actions.ts` now reruns the
+note logic after every line-item add/edit/delete, not just at ingest.)
 
 ---
 
@@ -556,6 +562,41 @@ Description, e.g. "MR6010 FENCE, 6' X 10' TEMP./FT"):
    exception — that one was confirmed live by the user.)
 4. The Tab-after-pick mitigation (above) is unconfirmed — flag it if it
    turns out not to be the actual cause next time it's reported.
+
+### Totals: line items win, not the document (reversed, then re-reversed)
+
+Same day, later in the session: the pre-existing "document total wins"
+design (2026-08-24 section, `### Totals + class rules`) got reversed here
+twice in a row before landing on the right answer — both invoices.ts's
+ingestion logic and dashboard-actions.ts's `recomputeInvoiceTotals`.
+
+1. First found: `invoices.amount`/`tax_amount` were being silently
+   substituted with the document's OCR total whenever line items
+   disagreed — but the Bill panel's own summary always showed the LIVE
+   line-item sum instead, directly contradicting `totals_note`'s claim
+   ("the document total was used" next to a number that wasn't).
+2. First fix attempt: made the summary prefer the reconciled/document
+   figures on load. **Wrong** — explicitly corrected: the user's actual
+   workflow depends on the live total NOT being silently swapped. Editing
+   line items should show the real, current math; if it disagrees with
+   the document, that mismatch IS the signal to go find the mistake (a
+   missing line, a wrong amount) — not something the app should paper
+   over with a substituted number.
+3. Final, correct design: `invoices.amount`/`tax_amount` (and the Bill
+   panel's Subtotal/Tax/Total) are now ALWAYS `computeLineItemTotals`
+   applied to the actual current line items — full stop, no substitution,
+   ever. `totals_note` is purely a warning when that live total disagrees
+   with `document_total`; fixing the line items makes it converge and the
+   note clears on its own (recomputed on every add/edit/delete via
+   `recomputeInvoiceTotals`, not just at ingest).
+4. Real example that surfaced this (invoice 26-2422, Ridgeline Electric):
+   OCR extracted 6 of 8 line items at $0.00 (a schedule-of-values table it
+   didn't fully parse) plus a "10% HB" holdback line with `tax_rate: null`
+   instead of matching the contract line's 13%. The user deleted the six
+   $0 lines by hand; once the holdback line was corrected to 13% too,
+   subtotal 25,001.28 + tax 3,250.17 = 28,251.45 — exactly the document's
+   own total. **Do not reintroduce document-substitution logic** — the
+   live-math-plus-warning-note design is deliberate, not an oversight.
 
 ---
 
