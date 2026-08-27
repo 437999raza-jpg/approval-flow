@@ -34,6 +34,8 @@ import { isPdfName, isImageName } from "@/lib/file-types";
 import { normalizeForMatching } from "@/lib/matching";
 import { buildAuditTimeline } from "@/lib/audit-timeline";
 import { isPlatformAdmin } from "@/lib/platform-admin";
+import { switchOrgAction } from "@/lib/admin-actions";
+import { OrgSwitcher } from "@/components/OrgSwitcher";
 import {
   effectiveApproversForStep,
   stepDecisionState,
@@ -164,6 +166,25 @@ export default async function DashboardPage({
         </div>
       </main>
     );
+  }
+
+  // Almost everyone has exactly one organization_members row, so this stays
+  // empty for them — only the platform admin (given standing support access
+  // to every org they create/join, see admin-actions.ts) ever sees the
+  // switcher render.
+  const { data: myMemberships } = await supabase
+    .from("organization_members")
+    .select("organization_id")
+    .eq("user_id", user.id);
+  const myOrgIds = (myMemberships ?? []).map((m) => m.organization_id);
+  let myOrgs: { id: string; name: string }[] = [];
+  if (myOrgIds.length > 1) {
+    const { data } = await supabase
+      .from("organizations")
+      .select("id, name")
+      .in("id", myOrgIds)
+      .order("name");
+    myOrgs = data ?? [];
   }
 
   const selectedId = params.id?.[0];
@@ -1150,9 +1171,16 @@ export default async function DashboardPage({
             </Link>
           )}
         </div>
-        <div className="flex items-center justify-between border-t border-slate-200 p-4">
-          <span className="truncate text-xs text-slate-500">{user.email}</span>
-          <SignOutButton />
+        <div className="border-t border-slate-200 p-4">
+          {myOrgs.length > 1 && (
+            <div className="mb-2">
+              <OrgSwitcher orgs={myOrgs} currentOrgId={org.id} action={switchOrgAction} />
+            </div>
+          )}
+          <div className="flex items-center justify-between">
+            <span className="truncate text-xs text-slate-500">{user.email}</span>
+            <SignOutButton />
+          </div>
         </div>
       </Sidebar>
 

@@ -767,6 +767,29 @@ signup — there's no plan selection, billing capture, or email verification
 flow, since it's used to onboard specific named clients, not open
 registration.
 
+**Platform-admin support access + org switcher**: the owner needs to be
+able to see into any client's org to actually support them — check what
+they've shared, debug a stuck invoice, etc. — not just have created the
+tenant once. `createOrganizationAction` now also adds the calling platform
+admin as an `organization_members` row (`role: 'admin'`) on every org they
+create, alongside that org's own first admin; `joinOrganizationAction` is
+the same for orgs that predate this (or if you were ever removed) — a
+"Join as support"/"View" button per row on `/admin/organizations`. Because
+`is_org_admin(...)` is unconditional in every RLS policy (invoices,
+comments, documents, line items all route through `can_see_invoice()`,
+which checks `is_org_admin` first), this is genuine full visibility, not a
+read-only mirror.
+
+Having more than one `organization_members` row breaks `current-org.ts`'s
+old MVP assumption ("a user belongs to one org, so just take their first
+membership") — fixed by reading an `active_org_id` cookie first
+(`switchOrgAction` sets it, re-verifying membership server-side rather than
+trusting the submitted id) and only falling back to "first membership" when
+it's unset or stale. A regular single-org user never sets this cookie, so
+their behavior is unchanged. The dashboard sidebar only renders the
+`OrgSwitcher` dropdown when a user actually has more than one membership
+row — in practice, just the platform admin — so nobody else ever sees it.
+
 **Deferred, on purpose**: the shared inbound-email domain still reads as
 `flow.ufirst.co` in code comments/`.env.local` — fine for now since the
 app itself isn't finalized yet; revisit before a client outside Ufirst

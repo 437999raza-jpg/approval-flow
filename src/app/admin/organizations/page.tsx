@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isPlatformAdmin } from "@/lib/platform-admin";
-import { createOrganizationAction } from "@/lib/admin-actions";
+import { createOrganizationAction, joinOrganizationAction } from "@/lib/admin-actions";
 import { SubmitButton } from "@/components/SubmitButton";
 
 const ERRORS: Record<string, string> = {
@@ -36,10 +36,12 @@ export default async function AdminOrganizationsPage({
 
   const { data: memberRows } = await admin
     .from("organization_members")
-    .select("organization_id");
+    .select("organization_id, user_id");
   const memberCounts = new Map<string, number>();
+  const myOrgIds = new Set<string>();
   for (const row of memberRows ?? []) {
     memberCounts.set(row.organization_id, (memberCounts.get(row.organization_id) ?? 0) + 1);
+    if (row.user_id === user.id) myOrgIds.add(row.organization_id);
   }
 
   const error = searchParams.error ? ERRORS[searchParams.error] ?? "Something went wrong." : null;
@@ -140,7 +142,8 @@ export default async function AdminOrganizationsPage({
               <th className="py-1.5 pr-3">Name</th>
               <th className="py-1.5 pr-3">Invoice address</th>
               <th className="py-1.5 pr-3">Members</th>
-              <th className="py-1.5">Created</th>
+              <th className="py-1.5 pr-3">Created</th>
+              <th className="py-1.5"></th>
             </tr>
           </thead>
           <tbody>
@@ -151,8 +154,19 @@ export default async function AdminOrganizationsPage({
                   {(org.inbound_email_local ?? org.inbound_email_token)}@{domain}
                 </td>
                 <td className="py-1.5 pr-3 text-slate-500">{memberCounts.get(org.id) ?? 0}</td>
-                <td className="py-1.5 text-slate-500">
+                <td className="py-1.5 pr-3 text-slate-500">
                   {new Date(org.created_at).toLocaleDateString()}
+                </td>
+                <td className="py-1.5 text-right">
+                  <form action={joinOrganizationAction}>
+                    <input type="hidden" name="org_id" value={org.id} />
+                    <button
+                      type="submit"
+                      className="rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
+                    >
+                      {myOrgIds.has(org.id) ? "View" : "Join as support"}
+                    </button>
+                  </form>
                 </td>
               </tr>
             ))}

@@ -1,10 +1,22 @@
 "use server";
 
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isPlatformAdmin } from "@/lib/platform-admin";
+
+const ACTIVE_ORG_COOKIE = "active_org_id";
+
+function setActiveOrgCookie(orgId: string) {
+  cookies().set(ACTIVE_ORG_COOKIE, orgId, {
+    httpOnly: true,
+    sameSite: "lax",
+    path: "/",
+    maxAge: 60 * 60 * 24 * 365,
+  });
+}
 
 // Platform-admin only: provision a brand-new tenant (organization) plus its
 // first admin user, in one step. There's no self-serve signup — a new
@@ -96,6 +108,19 @@ export async function createOrganizationAction(formData: FormData) {
     role: "admin",
   });
 
+  // Give the platform admin standing support access to every org they
+  // create — they need to be able to see what a client is doing/sharing to
+  // actually support them, not just have created the tenant once. Skipped
+  // when the platform admin IS the org's own first admin (e.g. testing) to
+  // avoid a duplicate-membership insert.
+  if (user.id !== userId) {
+    await admin.from("organization_members").insert({
+      organization_id: org.id,
+      user_id: user.id,
+      role: "admin",
+    });
+  }
+
   // Without a default workflow, invoices for this org would have
   // workflow_id = null forever — decide()/reExtractInvoiceCore() and friends
   // treat that as "nothing to do" and silently no-op, so Approve/Reject
@@ -124,4 +149,58 @@ export async function createOrganizationAction(formData: FormData) {
 
   revalidatePath("/admin/organizations");
   redirect(`/admin/organizations?created=${org.id}`);
+}
+
+// Platform-admin only: grant yourself standing support access to an org
+// that predates the auto-membership above (or where you were removed), then
+// switch into it. Idempotent — re-joining an org you're already in is a
+// no-op past the upsert.
+export async function joinOrganizationAction(formData: FormData) {
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user || !isPlatformAdmin(user.email)) redirect("/login");
+
+  const orgId = String(formData.get("org_id") ?? "");
+  if (!orgId) redirect("/admin/organizations");
+
+  const admin = createAdminClient();
+  await admin.from("profiles").upsert(
+    { id: user.id },
+    { onConflict: "id", ignoreDuplicates: true }
+  );
+  await admin
+    .from("organization_members")
+    .upsert(
+      { organization_id: orgId, user_id: user.id, role: "admin" },
+      { onConflict: "organization_id,user_id", ignoreDuplicates: true }
+    );
+
+  setActiveOrgCookie(orgId);
+  redirect("/dashboard");
+}
+
+// Switch which of your orgs you're viewing. Only ever meaningful for
+// someone with more than one organization_members row (the platform admin);
+// everyone else has exactly one, so the OrgSwitcher UI doesn't even render.
+// Re-verifies membership server-side rather than trusting the submitted id.
+export async function switchOrgAction(formData: FormData) {
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
+  const orgId = String(formData.get("org_id") ?? "");
+  const { data: membership } = await supabase
+    .from("organization_members")
+    .select("organization_id")
+    .eq("user_id", user.id)
+    .eq("organization_id", orgId)
+    .maybeSingle();
+  if (!membership) redirect("/dashboard");
+
+  setActiveOrgCookie(orgId);
+  redirect("/dashboard");
 }
