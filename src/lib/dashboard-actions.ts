@@ -1175,6 +1175,11 @@ export async function deleteInvoicesAction(invoiceIds: string[]) {
 
   revalidateTag(INVOICES_TAG);
   revalidatePath("/dashboard", "layout");
+
+  // The deleted invoices may include the one currently open in the URL
+  // (/dashboard/<id>) — the page treats "selected invoice not found" as a
+  // 404. Land back on the bare list (same as the single-invoice delete).
+  redirect("/dashboard");
 }
 
 // Batch "clear publishing data": undoes a SUCCESSFUL QBO sync for several
