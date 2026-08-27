@@ -20,6 +20,7 @@ import { InvoiceStatusBadge } from "@/components/InvoiceStatusBadge";
 import { SearchInput } from "@/components/SearchInput";
 import { SignOutButton } from "@/components/SignOutButton";
 import { CollapsiblePane } from "@/components/CollapsiblePane";
+import { InvoiceSelectionList, type SelectableInvoice } from "@/components/InvoiceSelectionList";
 import { DetailSplit, type DocumentRef } from "@/components/DetailSplit";
 import { Sidebar } from "@/components/Sidebar";
 import { DocumentFocusProvider } from "@/components/DocumentFocusContext";
@@ -52,6 +53,9 @@ import {
   holdInvoice,
   unholdInvoice,
   deleteInvoiceAction,
+  deleteInvoicesAction,
+  clearQboPublishDataAction,
+  emailInvoicesAction,
   reassignApprover,
   overrideStatus,
   saveLineItem,
@@ -917,6 +921,19 @@ export default async function DashboardPage({
     { key: "rejected", label: "Rejected" },
   ];
 
+  // Multi-select rows: the same display data the list pane renders, as
+  // serializable props for the client-side selection component.
+  const selectableRows: SelectableInvoice[] = filteredForDisplay.map((inv) => ({
+    id: inv.id,
+    vendor: inv.vendor_name ?? inv.file_name,
+    amount: inv.amount,
+    currency: inv.currency,
+    status: inv.status,
+    isDuplicate: duplicateInvoiceIds.has(inv.id),
+    holders: holderOf(inv).map((id) => memberNameById.get(id) ?? "Team member"),
+    selected: selected?.id === inv.id,
+  }));
+
   return (
     <DocumentFocusProvider>
     <ExtractionPoller />
@@ -1118,82 +1135,15 @@ export default async function DashboardPage({
         <div className="flex min-h-0 flex-1">
           {/* List pane (collapsible) */}
           <CollapsiblePane title="Invoices">
-            {filteredForDisplay.length === 0 ? (
-              <div className="p-8 text-center text-sm text-slate-500">
-                No invoices in this view.
-              </div>
-            ) : (
-              filteredForDisplay.map((invoice, i) => (
-                <div key={invoice.id}>
-                  {i === 0 && pinnedDuplicates.length > 0 && (
-                    <div className="flex items-center gap-1.5 border-b border-orange-200 bg-orange-50 px-4 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-orange-800">
-                      <svg
-                        width="11"
-                        height="11"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2.5"
-                      >
-                        <path
-                          d="M12 9v4m0 4h.01M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L14.71 3.86a2 2 0 0 0-3.42 0Z"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        />
-                      </svg>
-                      Possible duplicates
-                    </div>
-                  )}
-                  {i === pinnedDuplicates.length && pinnedDuplicates.length > 0 && (
-                    <div className="border-b border-slate-200 bg-slate-50 px-4 py-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
-                      All invoices
-                    </div>
-                  )}
-                  <Link
-                    href={`/dashboard/${invoice.id}${qs}`}
-                    scroll={false}
-                    className={clsx(
-                      "block border-b border-slate-100 px-4 py-3",
-                      duplicateInvoiceIds.has(invoice.id) && "border-l-2 border-l-orange-300",
-                      selected?.id === invoice.id ? "bg-blue-50" : "hover:bg-slate-50"
-                    )}
-                  >
-                    <div className="flex items-center gap-1.5">
-                      <div className="min-w-0 flex-1 truncate text-sm font-medium">
-                        {invoice.vendor_name ?? invoice.file_name}
-                      </div>
-                      {duplicateInvoiceIds.has(invoice.id) && (
-                        <span className="inline-flex flex-none items-center rounded-full bg-orange-100 px-2 py-0.5 text-[10px] font-medium text-orange-800">
-                          Duplicate
-                        </span>
-                      )}
-                    </div>
-                    <div className="mt-1 flex items-center justify-between">
-                      <span className="text-xs text-slate-500">
-                        {invoice.amount != null
-                          ? invoice.amount.toLocaleString(undefined, {
-                              style: "currency",
-                              currency: invoice.currency,
-                            })
-                          : "No amount extracted"}
-                      </span>
-                      <InvoiceStatusBadge status={invoice.status} />
-                    </div>
-                    {(() => {
-                      const holderIds = holderOf(invoice);
-                      return holderIds.length > 0 ? (
-                        <div className="mt-1 text-xs text-slate-400">
-                          With{" "}
-                          {holderIds
-                            .map((id) => memberNameById.get(id) ?? "Team member")
-                            .join(", ")}
-                        </div>
-                      ) : null;
-                    })()}
-                  </Link>
-                </div>
-              ))
-            )}
+            <InvoiceSelectionList
+              rows={selectableRows}
+              pinnedCount={pinnedDuplicates.length}
+              qs={qs}
+              canReview={canReviewNow}
+              deleteInvoicesAction={deleteInvoicesAction}
+              clearQboPublishDataAction={clearQboPublishDataAction}
+              emailInvoicesAction={emailInvoicesAction}
+            />
           </CollapsiblePane>
 
           {/* Detail pane: document viewer + bill panel + side panel */}

@@ -23,6 +23,7 @@ import { getQboConnection, listCategories, listTaxRates, listTaxCodes, listClass
 import { fetchAllQboSuppliers } from "@/lib/qbo-all";
 import { buildQboAttachmentBundle } from "@/lib/qbo-attachments";
 import { pdfPageCount, reorderPdfPages } from "@/lib/merge-documents";
+import { buildMergedInvoicePdf } from "@/lib/invoice-export";
 import { qboTag, INVOICES_TAG } from "@/lib/org-cache";
 
 // Server actions for the dashboard (moved out of the page component so
@@ -1121,6 +1122,208 @@ export async function deleteInvoiceAction(invoiceId: string) {
 
   revalidatePath("/dashboard", "layout");
   redirect("/dashboard");
+}
+
+// Batch delete: same rules as deleteInvoiceAction but for many invoices at
+// once (from the multi-select list). Logs one audit entry per invoice,
+// deletes rows + storage files, then revalidates once. Admin only.
+export async function deleteInvoicesAction(invoiceIds: string[]) {
+
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+  if (!(await canReview(supabase))) return;
+  if (invoiceIds.length === 0) return;
+
+  const { data: invoices } = await supabase
+    .from("invoices")
+    .select("id, organization_id, file_path, vendor_name, invoice_number")
+    .in("id", invoiceIds);
+  if (!invoices || invoices.length === 0) return;
+
+  const { data: docs } = await supabase
+    .from("invoice_documents")
+    .select("file_path")
+    .in("invoice_id", invoiceIds);
+  const filePaths = [
+    ...invoices.map((i) => i.file_path),
+    ...(docs ?? []).map((d) => d.file_path),
+  ];
+
+  await supabase.from("audit_log").insert(
+    invoices.map((invoice) => ({
+      organization_id: invoice.organization_id,
+      invoice_id: invoice.id,
+      actor_id: user.id,
+      action: "invoice.deleted",
+      metadata: {
+        vendor_name: invoice.vendor_name,
+        invoice_number: invoice.invoice_number,
+      },
+    }))
+  );
+
+  const { error: deleteError } = await supabase
+    .from("invoices")
+    .delete()
+    .in("id", invoiceIds);
+  if (deleteError) throw deleteError;
+
+  await supabase.storage.from("invoices").remove(filePaths);
+
+  revalidateTag(INVOICES_TAG);
+  revalidatePath("/dashboard", "layout");
+}
+
+// Batch "clear publishing data": undoes a SUCCESSFUL QBO sync for several
+// invoices at once (same semantics as clearQboSync — Flow-side only, the
+// Bill already in QuickBooks is NOT touched, and re-syncing creates a
+// second bill there). Approved invoices go back to qbo_ready. Admin only.
+export async function clearQboPublishDataAction(invoiceIds: string[]) {
+
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+  if (!(await canReview(supabase))) return;
+  if (invoiceIds.length === 0) return;
+
+  const { data: invoices } = await supabase
+    .from("invoices")
+    .select("id, organization_id, status, qbo_bill_id")
+    .in("id", invoiceIds);
+  if (!invoices || invoices.length === 0) return;
+
+  await supabase.from("audit_log").insert(
+    invoices.map((inv) => ({
+      organization_id: inv.organization_id,
+      invoice_id: inv.id,
+      actor_id: user.id,
+      action: "invoice.qbo_sync_cleared",
+      metadata: { previous_qbo_bill_id: inv.qbo_bill_id },
+    }))
+  );
+
+  // Clear the sync state on every selected invoice first, then flip any
+  // that were approved back to qbo_ready so they reappear for a re-sync.
+  await supabase
+    .from("invoices")
+    .update({
+      qbo_sync_status: null,
+      qbo_error: null,
+      qbo_bill_id: null,
+      qbo_synced_at: null,
+      updated_at: new Date().toISOString(),
+    })
+    .in("id", invoiceIds);
+  await supabase
+    .from("invoices")
+    .update({ status: "qbo_ready" })
+    .eq("status", "approved")
+    .in("id", invoiceIds);
+
+  revalidateTag(INVOICES_TAG);
+  revalidatePath("/dashboard", "layout");
+}
+
+// Batch email: merge the selected invoices' documents into one PDF and send
+// it to the given recipient via Resend. Admin only; returns { ok, error? }
+// so the client can show inline feedback instead of navigating away. Uses
+// the same RESEND_API_KEY/RESEND_FROM_EMAIL as the @mention notifications.
+export async function emailInvoicesAction(
+  invoiceIds: string[],
+  to: string,
+  note: string
+): Promise<{ ok: boolean; error?: string }> {
+
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+  if (!(await canReview(supabase))) return { ok: false };
+  if (invoiceIds.length === 0) return { ok: false };
+
+  const apiKey = process.env.RESEND_API_KEY;
+  const from = process.env.RESEND_FROM_EMAIL;
+  if (!apiKey || !from) {
+    return { ok: false, error: "Email is not configured (RESEND_API_KEY / RESEND_FROM_EMAIL missing)." };
+  }
+  const recipient = to.trim();
+  if (!recipient) return { ok: false, error: "Enter a recipient email address." };
+
+  const merged = await buildMergedInvoicePdf(supabase, invoiceIds);
+  if (!merged) {
+    return { ok: false, error: "Could not build the PDF — the selected invoices have no documents." };
+  }
+
+  const { data: invoices } = await supabase
+    .from("invoices")
+    .select("id, organization_id, vendor_name, invoice_number, file_name")
+    .in("id", invoiceIds);
+  if (!invoices || invoices.length === 0) {
+    return { ok: false, error: "No invoices found for the selection." };
+  }
+  const labels = invoices
+    .map((i) => i.vendor_name || i.invoice_number || i.file_name || "Invoice")
+    .join(", ");
+  const firstOrgId = invoices[0].organization_id;
+
+  const base64 = Buffer.from(merged).toString("base64");
+  const html = `
+    <p>Here ${invoiceIds.length > 1 ? "are" : "is"} the attached invoice document${invoiceIds.length > 1 ? "s" : ""}:</p>
+    <p><strong>${escapeHtml(labels)}</strong></p>
+    ${note.trim() ? `<p style="white-space:pre-wrap;">${escapeHtml(note.trim())}</p>` : ""}
+  `.trim();
+
+  try {
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from,
+        to: recipient,
+        subject: `${invoiceIds.length} invoice${invoiceIds.length > 1 ? "s" : ""} from Flow`,
+        html,
+        attachments: [
+          {
+            filename: `invoices-${new Date().toISOString().slice(0, 10)}.pdf`,
+            content: base64,
+          },
+        ],
+      }),
+    });
+    if (!res.ok) {
+      return { ok: false, error: `Email failed (${res.status}) — check the recipient address.` };
+    }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : "Email failed to send." };
+  }
+
+  await supabase.from("audit_log").insert({
+    organization_id: firstOrgId,
+    invoice_id: null,
+    actor_id: user.id,
+    action: "invoice.batch_emailed",
+    metadata: { invoice_ids: invoiceIds, to: recipient },
+  });
+
+  revalidateTag(INVOICES_TAG);
+  return { ok: true };
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
 // Admin-only: push this one invoice to a different approver for its current

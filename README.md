@@ -1111,6 +1111,19 @@ is a master-detail interface, all server-rendered:
   [Document search](#document-search) panel for everything else.
 - **List pane**: clicking a row navigates to `/dashboard/[id]?...` (filters
   preserved in the query string), which server-renders the detail pane.
+  Admin users get a **checkbox per row**; with one or more selected a
+  **batch action bar** appears (sticky at the top of the list):
+  - **Delete** — removes the selected invoices + their documents (two-step
+    confirm; same rules as the single-invoice delete).
+  - **Clear publishing data** — resets "exported to QuickBooks" on the
+    selected invoices: `qbo_sync_status/bill_id/synced_at/error` cleared,
+    approved ones go back to **QBO Ready** for a re-sync. Flow-side only —
+    the Bill already in QBO is NOT touched (re-syncing creates a second
+    bill there; void the original in QBO first if it shouldn't stay).
+  - **Export PDFs (one file)** — downloads every selected invoice's
+    documents merged into a single PDF (`/api/invoices/batch-export?ids=…`).
+  - **Send by email** — an inline form (recipient + optional note) emails
+    the merged PDF via Resend (admin only).
 - **Detail pane**: amount/status header, a possible-duplicate warning if
   relevant (pinned together at the top of the list when present — see
   below), an approval stepper (green = decided, blue = current step, grey
