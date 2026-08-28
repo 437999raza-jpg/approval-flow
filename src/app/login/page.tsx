@@ -15,6 +15,10 @@ import { createClient } from "@/lib/supabase/client";
 // email" state distinct from the magic-link one.
 type AuthMode = "signin" | "signup";
 type SignInMode = "password" | "magic";
+// Supabase's own provider keys — "azure" covers Microsoft/Office 365
+// (Azure AD/Entra ID under the hood), "apple" covers Sign in with Apple
+// (which an iCloud-email user would use).
+type OAuthProvider = "google" | "azure" | "apple";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -32,30 +36,35 @@ export default function LoginPage() {
   const [magicLinkPending, setMagicLinkPending] = useState(false);
   const [passwordPending, setPasswordPending] = useState(false);
   const [signupPending, setSignupPending] = useState(false);
-  const [googlePending, setGooglePending] = useState(false);
-  const pending = magicLinkPending || passwordPending || signupPending || googlePending;
+  const [oauthPending, setOauthPending] = useState<OAuthProvider | null>(null);
+  const pending = magicLinkPending || passwordPending || signupPending || oauthPending !== null;
 
-  async function continueWithGoogle() {
+  async function continueWithProvider(provider: OAuthProvider) {
     setError(null);
-    setGooglePending(true);
+    setOauthPending(provider);
     try {
       const supabase = createClient();
       const { error } = await supabase.auth.signInWithOAuth({
-        provider: "google",
+        provider,
         options: {
           redirectTo: `${window.location.origin}/auth/callback?next=/dashboard`,
+          // Azure doesn't return an email by default — Supabase's own
+          // docs call this out as required, since the app (and
+          // ensureOrgForNewUser) both key off the user's email.
+          ...(provider === "azure" ? { scopes: "email" } : {}),
         },
       });
-      // On success the browser navigates to Google immediately — nothing
-      // more to do here. Only a synchronous error (e.g. Google not
-      // configured as a provider yet) comes back to this branch.
+      // On success the browser navigates to the provider immediately —
+      // nothing more to do here. Only a synchronous error (e.g. the
+      // provider isn't configured in Supabase yet) comes back to this
+      // branch.
       if (error) {
         setError(error.message);
-        setGooglePending(false);
+        setOauthPending(null);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not start Google sign-in.");
-      setGooglePending(false);
+      setError(err instanceof Error ? err.message : "Could not start sign-in.");
+      setOauthPending(null);
     }
   }
 
@@ -164,6 +173,25 @@ export default function LoginPage() {
         <path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.6 15.9 18.9 13 24 13c3.1 0 5.8 1.1 8 3l6-6C34.5 5.1 29.6 3 24 3c-7.4 0-13.8 4.1-17.1 10.1z" />
         <path fill="#4CAF50" d="M24 45c5.5 0 10.4-2.1 14.1-5.5l-6.6-5.4c-2 1.5-4.6 2.4-7.5 2.4-5.2 0-9.6-3.3-11.2-8l-6.5 5C9.9 40.5 16.4 45 24 45z" />
         <path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.3-2.2 4.2-4.1 5.6l6.6 5.4C41.6 35.6 45 30.4 45 24c0-1.2-.1-2.3-.4-3.5z" />
+      </svg>
+    );
+  }
+
+  function MicrosoftIcon() {
+    return (
+      <svg viewBox="0 0 23 23" className="h-4 w-4">
+        <path fill="#F35325" d="M1 1h10v10H1z" />
+        <path fill="#81BC06" d="M12 1h10v10H12z" />
+        <path fill="#05A6F0" d="M1 12h10v10H1z" />
+        <path fill="#FFBA08" d="M12 12h10v10H12z" />
+      </svg>
+    );
+  }
+
+  function AppleIcon() {
+    return (
+      <svg viewBox="0 0 24 24" className="h-4 w-4" fill="currentColor">
+        <path d="M16.365 1.43c0 1.14-.415 2.06-1.244 2.76-.83.7-1.83 1.09-3.01 1.02-.13-1.1.36-2.14 1.15-2.86.79-.72 1.98-1.2 3.1-1.2.01.09.01.19.01.28zm3.62 15.34c-.44 1.02-.65 1.48-1.22 2.38-.79 1.26-1.9 2.83-3.29 2.85-1.23.02-1.55-.8-3.22-.79-1.67.01-2.02.8-3.25.78-1.39-.02-2.44-1.43-3.23-2.69-2.22-3.51-2.45-7.63-1.08-9.82.97-1.55 2.5-2.46 3.94-2.46 1.47 0 2.39.81 3.61.81 1.18 0 1.9-.81 3.6-.81 1.29 0 2.65.7 3.62 1.91-3.18 1.75-2.67 6.29.52 7.84z" />
       </svg>
     );
   }
@@ -282,15 +310,35 @@ export default function LoginPage() {
               </div>
             ) : (
               <>
-                <button
-                  type="button"
-                  onClick={continueWithGoogle}
-                  disabled={pending}
-                  className="flex w-full items-center justify-center gap-2.5 rounded-lg border border-brand-line px-4 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-brand-mist disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {googlePending ? <Spinner /> : <GoogleIcon />}
-                  Continue with Google
-                </button>
+                <div className="space-y-2">
+                  <button
+                    type="button"
+                    onClick={() => continueWithProvider("google")}
+                    disabled={pending}
+                    className="flex w-full items-center justify-center gap-2.5 rounded-lg border border-brand-line px-4 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-brand-mist disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {oauthPending === "google" ? <Spinner /> : <GoogleIcon />}
+                    Continue with Google
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => continueWithProvider("azure")}
+                    disabled={pending}
+                    className="flex w-full items-center justify-center gap-2.5 rounded-lg border border-brand-line px-4 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-brand-mist disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {oauthPending === "azure" ? <Spinner /> : <MicrosoftIcon />}
+                    Continue with Microsoft
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => continueWithProvider("apple")}
+                    disabled={pending}
+                    className="flex w-full items-center justify-center gap-2.5 rounded-lg border border-brand-line px-4 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-brand-mist disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {oauthPending === "apple" ? <Spinner /> : <AppleIcon />}
+                    Continue with Apple
+                  </button>
+                </div>
                 <div className="relative py-4 text-center">
                   <div className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-slate-200" />
                   <span className="relative bg-white px-3 text-xs text-slate-400">or</span>

@@ -1172,21 +1172,46 @@ Find your `auth.users` id in Supabase → Authentication → Users, or via
    first), so it's safe to call on every auth completion, not just a
    user's first — an existing invited user completing a magic-link sign-in
    is a no-op.
-3. **Google** (`signInWithOAuth({ provider: "google" })`) — same
-   `?code=` PKCE exchange as magic link, so `/auth/callback` needed zero
-   provider-specific code. **Requires setup only you can do**: Google
-   isn't usable until you (a) create an OAuth Client in Google Cloud
-   Console (APIs & Services → Credentials → OAuth client ID → Web
-   application; authorized redirect URI is your Supabase project's
-   `https://<project-ref>.supabase.co/auth/v1/callback`) and (b) paste
-   that Client ID/Secret into Supabase → Authentication → Providers →
-   Google. Nothing to set in this app's own env vars — Supabase holds
-   those credentials itself. Until then, "Continue with Google" surfaces
-   Supabase's own error inline rather than silently failing.
+3. **Google, Microsoft, or Apple** (`signInWithOAuth({ provider })` —
+   Supabase's provider keys are `google`, `azure` (Microsoft/Office 365 —
+   Azure AD/Entra ID under the hood, covers both work/school and personal
+   Microsoft accounts once the Azure app is registered as multi-tenant),
+   and `apple` (Sign in with Apple — what an iCloud-email user uses).
+   Same `?code=` PKCE exchange as magic link for all three, so
+   `/auth/callback` needed zero provider-specific code. Azure additionally
+   requests the `email` scope explicitly (`continueWithProvider` in
+   `login/page.tsx`) — Supabase's own docs call out that Azure doesn't
+   return an email by default, and both the app and `ensureOrgForNewUser`
+   key off it.
+
+   **Each needs setup only you can do** — Supabase never sees your
+   provider credentials until you paste them into its dashboard:
+   - **Google**: Google Cloud Console → APIs & Services → Credentials →
+     OAuth client ID → Web application; authorized redirect URI is your
+     Supabase project's `https://<project-ref>.supabase.co/auth/v1/callback`.
+     Paste the Client ID/Secret into Supabase → Authentication → Providers → Google.
+   - **Microsoft**: Azure Portal → Microsoft Entra ID → App registrations
+     → New registration (set "Supported account types" to multi-tenant +
+     personal Microsoft accounts if you want both Office 365 and
+     outlook.com/iCloud-style personal sign-in) → add the same Supabase
+     callback URL as a redirect URI → create a client secret under
+     Certificates & secrets. Paste the Application (client) ID and that
+     secret into Supabase → Authentication → Providers → Azure.
+   - **Apple**: notably more involved — requires a paid Apple Developer
+     Program membership. Create a Services ID + a Sign in with Apple
+     private key in developer.apple.com, verify your domain, and set the
+     same Supabase callback URL as the return URL. Paste the Services ID,
+     Team ID, Key ID, and private key into Supabase → Authentication →
+     Providers → Apple.
+
+   Nothing to set in this app's own env vars for any of the three —
+   Supabase holds those credentials itself. Until a given provider is
+   configured, its button surfaces Supabase's own error inline rather
+   than silently failing.
 
 Uses Supabase's **PKCE** flow by default (`@supabase/ssr`'s browser
-client sets `flowType: "pkce"`), so both the magic-link email and the
-Google redirect land on `/auth/callback?code=...`, which exchanges the
+client sets `flowType: "pkce"`), so the magic-link email and every OAuth
+provider redirect land on `/auth/callback?code=...`, which exchanges the
 code for a session server-side
 ([`src/app/auth/callback/route.ts`](src/app/auth/callback/route.ts)).
 
