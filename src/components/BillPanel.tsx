@@ -1153,23 +1153,44 @@ export function BillPanel({
               <p className="mt-3 text-sm text-slate-400">No activity recorded yet.</p>
             ) : (
               <ol className="mt-3 space-y-3">
-                {auditTimeline.map((entry) => (
-                  <li key={entry.id} className="border-l-2 border-slate-200 pl-3">
-                    <div className="flex items-baseline justify-between gap-2">
-                      <p className="text-sm text-slate-700">
-                        <span className="font-medium">{entry.actorName}</span>{" "}
-                        {entry.kind === "comment" ? "commented" : entry.summary}
-                      </p>
-                      <LocalTime
-                        iso={entry.at}
-                        className="flex-none text-[11px] text-slate-400"
-                      />
-                    </div>
-                    {entry.detail && (
-                      <p className="mt-0.5 text-xs text-slate-500">{entry.detail}</p>
-                    )}
-                  </li>
-                ))}
+                {auditTimeline.map((entry) => {
+                  const summaryText = entry.kind === "comment" ? "commented" : entry.summary;
+                  // Rejections need to stand out scanning the trail — bold +
+                  // red on whichever line actually mentions it (the summary
+                  // line for the decision itself, the detail line for a
+                  // reject-reason comment), not the whole entry.
+                  const summaryIsReject = /reject/i.test(summaryText);
+                  const detailIsReject = entry.detail ? /reject/i.test(entry.detail) : false;
+                  return (
+                    <li key={entry.id} className="border-l-2 border-slate-200 pl-3">
+                      <div className="flex items-baseline justify-between gap-2">
+                        <p
+                          className={`text-sm ${
+                            summaryIsReject ? "font-bold text-red-600" : "text-slate-700"
+                          }`}
+                        >
+                          <span className={summaryIsReject ? "" : "font-medium"}>
+                            {entry.actorName}
+                          </span>{" "}
+                          {summaryText}
+                        </p>
+                        <LocalTime
+                          iso={entry.at}
+                          className="flex-none text-[11px] text-slate-400"
+                        />
+                      </div>
+                      {entry.detail && (
+                        <p
+                          className={`mt-0.5 text-xs ${
+                            detailIsReject ? "font-bold text-red-600" : "text-slate-500"
+                          }`}
+                        >
+                          {entry.detail}
+                        </p>
+                      )}
+                    </li>
+                  );
+                })}
               </ol>
             )}
           </CollapsibleSection>
