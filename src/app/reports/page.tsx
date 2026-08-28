@@ -6,6 +6,7 @@ import { getCurrentOrg } from "@/lib/current-org";
 import { SignOutButton } from "@/components/SignOutButton";
 import { SubmitButton } from "@/components/SubmitButton";
 import { runReport, type ReportConfig } from "@/lib/reports";
+import { buildInvoiceListReport } from "@/lib/invoice-list-report";
 
 // ---------------------------------------------------------------------
 // Server actions
@@ -145,6 +146,25 @@ export default async function ReportsPage({
         runningReport.config as unknown as ReportConfig
       )
     : null;
+  const runningFilters = runningReport
+    ? (runningReport.config as unknown as ReportConfig).filters
+    : null;
+  const listRows = runningFilters
+    ? await buildInvoiceListReport(supabase, org.id, runningFilters)
+    : null;
+  const exportQs = (f: typeof runningFilters) => {
+    if (!f) return "";
+    const params = new URLSearchParams();
+    if (f.status) params.set("f_status", f.status);
+    if (f.vendor) params.set("f_vendor", f.vendor);
+    if (f.project_id) params.set("f_project", f.project_id);
+    if (f.amount_over != null) params.set("f_amount_over", String(f.amount_over));
+    if (f.amount_under != null) params.set("f_amount_under", String(f.amount_under));
+    if (f.from) params.set("f_from", f.from);
+    if (f.to) params.set("f_to", f.to);
+    const qs = params.toString();
+    return qs ? `?${qs}` : "";
+  };
 
   const fmtNum = (n: number) =>
     n.toLocaleString(undefined, { maximumFractionDigits: 2 });
@@ -188,12 +208,22 @@ export default async function ReportsPage({
 
       <main className="min-w-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-5xl p-8">
-          <h1 className="text-2xl font-semibold">Reports</h1>
-          <p className="mt-1 text-sm text-slate-500">
-            Build and save your own reports. Every report runs against what
-            you can see (admins see everything; members see their
-            workflow-covered projects).
-          </p>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h1 className="text-2xl font-semibold">Reports</h1>
+              <p className="mt-1 text-sm text-slate-500">
+                Build and save your own reports. Every report runs against
+                what you can see (admins see everything; members see their
+                workflow-covered projects).
+              </p>
+            </div>
+            <a
+              href="/api/reports/export"
+              className="flex-none rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            >
+              Download all invoices (CSV)
+            </a>
+          </div>
 
           {/* Builder */}
           <form
@@ -376,6 +406,77 @@ export default async function ReportsPage({
                   </tr>
                 </tbody>
               </table>
+            </div>
+          )}
+
+          {/* Invoice list — one row per matching invoice, sorted by
+              customer then supplier, with a download button — the
+              ApprovalMax-style "Request reports" list rather than the
+              grouped summary above. */}
+          {runningReport && listRows && (
+            <div className="mt-6 rounded-lg border border-slate-200 bg-white">
+              <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-3">
+                <div>
+                  <h2 className="text-base font-semibold">Invoice list</h2>
+                  <p className="text-xs text-slate-400">
+                    {listRows.length} invoice{listRows.length === 1 ? "" : "s"} ·
+                    sorted by customer, then supplier
+                  </p>
+                </div>
+                <a
+                  href={`/api/reports/export${exportQs(runningFilters)}`}
+                  className="flex-none rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+                >
+                  Download CSV
+                </a>
+              </div>
+              {listRows.length === 0 ? (
+                <p className="px-4 py-6 text-sm text-slate-400">
+                  No invoices match this report&apos;s filters.
+                </p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-100 text-left text-[10px] uppercase tracking-wide text-slate-400">
+                        <th className="whitespace-nowrap px-4 py-2 font-semibold">Name</th>
+                        <th className="whitespace-nowrap px-4 py-2 text-right font-semibold">Amount</th>
+                        <th className="whitespace-nowrap px-4 py-2 font-semibold">Supplier</th>
+                        <th className="whitespace-nowrap px-4 py-2 font-semibold">Status</th>
+                        <th className="whitespace-nowrap px-4 py-2 font-semibold">Approved by</th>
+                        <th className="whitespace-nowrap px-4 py-2 font-semibold">Waiting for</th>
+                        <th className="whitespace-nowrap px-4 py-2 font-semibold">Created</th>
+                        <th className="whitespace-nowrap px-4 py-2 font-semibold">Customers</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {listRows.map((row) => (
+                        <tr key={row.id} className="border-b border-slate-50">
+                          <td className="max-w-xs px-4 py-2">
+                            <Link
+                              href={`/dashboard/${row.id}`}
+                              className="font-medium text-blue-600 hover:underline"
+                            >
+                              {row.name}
+                            </Link>
+                          </td>
+                          <td className="whitespace-nowrap px-4 py-2 text-right text-slate-700">
+                            {row.amount != null ? fmtNum(row.amount) : "—"}
+                          </td>
+                          <td className="px-4 py-2 text-slate-700">{row.supplier}</td>
+                          <td className="whitespace-nowrap px-4 py-2 text-slate-700">{row.status}</td>
+                          <td className="px-4 py-2 text-slate-700">{row.approvedBy}</td>
+                          <td className="px-4 py-2 text-slate-700">{row.waitingFor}</td>
+                          <td className="whitespace-nowrap px-4 py-2 text-slate-500">
+                            {new Date(row.createdAt).toLocaleDateString()}
+                          </td>
+                          <td className="px-4 py-2 text-slate-700">{row.customers}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           )}
         </div>

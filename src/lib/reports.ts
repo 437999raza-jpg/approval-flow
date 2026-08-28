@@ -35,6 +35,40 @@ export interface ReportResult {
   groupBy: ReportConfig["groupBy"];
 }
 
+// Shared by runReport (grouped counts/sums) and the invoice-list export
+// (individual rows, sorted by customer then supplier) — same filter
+// semantics for both, so "filter, then either summarize or list" stays
+// consistent no matter which view someone's looking at.
+export function filterInvoicesForReport<
+  T extends {
+    status: string;
+    vendor_name: string | null;
+    project_id: string | null;
+    amount: number | null;
+    created_at: string;
+  },
+>(invoices: T[], f: ReportFilters): T[] {
+  const fromMs = f.from ? new Date(`${f.from}T00:00:00`).getTime() : null;
+  const toMs = f.to ? new Date(`${f.to}T23:59:59`).getTime() : null;
+
+  return invoices.filter((i) => {
+    if (f.status && i.status !== f.status) return false;
+    if (
+      f.vendor &&
+      !(i.vendor_name ?? "").toLowerCase().includes(f.vendor.toLowerCase())
+    ) {
+      return false;
+    }
+    if (f.project_id && i.project_id !== f.project_id) return false;
+    if (f.amount_over != null && (i.amount ?? 0) < f.amount_over) return false;
+    if (f.amount_under != null && (i.amount ?? 0) > f.amount_under) return false;
+    const created = new Date(i.created_at).getTime();
+    if (fromMs != null && created < fromMs) return false;
+    if (toMs != null && created > toMs) return false;
+    return true;
+  });
+}
+
 export async function runReport(
   supabase: SupabaseClient<Database>,
   organizationId: string,
@@ -55,26 +89,7 @@ export async function runReport(
     (projects ?? []).map((p) => [p.id, p.name])
   );
 
-  const f = config.filters;
-  const fromMs = f.from ? new Date(`${f.from}T00:00:00`).getTime() : null;
-  const toMs = f.to ? new Date(`${f.to}T23:59:59`).getTime() : null;
-
-  const list = (invoices ?? []).filter((i) => {
-    if (f.status && i.status !== f.status) return false;
-    if (
-      f.vendor &&
-      !(i.vendor_name ?? "").toLowerCase().includes(f.vendor.toLowerCase())
-    ) {
-      return false;
-    }
-    if (f.project_id && i.project_id !== f.project_id) return false;
-    if (f.amount_over != null && (i.amount ?? 0) < f.amount_over) return false;
-    if (f.amount_under != null && (i.amount ?? 0) > f.amount_under) return false;
-    const created = new Date(i.created_at).getTime();
-    if (fromMs != null && created < fromMs) return false;
-    if (toMs != null && created > toMs) return false;
-    return true;
-  });
+  const list = filterInvoicesForReport(invoices ?? [], config.filters);
 
   const keyOf = (i: (typeof list)[number]): string => {
     switch (config.groupBy) {
