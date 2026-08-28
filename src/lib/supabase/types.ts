@@ -584,6 +584,7 @@ export interface Database {
         Row: {
           id: string;
           organization_id: string | null;
+          email_id: string | null;
           from_address: string | null;
           to_address: string | null;
           subject: string | null;

@@ -78,6 +78,38 @@ export async function POST(request: Request) {
   const supabase = createAdminClient();
   const { email_id, from = "", subject = "" } = payload.data;
 
+  // Idempotency: this handler does real work synchronously (list/download
+  // attachments, then run the ingest queue for up to 35s) before ever
+  // returning a response — if Resend doesn't get a fast reply, it retries
+  // delivery of the SAME email.received event. Without this check, a
+  // retry looked like a brand new email: a second inbound_email_log row,
+  // a second set of ingest_jobs for the same attachments, duplicate
+  // invoices for the same supplier's email — a real, repeated incident.
+  // This is NOT the "possible duplicate" business case (a genuine
+  // resubmission/amendment that must go through review) — it's the
+  // literal same event notification arriving twice, checked BEFORE any
+  // slow work so a retry returns almost instantly instead of doing
+  // another 30+ seconds of redundant work itself.
+  const { data: existingLog } = await supabase
+    .from("inbound_email_log")
+    .select("id, organization_id")
+    .eq("email_id", email_id)
+    .maybeSingle();
+  if (existingLog) {
+    // Already logged this exact delivery. Its jobs (if any) are already
+    // durable — nudge the queue forward once more in case the first
+    // attempt got cut off mid-processing, best-effort, then bail out
+    // without recreating anything.
+    if (existingLog.organization_id) {
+      try {
+        await runNextIngestJob(supabase, existingLog.organization_id);
+      } catch {
+        // best-effort — not the source of truth for whether this succeeds
+      }
+    }
+    return NextResponse.json({ ok: true, duplicate_delivery: true });
+  }
+
   // The recipient(s) — check the envelope `to` plus `received_for` (the
   // addresses an email was forwarded for). Either can carry our address.
   const candidates = [
@@ -90,6 +122,7 @@ export async function POST(request: Request) {
   const org = await resolveOrgByAddress(supabase, candidates);
   if (!org) {
     await supabase.from("inbound_email_log").insert({
+      email_id,
       from_address: from,
       to_address: candidates.join(", "),
       subject,
@@ -105,6 +138,7 @@ export async function POST(request: Request) {
   if (!apiKey) {
     await supabase.from("inbound_email_log").insert({
       organization_id: org.id,
+      email_id,
       from_address: from,
       to_address: candidates.join(", "),
       subject,
@@ -222,6 +256,7 @@ export async function POST(request: Request) {
       .from("inbound_email_log")
       .insert({
         organization_id: org.id,
+        email_id,
         from_address: from,
         to_address: candidates.join(", "),
         subject,
@@ -233,6 +268,15 @@ export async function POST(request: Request) {
       .select("id")
       .single();
     if (logInsertError) {
+      // A unique-violation here (code 23505) means a genuinely concurrent
+      // retry beat us to the early check above and already claimed this
+      // email_id — not a real failure, just the race the early check
+      // can't fully close on its own. Bail out the same way as the early
+      // check, rather than logging it as an error and enqueueing a
+      // duplicate set of jobs anyway.
+      if (logInsertError.code === "23505") {
+        return NextResponse.json({ ok: true, duplicate_delivery: true });
+      }
       console.error("inbound_email_log insert failed:", logInsertError);
       return NextResponse.json({ ok: true, errors: ["Could not log the email."] });
     }
@@ -301,14 +345,24 @@ export async function POST(request: Request) {
       err instanceof Error ? err.message : "Unknown Resend API error"
     );
     if (supabase) {
-      await supabase.from("inbound_email_log").insert({
-        organization_id: org.id,
-        from_address: from,
-        to_address: candidates.join(", "),
-        subject,
-        processed: false,
-        error: errors.join("; "),
-      });
+      // If the main insert above already succeeded (email_id claimed) and
+      // something failed AFTER that — e.g. during enqueue/processing —
+      // this would otherwise collide with the same unique email_id and
+      // throw from inside a catch block. Swallow that specific case; the
+      // original row already exists and carries its own error/state.
+      try {
+        await supabase.from("inbound_email_log").insert({
+          organization_id: org.id,
+          email_id,
+          from_address: from,
+          to_address: candidates.join(", "),
+          subject,
+          processed: false,
+          error: errors.join("; "),
+        });
+      } catch {
+        // best-effort — see comment above
+      }
     }
   }
 
