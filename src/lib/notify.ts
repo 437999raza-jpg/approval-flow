@@ -60,8 +60,8 @@ function emailShell({
           </td>
         </tr>
         <tr>
-          <td style="padding:16px 28px;background:#f8fafc;border-top:1px solid #eef2f7;">
-            <p style="margin:0;font-size:11px;color:#94a3b8;">Flow by UFIRST</p>
+          <td style="padding:14px 28px;background:#f8fafc;border-top:1px solid #eef2f7;">
+            <img src="${process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3210"}/brand/ufirst-wordmark.png" alt="ufirst" height="14" style="display:block;height:14px;width:auto;border:0;" />
           </td>
         </tr>
       </table>

@@ -3,6 +3,7 @@
 export const maxDuration = 60;
 
 import Link from "next/link";
+import Image from "next/image";
 import { clsx } from "clsx";
 import { notFound, redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
@@ -1086,6 +1087,15 @@ export default async function DashboardPage({
     <div className="flex h-screen bg-slate-50 text-slate-900">
       {/* Sidebar (collapsible via hamburger) */}
       <Sidebar>
+        <div className="flex items-center bg-brand-ink px-4 py-3">
+          <Image
+            src="/brand/ufirst-wordmark-white.png"
+            alt="ufirst"
+            width={2400}
+            height={878}
+            className="h-4 w-auto"
+          />
+        </div>
         <div className="border-b border-slate-200 p-4">
           <div className="text-sm font-semibold">{org.name}</div>
           <div className="mt-0.5 truncate text-xs text-slate-400" title={`${org.inbound_email_local ?? org.inbound_email_token}@${process.env.INBOUND_EMAIL_DOMAIN}`}>

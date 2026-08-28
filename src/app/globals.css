@@ -2,6 +2,19 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ufirst brand rule (ufirst_brand_brief.md, "design signatures" #1): a 6px
+   bar, brand-green for the first 28% of its width then brand-navy for the
+   rest — the green "u" leading the navy "first". Used under hero/login
+   panels and above CTA/footer bands. */
+.brand-rule {
+  height: 6px;
+  background: linear-gradient(
+    to right,
+    theme("colors.brand-green") 0 28%,
+    theme("colors.brand-navy") 28% 100%
+  );
+}
+
 /* Every button click across the app needs to feel like it registered
    INSTANTLY — before any server round trip, and independent of whichever
    loading spinner (SubmitButton) may or may not follow. A quick scale-down

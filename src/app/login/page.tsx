@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import Image from "next/image";
 import { createClient } from "@/lib/supabase/client";
 
 // Two ways in, one form visible at a time: password is the default (the
@@ -67,10 +68,10 @@ export default function LoginPage() {
   }
 
   const inputCls =
-    "w-full rounded-lg border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100";
-  const labelCls = "mb-1.5 block text-xs font-medium text-slate-600";
+    "w-full rounded-lg border border-brand-line bg-white px-3.5 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-brand-green focus:outline-none focus:ring-2 focus:ring-brand-green-light/30";
+  const labelCls = "mb-1.5 block text-xs font-medium text-brand-navy";
   const primaryBtnCls = (isPending: boolean) =>
-    `flex w-full items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60 ${
+    `flex w-full items-center justify-center gap-2 rounded-lg bg-brand-green px-4 py-2.5 text-sm font-display font-bold text-white transition-colors hover:bg-brand-green-dark disabled:cursor-not-allowed disabled:opacity-60 ${
       isPending ? "opacity-70" : ""
     }`;
 
@@ -84,32 +85,53 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-slate-50 px-4 py-12">
-      <div className="w-full max-w-sm">
-        <div className="mb-8 flex flex-col items-center text-center">
-          <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-blue-600 text-white shadow-sm">
-            <svg viewBox="0 0 24 24" fill="none" className="h-6 w-6">
-              <path
-                d="M5 13l4 4L19 7"
-                stroke="currentColor"
-                strokeWidth="2.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
+    <main className="flex min-h-screen items-center justify-center bg-brand-mist px-4 py-12">
+      <div className="grid w-full max-w-4xl overflow-hidden rounded-2xl border border-brand-line bg-white shadow-sm shadow-brand-ink/5 md:grid-cols-2">
+        {/* Hero panel — hidden on narrow screens, the form alone still
+            carries the wordmark below. */}
+        <div className="relative hidden flex-col justify-between bg-gradient-to-br from-brand-ink to-brand-navy p-10 text-white md:flex">
+          <Image
+            src="/brand/ufirst-wordmark-white.png"
+            alt="ufirst"
+            width={2400}
+            height={878}
+            className="h-7 w-auto"
+            priority
+          />
+          <div>
+            <h1 className="font-display text-[27px] font-extrabold italic leading-tight">
+              Don&apos;t hire a bookkeeper.
+              <br />
+              Get a whole finance <span className="text-brand-green-light">team.</span>
+            </h1>
+            <p className="mt-4 text-[13.5px] leading-relaxed text-[#C4D0DE]">
+              <span className="font-semibold text-white">40–60% less</span> than a
+              part-time hire · up and running in days · books that never stop
+              for vacations
+            </p>
           </div>
-          <h1 className="mt-3 text-xl font-bold text-slate-900">
-            Flow by UFIRST
-          </h1>
-          <p className="mt-1 text-sm text-slate-500">
-            Sign in to review and approve invoices
-          </p>
+          <div className="brand-rule absolute bottom-0 left-0 right-0" />
         </div>
 
-        <div className="rounded-2xl border border-slate-200 bg-white p-7 shadow-sm shadow-slate-200/50">
-          {mode === "magic" && sent ? (
+        <div className="flex flex-col justify-center p-8 sm:p-10">
+          <div className="mb-7 flex flex-col items-start">
+            <Image
+              src="/brand/ufirst-wordmark.png"
+              alt="ufirst"
+              width={2400}
+              height={878}
+              className="h-6 w-auto"
+              priority
+            />
+            <p className="mt-3 text-sm text-brand-muted">
+              Sign in to review and approve invoices
+            </p>
+          </div>
+
+          <div>
+            {mode === "magic" && sent ? (
             <div className="py-2 text-center">
-              <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-emerald-50 text-emerald-600">
+              <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-brand-mist text-brand-green-dark">
                 <svg viewBox="0 0 24 24" fill="none" className="h-5 w-5">
                   <path
                     d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
@@ -132,7 +154,7 @@ export default function LoginPage() {
                   setSent(false);
                   switchMode("password");
                 }}
-                className="mt-5 text-sm font-medium text-blue-600 hover:underline"
+                className="mt-5 text-sm font-medium text-brand-green-dark hover:underline"
               >
                 ← Back to sign in
               </button>
@@ -183,7 +205,7 @@ export default function LoginPage() {
                   <button
                     type="button"
                     onClick={() => switchMode("magic")}
-                    className="text-xs font-medium text-blue-600 hover:underline"
+                    className="text-xs font-medium text-brand-green-dark hover:underline"
                   >
                     Forgot password?
                   </button>
@@ -229,6 +251,7 @@ export default function LoginPage() {
               {error}
             </p>
           )}
+        </div>
         </div>
       </div>
     </main>
