@@ -728,6 +728,36 @@ the next inbound email for that org to trigger another pass. Durability
 processing with no browser open at all is not, and would need Vercel Pro
 (or a similar scheduled-job service) to close.
 
+### Email ingestion made idempotent against retried webhook deliveries (migration 0070)
+
+The 0066 durability fix above didn't fully close the "same invoice
+duplicates" incident — it recurred, live, for the same supplier's
+invoices. Root cause was one layer deeper: the webhook does real work
+synchronously (list/download attachments, then run the ingest queue for
+up to 35s) before ever returning a response. If Resend doesn't get a fast
+reply, it retries delivery of the SAME `email.received` event — and the
+handler had no way to tell "I've already seen this exact delivery" from
+"this is a brand new email." A retry created a second
+`inbound_email_log` row and a second set of `ingest_jobs` for the
+identical attachments, producing duplicate invoices.
+
+**This is explicitly NOT the "possible duplicate" business case** (a
+genuine resubmission/amendment that must go through review — the
+long-standing rule against ever adding silent duplicate-skipping logic
+for that case still stands, untouched). It's the literal same event
+notification arriving twice, which should never be processed twice at
+all — an infrastructure idempotency question, not a business judgment
+call.
+
+**Fix**: `inbound_email_log.email_id` (Resend's own id for the email) is
+now checked FIRST, before any slow work — a retry returns almost
+instantly instead of redoing 30+ seconds of work, and (best-effort) just
+nudges the existing job queue forward once more in case the first attempt
+got cut off mid-processing. The later `inbound_email_log` insert also
+carries `email_id` under a unique index, so a genuinely concurrent
+delivery (not just a sequential retry) hits a constraint violation and
+bails out the same way, instead of silently creating a second row anyway.
+
 ### Multi-tenant onboarding tool: `/admin/organizations`
 
 The app was already multi-tenant-ready in every load-bearing way — RLS
@@ -969,6 +999,15 @@ material next to it. `DetailSplit`'s auto-sizing on opening a document
 now gives the bill 60% of the available width (still floored at 600px on
 a smaller screen, still adjustable afterward via the drag handle) instead
 of an even half.
+
+**Fix: the split reset after deleting an invoice (or Prev/Next) while a
+document was open.** The width-recompute effect was only keyed on
+`showDoc` — but deleting redirects to the next invoice with the SAME
+`doc=1` state carried over, so `showDoc` never flips false→true (it was
+already true) and the effect never re-fired for the new invoice; same gap
+would hit Prev/Next while a document is open. Now also keyed on
+`invoiceId`, so the 60/40 split re-asserts on every invoice change, not
+just the transition into first opening a document.
 
 ### Middleware hardened against a slow Supabase Auth call taking the whole site down
 
