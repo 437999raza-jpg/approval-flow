@@ -998,8 +998,12 @@ export async function backToReview(invoiceId: string) {
     })
     .eq("id", invoiceId);
 
-  // Reset approval decisions so the workflow re-runs cleanly.
-  await supabase
+  // Reset approval decisions so the workflow re-runs cleanly. Uses the
+  // admin client — invoice_approvals has no member-facing DELETE policy
+  // (read/insert only), so this would silently delete zero rows through
+  // the RLS-bound client with no error surfaced. canReview() above already
+  // confirmed the caller is an admin.
+  await createAdminClient()
     .from("invoice_approvals")
     .delete()
     .eq("invoice_id", invoiceId);
@@ -1415,7 +1419,13 @@ export async function setInvoiceStage(invoiceId: string, formData: FormData) {
     .maybeSingle();
   if (!validStep) return;
 
-  await supabase
+  // invoice_approvals has no member-facing DELETE policy at all (only
+  // read/insert — regular members were never meant to erase decision
+  // history), so this would silently delete zero rows through the RLS-
+  // bound client with no error reported. canReview() already confirmed
+  // the caller is an admin, so the admin client is the right tool here.
+  const admin = createAdminClient();
+  await admin
     .from("invoice_approvals")
     .delete()
     .eq("invoice_id", invoiceId)
@@ -1510,7 +1520,14 @@ export async function overrideStatus(invoiceId: string, formData: FormData) {
   ) {
     update.current_step_order = 1;
     update.step_override_approver_id = null;
-    await supabase.from("invoice_approvals").delete().eq("invoice_id", invoiceId);
+    // invoice_approvals has no member-facing DELETE policy (read/insert
+    // only) — this silently deletes zero rows through the RLS-bound
+    // client with no error surfaced. canReview() already confirmed the
+    // caller is an admin.
+    await createAdminClient()
+      .from("invoice_approvals")
+      .delete()
+      .eq("invoice_id", invoiceId);
   }
 
   const { error: updateError } = await supabase
