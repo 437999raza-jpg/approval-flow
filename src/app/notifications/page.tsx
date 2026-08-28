@@ -78,6 +78,11 @@ export default async function NotificationsPage() {
                         <span className="font-medium">{label}</span> is ready for
                         your approval
                       </>
+                    ) : n.type === "rejected" ? (
+                      <>
+                        <span className="font-medium">{actorName}</span> rejected{" "}
+                        <span className="font-medium">{label}</span>
+                      </>
                     ) : (
                       <>
                         <span className="font-medium">{actorName}</span>{" "}

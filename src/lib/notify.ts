@@ -70,6 +70,39 @@ function emailShell({
 </table>`.trim();
 }
 
+// Shared Resend POST — `headers` are extra RFC email headers on the
+// outgoing message itself (not the HTTP request), e.g. X-MS-Categories
+// below. Every caller already treats a failed send as best-effort, so
+// this only ever logs to the console, never throws.
+async function sendEmail({
+  to,
+  subject,
+  html,
+  headers,
+}: {
+  to: string;
+  subject: string;
+  html: string;
+  headers?: Record<string, string>;
+}): Promise<void> {
+  const apiKey = process.env.RESEND_API_KEY;
+  const from = process.env.RESEND_FROM_EMAIL;
+  if (!apiKey || !from) return;
+
+  try {
+    await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ from, to, subject, html, ...(headers ? { headers } : {}) }),
+    });
+  } catch {
+    // best-effort — the underlying action already succeeded independent of email
+  }
+}
+
 export async function sendMentionEmail({
   to,
   actorName,
@@ -83,10 +116,6 @@ export async function sendMentionEmail({
   commentBody: string;
   invoiceUrl: string;
 }): Promise<void> {
-  const apiKey = process.env.RESEND_API_KEY;
-  const from = process.env.RESEND_FROM_EMAIL;
-  if (!apiKey || !from) return;
-
   const html = emailShell({
     accentColor: "#2563eb",
     eyebrow: "Mentioned in a comment",
@@ -96,23 +125,7 @@ export async function sendMentionEmail({
     ctaUrl: invoiceUrl,
   });
 
-  try {
-    await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        from,
-        to,
-        subject: `${actorName} mentioned you on ${invoiceLabel}`,
-        html,
-      }),
-    });
-  } catch {
-    // best-effort — the comment itself already posted successfully
-  }
+  await sendEmail({ to, subject: `${actorName} mentioned you on ${invoiceLabel}`, html });
 }
 
 // "It's your turn" — sent whenever responsibility for an invoice moves to
@@ -134,10 +147,6 @@ export async function sendAssignedEmail({
   stepName?: string | null;
   invoiceUrl: string;
 }): Promise<void> {
-  const apiKey = process.env.RESEND_API_KEY;
-  const from = process.env.RESEND_FROM_EMAIL;
-  if (!apiKey || !from) return;
-
   const html = emailShell({
     accentColor: "#059669",
     eyebrow: "Waiting on you",
@@ -149,21 +158,44 @@ export async function sendAssignedEmail({
     ctaUrl: invoiceUrl,
   });
 
-  try {
-    await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        from,
-        to,
-        subject: `${invoiceLabel} ${reason}`,
-        html,
-      }),
-    });
-  } catch {
-    // best-effort — the underlying decision/reassignment already succeeded
-  }
+  await sendEmail({ to, subject: `${invoiceLabel} ${reason}`, html });
+}
+
+// Sent to the submitter (and any earlier approver, if they're not the
+// one rejecting) when an invoice is rejected — previously there was no
+// email at all for this, only the Discussion comment. Sets X-MS-Categories
+// on the outgoing message so Outlook auto-tags it with a "Rejected"
+// category, matching the exact behavior seen in ApprovalMax's own
+// rejection emails (a real header their notifications set, not just
+// something in their subject line — Outlook reads it and applies the
+// color-coded category itself). Other mail clients simply ignore the
+// header.
+export async function sendRejectedEmail({
+  to,
+  invoiceLabel,
+  actorName,
+  reason,
+  invoiceUrl,
+}: {
+  to: string;
+  invoiceLabel: string;
+  actorName: string;
+  reason: string;
+  invoiceUrl: string;
+}): Promise<void> {
+  const html = emailShell({
+    accentColor: "#dc2626",
+    eyebrow: "Rejected",
+    headline: `<strong>${escapeHtml(actorName)}</strong> rejected ${escapeHtml(invoiceLabel)}`,
+    bodyHtml: `<div style="margin:4px 0 0 0;padding:12px 14px;background:#fef2f2;border-left:3px solid #fca5a5;border-radius:4px;white-space:pre-wrap;color:#7f1d1d;">${escapeHtml(reason)}</div>`,
+    ctaLabel: "Open the invoice",
+    ctaUrl: invoiceUrl,
+  });
+
+  await sendEmail({
+    to,
+    subject: `Rejected: ${invoiceLabel}`,
+    html,
+    headers: { "X-MS-Categories": "Rejected" },
+  });
 }

@@ -5,7 +5,7 @@ import { revalidatePath, revalidateTag } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentOrg } from "@/lib/current-org";
-import { sendMentionEmail, sendAssignedEmail } from "@/lib/notify";
+import { sendMentionEmail, sendAssignedEmail, sendRejectedEmail } from "@/lib/notify";
 import {
   extractInvoiceFields,
   mapExtractionToInvoice,
@@ -419,6 +419,47 @@ export async function rejectWithReason(invoiceId: string, formData: FormData) {
   // empty FormData (no "instructions" key) so nothing also lands in the
   // accounting-notes thread; the reason above is the only record of why.
   await decide(invoiceId, "rejected", new FormData());
+
+  // Tell the submitter — previously nothing did, beyond the Discussion
+  // comment above, which they'd only see if they happened to open the
+  // invoice again. Skipped when they're rejecting their own submission
+  // (no point notifying yourself). Best-effort: the rejection itself
+  // already succeeded regardless of whether this notification goes out.
+  try {
+    const { data: inv } = await supabase
+      .from("invoices")
+      .select("organization_id, submitted_by, vendor_name, invoice_number, file_name")
+      .eq("id", invoiceId)
+      .maybeSingle();
+    if (inv?.submitted_by && inv.submitted_by !== user.id) {
+      await supabase.from("notifications").insert({
+        organization_id: inv.organization_id,
+        user_id: inv.submitted_by,
+        actor_id: user.id,
+        invoice_id: invoiceId,
+        type: "rejected" as const,
+      });
+
+      const [{ data: actorProfile }, { data: authUsers }] = await Promise.all([
+        supabase.from("profiles").select("full_name").eq("id", user.id).single(),
+        createAdminClient().auth.admin.listUsers({ page: 1, perPage: 1000 }),
+      ]);
+      const submitterEmail = authUsers?.users.find((u) => u.id === inv.submitted_by)?.email;
+      if (submitterEmail) {
+        await sendRejectedEmail({
+          to: submitterEmail,
+          invoiceLabel: `${inv.vendor_name ?? inv.file_name}${
+            inv.invoice_number ? ` #${inv.invoice_number}` : ""
+          }`,
+          actorName: actorProfile?.full_name ?? "A teammate",
+          reason,
+          invoiceUrl: `${process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3210"}/dashboard/${invoiceId}`,
+        });
+      }
+    }
+  } catch {
+    // best-effort — see comment above
+  }
 }
 
 // Post a message to an invoice's discussion thread. Any org member who can

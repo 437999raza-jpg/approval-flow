@@ -904,6 +904,20 @@ popup; `rejectWithReason` (dashboard-actions.ts) posts it to the invoice's
 existing eligibility/step/audit logic untouched, with an empty `FormData`
 so nothing also lands in `accounting_instructions`.
 
+**Rejection now actually emails the submitter (migration 0072).**
+Previously nothing did — the Discussion comment above was the only
+record, and the submitter would only see it if they happened to reopen
+the invoice. `sendRejectedEmail` (`notify.ts`) sends them the reason, and
+sets a real `X-MS-Categories: Rejected` header on the outgoing message —
+copied directly from inspecting ApprovalMax's own rejection emails, which
+set the same header so Outlook auto-tags the message with a colored
+"Rejected" category. Other mail clients just ignore the header. A new
+`notifications.type = 'rejected'` row also lands in-app. `notify.ts` was
+refactored around this — `sendEmail` is now the one shared Resend POST
+(previously duplicated three ways) that every send function calls,
+`headers` being the only thing `sendRejectedEmail` needs beyond what the
+others already had.
+
 **Page access**, for `role="user"`: full redirect away from `/workflows`
 and `/billing`; `/settings` shows only "My profile" (`showOrgSettings`
 gate in settings/page.tsx) — Integrations/Billing/Members/Projects are

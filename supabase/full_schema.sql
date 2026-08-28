@@ -3135,3 +3135,16 @@ create policy "support_messages: members can read" on support_messages
 drop policy if exists "support_messages: members can insert" on support_messages;
 create policy "support_messages: members can insert" on support_messages
   for insert with check (is_org_member(organization_id));
+
+--------------------------------------------------------------------
+-- >>> supabase/migrations/0072_notifications_rejected_type.sql
+--------------------------------------------------------------------
+-- 0072: a third notifications.type, 'rejected' -- sent to the submitter
+-- when their invoice is rejected. Previously nothing notified them at
+-- all beyond a Discussion comment they'd only see if they happened to
+-- reopen the invoice. Alongside the existing 'mention'/'assigned' types.
+-- Run via `supabase db push` or paste into the Supabase SQL editor.
+
+alter table notifications drop constraint if exists notifications_type_check;
+alter table notifications add constraint notifications_type_check
+  check (type in ('mention', 'assigned', 'rejected'));

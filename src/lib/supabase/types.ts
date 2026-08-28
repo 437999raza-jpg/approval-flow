@@ -314,7 +314,7 @@ export interface Database {
           actor_id: string | null;
           invoice_id: string | null;
           comment_id: string | null;
-          type: "mention" | "assigned";
+          type: "mention" | "assigned" | "rejected";
           read: boolean;
           created_at: string;
         };
