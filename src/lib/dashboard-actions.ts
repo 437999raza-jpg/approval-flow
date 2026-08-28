@@ -25,6 +25,7 @@ import { buildQboAttachmentBundle } from "@/lib/qbo-attachments";
 import { pdfPageCount, reorderPdfPages } from "@/lib/merge-documents";
 import { buildMergedInvoicePdf } from "@/lib/invoice-export";
 import { qboTag, INVOICES_TAG } from "@/lib/org-cache";
+import { PLANS, isPlanId } from "@/lib/plans";
 
 // Server actions for the dashboard (moved out of the page component so
 // the page stays render-only). Authored by Araza.
@@ -2476,15 +2477,13 @@ export async function saveDefaultTaxRate(formData: FormData) {
   );
 }
 
-// Flow's usage billing: the per-org charge per document processed, in USD
-// (default $0.15). Admin only. Returns { ok, error } so the client-side
-// UsageRateForm can show inline feedback ("0.15 saved") and grey the Save
-// button until the value changes again — the same pattern as
-// saveInboundEmailLocal (called from a client component, never an inline
-// closure on a server-component form).
-export async function saveUsageRate(
-  formData: FormData
-): Promise<{ ok: boolean; error?: string }> {
+// Flow's billing: a fixed monthly plan (Starter/Growth/Scale — see
+// src/lib/plans.ts) rather than an admin-editable $/document rate this
+// replaces. A plain <form action> (called directly, no client wrapper),
+// so errors redirect back to /billing with ?error=... instead of
+// returning a value — same pattern as decide()/rejectWithReason() etc.
+// elsewhere in this file.
+export async function selectPlan(formData: FormData) {
 
   const supabase = createClient();
   const {
@@ -2494,36 +2493,34 @@ export async function saveUsageRate(
 
   const org = await getCurrentOrg(supabase);
   if (!org || org.role !== "admin") {
-    return { ok: false, error: "Only admins can change the usage rate." };
+    redirect("/billing?error=plan-not-admin");
   }
 
-  const raw = String(formData.get("usage_rate_usd") ?? "").trim();
-  const rate = Number(raw);
-  if (!Number.isFinite(rate) || rate <= 0 || rate > 1000) {
-    return { ok: false, error: "Enter a positive USD amount (e.g. 0.15)." };
+  const planId = String(formData.get("plan") ?? "");
+  if (!isPlanId(planId)) {
+    redirect("/billing?error=plan-invalid");
   }
 
   const { error: updateError } = await supabase
     .from("organizations")
     .update({
-      usage_rate_usd: Math.round(rate * 100) / 100,
-      usage_rate_updated_at: new Date().toISOString(),
+      plan: planId,
+      plan_selected_at: new Date().toISOString(),
     })
     .eq("id", org.id);
   if (updateError) {
-    console.error("saveUsageRate failed:", updateError);
-    return { ok: false, error: "Could not save the rate — try again." };
+    console.error("selectPlan failed:", updateError);
+    redirect("/billing?error=plan-save-failed");
   }
 
   await supabase.from("audit_log").insert({
     organization_id: org.id,
     actor_id: user.id,
-    action: "org.usage_rate_saved",
-    metadata: { usage_rate_usd: rate },
+    action: "org.plan_selected",
+    metadata: { plan: planId },
   });
 
   revalidatePath("/billing");
-  return { ok: true };
 }
 
 // Shared by createUsageCheckout and createBillingPortalSession — both need
@@ -2598,45 +2595,63 @@ export async function createUsageCheckout(): Promise<{ ok: boolean; url?: string
     return { ok: false, error: "Stripe is not configured (STRIPE_SECRET_KEY missing)." };
   }
 
+  const monthStart = new Date();
+  monthStart.setDate(1);
+  monthStart.setHours(0, 0, 0, 0);
+
   const [{ count }, { data: orgRow }, customer] = await Promise.all([
     supabase
       .from("usage_events")
       .select("id", { count: "exact", head: true })
-      .eq("organization_id", org.id),
+      .eq("organization_id", org.id)
+      .gte("created_at", monthStart.toISOString()),
     supabase
       .from("organizations")
-      .select("usage_rate_usd, name")
+      .select("plan, name")
       .eq("id", org.id)
       .single(),
     ensureStripeCustomer(supabase, secret, org),
   ]);
-  const rate = orgRow?.usage_rate_usd ?? 0.15;
-  const amountCents = Math.round((count ?? 0) * rate * 100);
-  if (amountCents <= 0) {
-    return { ok: false, error: "No usage to bill yet — nothing to charge." };
-  }
   if (!customer.ok) return { ok: false, error: customer.error };
+
+  const plan = isPlanId(orgRow?.plan) ? PLANS[orgRow.plan] : null;
+  if (!plan) {
+    return { ok: false, error: "Choose a plan below before paying." };
+  }
+  const docCount = count ?? 0;
+  const overageDocs = Math.max(0, docCount - plan.includedDocs);
+  const overageCents = Math.round(overageDocs * plan.overageRatePerDoc * 100);
+  const planCents = Math.round(plan.priceUsd * 100);
 
   const origin =
     process.env.NEXT_PUBLIC_APP_URL ??
     (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3210");
 
   try {
-    const body = new URLSearchParams({
+    const bodyParams: Record<string, string> = {
       mode: "payment",
       customer: customer.customerId,
       success_url: `${origin}/billing?payment=success`,
       cancel_url: `${origin}/billing?payment=cancelled`,
       "line_items[0][quantity]": "1",
       "line_items[0][price_data][currency]": "usd",
-      "line_items[0][price_data][unit_amount]": String(amountCents),
-      "line_items[0][price_data][product_data][name]": `${orgRow?.name ?? "Usage"} — document processing`,
-      "line_items[0][price_data][product_data][description]": `${count} document${(count ?? 0) === 1 ? "" : "s"} × $${rate.toFixed(2)}`,
+      "line_items[0][price_data][unit_amount]": String(planCents),
+      "line_items[0][price_data][product_data][name]": `${orgRow?.name ?? "Flow"} — ${plan.name} plan`,
+      "line_items[0][price_data][product_data][description]": `${plan.includedDocs} documents included this month`,
       // Stripe's form-encoded API needs bracket notation for object
       // params — a bare `metadata=<JSON string>` field is an invalid
-      // parameter (the actual cause of a 400 here), not a JSON blob.
+      // parameter (a real 400 seen in production), not a JSON blob.
       "metadata[organization_id]": org.id,
-    });
+    };
+    if (overageDocs > 0) {
+      bodyParams["line_items[1][quantity]"] = "1";
+      bodyParams["line_items[1][price_data][currency]"] = "usd";
+      bodyParams["line_items[1][price_data][unit_amount]"] = String(overageCents);
+      bodyParams["line_items[1][price_data][product_data][name]"] = "Overage documents";
+      bodyParams["line_items[1][price_data][product_data][description]"] =
+        `${overageDocs} document${overageDocs === 1 ? "" : "s"} over the ${plan.includedDocs}-document plan limit × $${plan.overageRatePerDoc.toFixed(2)}`;
+    }
+    const body = new URLSearchParams(bodyParams);
     const res = await fetch("https://api.stripe.com/v1/checkout/sessions", {
       method: "POST",
       headers: {

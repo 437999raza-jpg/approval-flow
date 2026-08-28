@@ -2,22 +2,24 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentOrg } from "@/lib/current-org";
-import { saveUsageRate, createUsageCheckout, createBillingPortalSession } from "@/lib/dashboard-actions";
-import { UsageRateForm } from "@/components/UsageRateForm";
+import { selectPlan, createUsageCheckout, createBillingPortalSession } from "@/lib/dashboard-actions";
 import { StripeCheckoutButton } from "@/components/StripeCheckoutButton";
+import { CollapsibleSection } from "@/components/CollapsibleSection";
+import { SubmitButton } from "@/components/SubmitButton";
+import { PLANS, PLAN_ORDER, isPlanId } from "@/lib/plans";
 
-// Flow's usage billing: how many documents this client org has processed,
-// at the org's per-document rate (USD) — the charge the client sees. The
-// rate is editable (admin only) with a greyed-until-changed Save button and
-// its saved-on date. "Pay now" charges the suggested amount via Stripe
-// Checkout; "Manage billing" opens Stripe's own Billing Portal, where a
-// customer can see past receipts and update their saved card themselves —
-// Flow never builds card-entry UI of its own. Authored by Araza.
+// Flow's billing: a fixed monthly plan (Starter/Growth/Scale) rather than
+// an admin-editable $/document rate — see src/lib/plans.ts for how these
+// were priced. "Pay now" charges this calendar month's plan fee + any
+// overage via Stripe Checkout; "Manage billing" opens Stripe's own
+// Billing Portal, where a customer can see past receipts and update
+// their saved card themselves — Flow never builds card-entry UI of its
+// own. Authored by Araza.
 
 export default async function BillingPage({
   searchParams,
 }: {
-  searchParams: { payment?: string };
+  searchParams: { payment?: string; error?: string };
 }) {
   const supabase = createClient();
   const {
@@ -41,12 +43,12 @@ export default async function BillingPage({
       .limit(500),
     supabase
       .from("organizations")
-      .select("usage_rate_usd, usage_rate_updated_at")
+      .select("plan, plan_selected_at")
       .eq("id", org.id)
       .single(),
   ]);
-  const rate = orgRow?.usage_rate_usd ?? 0.15;
-  const savedAt = orgRow?.usage_rate_updated_at ?? null;
+  const currentPlan = isPlanId(orgRow?.plan) ? PLANS[orgRow.plan] : null;
+  const planSelectedAt = orgRow?.plan_selected_at ?? null;
 
   // Monthly rollup from the (already capped at 500) most recent events.
   const monthKey = (iso: string) => iso.slice(0, 7); // YYYY-MM
@@ -62,10 +64,17 @@ export default async function BillingPage({
     const [y, m] = key.split("-").map(Number);
     return new Date(y, m - 1, 1).toLocaleDateString(undefined, { month: "short" });
   };
+  const monthCost = (count: number) =>
+    currentPlan
+      ? currentPlan.priceUsd + Math.max(0, count - currentPlan.includedDocs) * currentPlan.overageRatePerDoc
+      : null;
 
+  const thisMonthKey = monthKey(new Date().toISOString());
+  const thisMonthCount = byMonth.get(thisMonthKey) ?? 0;
+  const overageDocs = currentPlan ? Math.max(0, thisMonthCount - currentPlan.includedDocs) : 0;
+  const totalCharge = currentPlan ? monthCost(thisMonthCount)! : 0;
+  const canPay = Boolean(currentPlan) && stripeConfigured;
   const totalCount = (events ?? []).length;
-  const totalCharge = totalCount * rate;
-  const canPay = totalCount > 0 && stripeConfigured;
 
   return (
     <main className="mx-auto max-w-3xl px-6 py-10">
@@ -87,8 +96,9 @@ export default async function BillingPage({
         </div>
       </div>
       <p className="mt-1 text-sm text-brand-muted">
-        Documents processed at{" "}
-        <span className="font-semibold text-brand-navy">${rate.toFixed(2)} USD</span> each.
+        {currentPlan
+          ? `On the ${currentPlan.name} plan — ${currentPlan.includedDocs} documents/month included.`
+          : "Choose a plan below to get started."}{" "}
         Always billed in USD, wherever you&apos;re based.
       </p>
 
@@ -102,26 +112,102 @@ export default async function BillingPage({
           Payment cancelled — nothing was charged.
         </div>
       )}
+      {searchParams.error && (
+        <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          {searchParams.error === "plan-not-admin"
+            ? "Only admins can change the plan."
+            : "Could not save the plan — try again."}
+        </div>
+      )}
+
+      {/* Plans */}
+      <section className="mt-6">
+        <div className="text-[11px] font-bold uppercase tracking-wide text-brand-muted">
+          Plan
+        </div>
+        <div className="mt-2 grid grid-cols-1 gap-4 sm:grid-cols-3">
+          {PLAN_ORDER.map((id) => {
+            const plan = PLANS[id];
+            const active = currentPlan?.id === id;
+            return (
+              <div
+                key={id}
+                className={`flex flex-col rounded-xl border p-5 shadow-sm shadow-brand-ink/5 ${
+                  active ? "border-brand-green bg-white ring-2 ring-brand-green-light/50" : "border-brand-line bg-white"
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <span className="font-display text-base font-extrabold text-brand-ink">
+                    {plan.name}
+                  </span>
+                  {active && (
+                    <span className="rounded-full bg-brand-green/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-brand-green-dark">
+                      Current
+                    </span>
+                  )}
+                </div>
+                <div className="mt-2 font-display text-2xl font-extrabold tabular-nums text-brand-ink">
+                  ${plan.priceUsd}
+                  <span className="text-sm font-medium text-brand-muted">/mo</span>
+                </div>
+                <p className="mt-1 text-xs text-brand-muted">
+                  {plan.includedDocs} documents included, then ${plan.overageRatePerDoc.toFixed(2)}/doc.
+                </p>
+                <p className="mt-2 flex-1 text-xs text-brand-muted">{plan.blurb}</p>
+                {isAdmin && (
+                  <form action={selectPlan} className="mt-4">
+                    <input type="hidden" name="plan" value={id} />
+                    <SubmitButton
+                      disabled={active}
+                      className={`w-full rounded-lg px-3 py-2 text-sm font-display font-bold ${
+                        active
+                          ? "cursor-default bg-brand-mist text-brand-muted"
+                          : "bg-brand-green text-white hover:bg-brand-green-dark"
+                      }`}
+                    >
+                      {active ? "Selected" : currentPlan ? "Switch to this plan" : "Choose this plan"}
+                    </SubmitButton>
+                  </form>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        {!isAdmin && !currentPlan && (
+          <p className="mt-2 text-sm text-brand-muted">
+            No plan selected yet — ask an admin to choose one.
+          </p>
+        )}
+        {planSelectedAt && (
+          <p className="mt-2 text-xs text-brand-muted">
+            Selected on {new Date(planSelectedAt).toLocaleDateString()}
+          </p>
+        )}
+      </section>
 
       {/* Summary */}
-      <div className="mt-6 grid grid-cols-2 gap-4">
+      <div className="mt-4 grid grid-cols-2 gap-4">
         <div className="rounded-xl border border-brand-line bg-white p-5 shadow-sm shadow-brand-ink/5">
           <div className="text-[11px] font-bold uppercase tracking-wide text-brand-muted">
-            Documents processed
+            This month&apos;s documents
           </div>
           <div className="mt-1.5 font-display text-3xl font-extrabold tabular-nums text-brand-ink">
-            {totalCount.toLocaleString()}
+            {thisMonthCount.toLocaleString()}
           </div>
+          {currentPlan && overageDocs > 0 && (
+            <div className="mt-1 text-xs font-medium text-amber-700">
+              {overageDocs} over the {currentPlan.includedDocs}-document limit
+            </div>
+          )}
         </div>
         <div className="rounded-xl border border-brand-line bg-white p-5 shadow-sm shadow-brand-ink/5">
           <div className="text-[11px] font-bold uppercase tracking-wide text-brand-muted">
-            Suggested charge
+            This month&apos;s charge
           </div>
           <div className="mt-1.5 font-display text-3xl font-extrabold tabular-nums text-brand-ink">
-            {totalCharge.toLocaleString(undefined, {
-              style: "currency",
-              currency: "USD",
-            })}
+            {currentPlan
+              ? totalCharge.toLocaleString(undefined, { style: "currency", currency: "USD" })
+              : "—"}
           </div>
         </div>
       </div>
@@ -160,21 +246,20 @@ export default async function BillingPage({
           <>
             {canPay ? (
               <p className="mt-2 text-sm text-slate-600">
-                Pay the suggested charge of{" "}
+                Pay this month&apos;s charge of{" "}
                 <strong className="text-brand-ink">
                   {totalCharge.toLocaleString(undefined, {
                     style: "currency",
                     currency: "USD",
                   })}
                 </strong>{" "}
-                ({totalCount} document{totalCount === 1 ? "" : "s"} ×{" "}
-                {rate.toFixed(2)}), or manage your saved payment method and past
-                receipts any time.
+                ({currentPlan!.name} plan{overageDocs > 0 ? ` + ${overageDocs} overage doc${overageDocs === 1 ? "" : "s"}` : ""}),
+                or manage your saved payment method and past receipts any time.
               </p>
             ) : (
               <p className="mt-2 text-sm text-brand-muted">
-                No usage to bill yet — documents processed will appear here.
-                You can still add a payment method ahead of time below.
+                Choose a plan above before paying. You can still add a payment
+                method ahead of time below.
               </p>
             )}
             <div className="mt-3 flex flex-wrap items-start gap-3">
@@ -198,27 +283,6 @@ export default async function BillingPage({
         )}
       </section>
 
-      {/* Rate per document */}
-      <section className="mt-4 rounded-xl border border-brand-line bg-white p-5 shadow-sm shadow-brand-ink/5">
-        <div className="text-[11px] font-bold uppercase tracking-wide text-brand-muted">
-          Rate per document
-        </div>
-        {isAdmin ? (
-          <UsageRateForm
-            currentRate={rate}
-            savedAt={savedAt}
-            action={saveUsageRate}
-          />
-        ) : (
-          <div className="mt-2 text-sm text-slate-700">
-            {rate.toFixed(2)} USD
-            {savedAt
-              ? ` — saved on ${new Date(savedAt).toLocaleDateString()}`
-              : ""}
-          </div>
-        )}
-      </section>
-
       {/* By month */}
       <section className="mt-4 rounded-xl border border-brand-line bg-white p-5 shadow-sm shadow-brand-ink/5">
         <div className="text-[11px] font-bold uppercase tracking-wide text-brand-muted">
@@ -229,22 +293,24 @@ export default async function BillingPage({
             <tr className="border-b border-brand-line text-left text-xs text-brand-muted">
               <th className="py-1.5 font-medium">Month</th>
               <th className="py-1.5 text-right font-medium">Documents</th>
-              <th className="py-1.5 text-right font-medium">Charge</th>
+              <th className="py-1.5 text-right font-medium">Est. charge</th>
             </tr>
           </thead>
           <tbody>
-            {months.map(([month, count]) => (
-              <tr key={month} className="border-b border-slate-100">
-                <td className="py-1.5">{month}</td>
-                <td className="py-1.5 text-right tabular-nums">{count}</td>
-                <td className="py-1.5 text-right tabular-nums">
-                  {(count * rate).toLocaleString(undefined, {
-                    style: "currency",
-                    currency: "USD",
-                  })}
-                </td>
-              </tr>
-            ))}
+            {months.map(([month, count]) => {
+              const cost = monthCost(count);
+              return (
+                <tr key={month} className="border-b border-slate-100">
+                  <td className="py-1.5">{month}</td>
+                  <td className="py-1.5 text-right tabular-nums">{count}</td>
+                  <td className="py-1.5 text-right tabular-nums">
+                    {cost !== null
+                      ? cost.toLocaleString(undefined, { style: "currency", currency: "USD" })
+                      : "—"}
+                  </td>
+                </tr>
+              );
+            })}
             {months.length === 0 && (
               <tr>
                 <td colSpan={3} className="py-4 text-center text-brand-muted">
@@ -256,31 +322,30 @@ export default async function BillingPage({
         </table>
       </section>
 
-      {/* Recent documents */}
-      <section className="mt-4 rounded-xl border border-brand-line bg-white p-5 shadow-sm shadow-brand-ink/5">
-        <div className="text-[11px] font-bold uppercase tracking-wide text-brand-muted">
-          Recent documents
-        </div>
-        <ul className="mt-2 divide-y divide-slate-100 text-sm">
-          {(events ?? []).slice(0, 50).map((e, i) => (
-            <li
-              key={i}
-              className="flex items-baseline justify-between gap-4 py-1.5"
-            >
-              <span className="min-w-0 truncate" title={e.document_name}>
-                {e.document_name}
-              </span>
-              <span className="flex-none text-xs text-brand-muted">
-                {e.source === "email" ? "email" : "upload"} ·{" "}
-                {new Date(e.created_at).toLocaleString()}
-              </span>
-            </li>
-          ))}
-          {(events ?? []).length === 0 && (
-            <li className="py-4 text-center text-brand-muted">Nothing yet.</li>
-          )}
-        </ul>
-      </section>
+      {/* Recent documents — collapsible since this list can run long */}
+      <div className="mt-4 overflow-hidden rounded-xl border border-brand-line bg-white shadow-sm shadow-brand-ink/5">
+        <CollapsibleSection title="Recent documents" badge={totalCount} defaultOpen={false}>
+          <ul className="divide-y divide-slate-100 text-sm">
+            {(events ?? []).slice(0, 50).map((e, i) => (
+              <li
+                key={i}
+                className="flex items-baseline justify-between gap-4 py-1.5"
+              >
+                <span className="min-w-0 truncate" title={e.document_name}>
+                  {e.document_name}
+                </span>
+                <span className="flex-none text-xs text-brand-muted">
+                  {e.source === "email" ? "email" : "upload"} ·{" "}
+                  {new Date(e.created_at).toLocaleString()}
+                </span>
+              </li>
+            ))}
+            {(events ?? []).length === 0 && (
+              <li className="py-4 text-center text-brand-muted">Nothing yet.</li>
+            )}
+          </ul>
+        </CollapsibleSection>
+      </div>
     </main>
   );
 }

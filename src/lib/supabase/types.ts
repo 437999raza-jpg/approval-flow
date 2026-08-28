@@ -49,6 +49,8 @@ export interface Database {
           usage_rate_usd: number;
           usage_rate_updated_at: string | null;
           stripe_customer_id: string | null;
+          plan: "starter" | "growth" | "scale" | null;
+          plan_selected_at: string | null;
           created_at: string;
         };
         Insert: Partial<
