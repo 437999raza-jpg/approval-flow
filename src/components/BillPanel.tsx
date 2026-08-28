@@ -1412,8 +1412,8 @@ function LineItemRow({
           onClick={() => commitClass(CON_CLASS_NAME)}
           className={`flex-none rounded border px-1.5 py-1.5 text-[10px] font-semibold leading-4 transition-colors ${
             classValue === CON_CLASS_NAME
-              ? "border-blue-600 bg-blue-600 text-white"
-              : "border-slate-300 text-slate-500 hover:border-blue-400 hover:text-blue-600"
+              ? "border-yellow-400 bg-yellow-400 text-slate-900"
+              : "border-blue-500 text-blue-600 hover:bg-blue-50"
           } disabled:cursor-not-allowed disabled:opacity-50`}
         >
           CON
@@ -1425,8 +1425,8 @@ function LineItemRow({
           onClick={() => commitClass(CO_CLASS_NAME)}
           className={`flex-none rounded border px-1.5 py-1.5 text-[10px] font-semibold leading-4 transition-colors ${
             classValue === CO_CLASS_NAME
-              ? "border-amber-500 bg-amber-500 text-white"
-              : "border-slate-300 text-slate-500 hover:border-amber-400 hover:text-amber-600"
+              ? "border-yellow-400 bg-yellow-400 text-slate-900"
+              : "border-blue-500 text-blue-600 hover:bg-blue-50"
           } disabled:cursor-not-allowed disabled:opacity-50`}
         >
           CO
@@ -1438,8 +1438,8 @@ function LineItemRow({
           onClick={() => commitClass(EXTRAS_CLASS_NAME)}
           className={`flex-none rounded border px-1.5 py-1.5 text-[10px] font-semibold leading-4 transition-colors ${
             classValue === EXTRAS_CLASS_NAME
-              ? "border-emerald-600 bg-emerald-600 text-white"
-              : "border-slate-300 text-slate-500 hover:border-emerald-400 hover:text-emerald-600"
+              ? "border-yellow-400 bg-yellow-400 text-slate-900"
+              : "border-blue-500 text-blue-600 hover:bg-blue-50"
           } disabled:cursor-not-allowed disabled:opacity-50`}
         >
           E
