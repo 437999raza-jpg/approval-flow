@@ -178,7 +178,11 @@ export async function joinOrganizationAction(formData: FormData) {
     );
 
   setActiveOrgCookie(orgId);
-  redirect("/dashboard");
+  // Lets the /admin/organizations "View support chat" button land
+  // directly on that org's thread instead of the dashboard — same
+  // join-and-switch, different destination.
+  const redirectTo = String(formData.get("redirect_to") ?? "").trim();
+  redirect(redirectTo === "/support" ? "/support" : "/dashboard");
 }
 
 // Switch which of your orgs you're viewing. Only ever meaningful for

@@ -44,6 +44,19 @@ export default async function AdminOrganizationsPage({
     if (row.user_id === user.id) myOrgIds.add(row.organization_id);
   }
 
+  const { data: supportRows } = await admin
+    .from("support_messages")
+    .select("organization_id, created_at")
+    .order("created_at", { ascending: false });
+  const supportCounts = new Map<string, number>();
+  const supportLastAt = new Map<string, string>();
+  for (const row of supportRows ?? []) {
+    supportCounts.set(row.organization_id, (supportCounts.get(row.organization_id) ?? 0) + 1);
+    if (!supportLastAt.has(row.organization_id)) {
+      supportLastAt.set(row.organization_id, row.created_at); // first hit = newest, already sorted desc
+    }
+  }
+
   const error = searchParams.error ? ERRORS[searchParams.error] ?? "Something went wrong." : null;
   const createdOrg = searchParams.created
     ? (orgs ?? []).find((o) => o.id === searchParams.created)
@@ -142,6 +155,7 @@ export default async function AdminOrganizationsPage({
               <th className="py-1.5 pr-3">Name</th>
               <th className="py-1.5 pr-3">Invoice address</th>
               <th className="py-1.5 pr-3">Members</th>
+              <th className="py-1.5 pr-3">Support</th>
               <th className="py-1.5 pr-3">Created</th>
               <th className="py-1.5"></th>
             </tr>
@@ -155,18 +169,41 @@ export default async function AdminOrganizationsPage({
                 </td>
                 <td className="py-1.5 pr-3 text-slate-500">{memberCounts.get(org.id) ?? 0}</td>
                 <td className="py-1.5 pr-3 text-slate-500">
+                  {supportCounts.get(org.id) ? (
+                    <span>
+                      {supportCounts.get(org.id)} msg
+                      {supportCounts.get(org.id) === 1 ? "" : "s"} ·{" "}
+                      {new Date(supportLastAt.get(org.id)!).toLocaleDateString()}
+                    </span>
+                  ) : (
+                    <span className="text-slate-300">—</span>
+                  )}
+                </td>
+                <td className="py-1.5 pr-3 text-slate-500">
                   {new Date(org.created_at).toLocaleDateString()}
                 </td>
                 <td className="py-1.5 text-right">
-                  <form action={joinOrganizationAction}>
-                    <input type="hidden" name="org_id" value={org.id} />
-                    <button
-                      type="submit"
-                      className="rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
-                    >
-                      {myOrgIds.has(org.id) ? "View" : "Join as support"}
-                    </button>
-                  </form>
+                  <div className="flex justify-end gap-1.5">
+                    <form action={joinOrganizationAction}>
+                      <input type="hidden" name="org_id" value={org.id} />
+                      <button
+                        type="submit"
+                        className="rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
+                      >
+                        {myOrgIds.has(org.id) ? "View" : "Join as support"}
+                      </button>
+                    </form>
+                    <form action={joinOrganizationAction}>
+                      <input type="hidden" name="org_id" value={org.id} />
+                      <input type="hidden" name="redirect_to" value="/support" />
+                      <button
+                        type="submit"
+                        className="rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
+                      >
+                        Support chat
+                      </button>
+                    </form>
+                  </div>
                 </td>
               </tr>
             ))}

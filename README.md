@@ -1733,6 +1733,32 @@ editable by admins).
   redirect back to `/billing?payment=success|cancelled`.
   `NEXT_PUBLIC_APP_URL` sets the redirect base (defaults to VERCEL_URL).
 
+## Support chat (migration 0071)
+
+`/support` — one continuous chat thread per organization. Any member can
+read and post (RLS: `is_org_member`, no role restriction — reaching
+support shouldn't need admin permissions), reached via "Chat with
+Support" in the sidebar, next to Settings. Polls every 4s while the page
+is open (`SupportChatPoller`) so a reply shows up without a manual
+reload — no websocket/Realtime subscription, same "poll while mounted"
+shape as `ExtractionPoller`, just simpler (nothing to call, no backoff).
+Messages from a platform admin (`isPlatformAdmin`, checked against the
+author's email via the admin API) get a small green "Support" badge so a
+customer can tell the vendor's reply from their own teammates' messages
+in the same thread.
+
+Platform admins reach a given org's thread the exact same way regular
+members do — by actually being an `organization_members` row on that
+org, not a separate cross-org bypass. `/admin/organizations` shows a
+message count + last-message date per org and a "Support chat" button
+(reuses `joinOrganizationAction`'s existing join-and-switch-active-org
+flow, just redirecting to `/support` instead of `/dashboard` — a new
+`redirect_to` field on that same action) so checking in on every
+tenant's support activity doesn't require switching into each one by
+hand first.
+
+---
+
 ## Settings
 
 `/settings` (member management is admin-only; everyone can edit their own

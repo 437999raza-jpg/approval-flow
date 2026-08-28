@@ -290,6 +290,22 @@ export interface Database {
         >;
         Relationships: [];
       };
+      support_messages: {
+        Row: {
+          id: string;
+          organization_id: string;
+          author_id: string | null;
+          body: string;
+          created_at: string;
+        };
+        Insert: Partial<
+          Database["public"]["Tables"]["support_messages"]["Row"]
+        > & { organization_id: string; body: string };
+        Update: Partial<
+          Database["public"]["Tables"]["support_messages"]["Row"]
+        >;
+        Relationships: [];
+      };
       notifications: {
         Row: {
           id: string;
