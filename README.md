@@ -818,6 +818,105 @@ because it doesn't match the current search/filter/view. A genuine 404
 (wrong org, id never existed, RLS-hidden) still fires correctly, since
 `invoices` only ever contains what RLS actually returns for that user.
 
+### A third per-line class toggle: E for Extras
+
+CON/CO already toggled a line's class to "Contract"/"Change Orders";
+"Extras" was the same real QBO class but had no shortcut button, only the
+free-text class search box. Added an **E** button next to CON/CO writing
+class `"Extras"` — same per-line mechanism as CON/CO, not a revival of the
+removed invoice-level CO/Extras flag (see that section above — the rule
+against re-adding it still stands). Widened the Class column (118px →
+176px) to fit the third button and stop the committed class value
+truncating to "Chang…" instead of showing "Change Orders" once idle.
+
+### Real per-role permissions for the plain "user" role
+
+Previously `role = 'user'` had exactly the same bill-editing rights as
+admin — `canEdit` was just `!isAuditor`, with no actual role check — and
+could see Workflows, Billing, and all of Settings. None of that was
+gated by role at all, just by auditor status. Prompted by preparing to
+onboard a second, real, non-Ufirst tenant where "user" needs to mean
+something.
+
+**Bill panel**, for `role="user"`:
+- Category, description, project, tax, amount, bill header fields,
+  add/delete/clone lines, document upload, re-extract, and reorder pages
+  are locked unconditionally — `canEdit` in
+  [page.tsx](src/app/dashboard/[[...id]]/page.tsx) is now admin-only.
+- Class (CON/CO/E) and the accounting note stay editable, but ONLY until
+  the signed-in user approves the invoice themselves — checked against
+  `invoice_approvals` directly (not invoice status), so it holds
+  regardless of where the invoice moves afterward — see `classReadOnly`/
+  `instructions.readOnly` and `lockedForPlainUser`.
+- Discussion/comments stay open always (`canComment`), even after the
+  above lock — auditors remain the only role that never gets to comment.
+
+**Data-loss bug found and fixed while wiring this up**: `saveLineItem` did
+a blind `update(values)` built from `formData.get()` for every field. A
+disabled `<input>`/`<textarea>` (now reachable whenever a role can submit
+the class toggle but not the rest of the row) is dropped from `FormData`
+by the browser entirely — so description/amount/`linked` would have been
+silently nulled/unchecked on every class-only save. Fixed with a partial
+patch that only includes fields actually present in the submission; a
+`linked_editable` marker input covers the one genuinely ambiguous case (a
+checkbox looks identical in FormData whether it was disabled-and-omitted
+or enabled-and-unchecked).
+
+**Reject now requires a reason.** It used to be a bare one-click button
+capturing nothing. `RejectReasonModal` forces a non-empty reason in a
+popup; `rejectWithReason` (dashboard-actions.ts) posts it to the invoice's
+**Discussion** thread as `"Rejected: …"`, not the accounting-notes thread
+(which stays reserved for notes to accounting) — then reuses `decide()`'s
+existing eligibility/step/audit logic untouched, with an empty `FormData`
+so nothing also lands in `accounting_instructions`.
+
+**Page access**, for `role="user"`: full redirect away from `/workflows`
+and `/billing`; `/settings` shows only "My profile" (`showOrgSettings`
+gate in settings/page.tsx) — Integrations/Billing/Members/Projects are
+admin-and-auditor territory. Sidebar nav links hidden to match.
+
+**Invoice visibility restricted to submitted/assigned-project invoices**
+(migration 0067): a plain user previously saw every invoice in the org via
+a `project_id is null` blanket-visibility clause in `can_see_invoice()`
+and the `invoices` RLS policies — dropped, so now they only see invoices
+they submitted themselves or are an eligible approver for (checked via
+`is_eligible_approver()`, ANY step of the workflow — reuses the existing
+Class/Customer/Supplier/Category step-approver conditions rather than
+building a second, separate "assignment" concept). Admins/auditors are
+unaffected. **Caveat found while writing the migration**: the dashboard's
+own invoice list (`getCachedInvoiceList` in org-cache.ts) fetches via the
+*admin client* for org-wide caching — RLS is per-user and can't be shared
+across a cache key like that — so the RLS policy change alone never
+touches what actually renders in the sidebar. Added
+`isEligibleApproverForInvoice`/`visibleInvoices` in
+[page.tsx](src/app/dashboard/[[...id]]/page.tsx) as a JS-side mirror of
+the exact same rule, applied to the list, the view-tab counts, and the
+invoice-detail lookup. Reports and other RLS-bound queries didn't need
+this — they go through the regular client and are already covered by the
+migration alone.
+
+**Two admin-workflow bugs surfaced while testing the above**, both in
+`overrideStatus`/reassignment (dashboard-actions.ts):
+- Overriding status back to `on_approval` (e.g. undoing a rejection after
+  talking to the submitter) left the OLD rejected `invoice_approvals` row
+  and stale `current_step_order` in place — `decide()`'s `alreadyDecided`
+  check then treated the approver as having already voted (rejected,
+  again), and the stepper kept showing red. Only resetting on `on_review`
+  missed the far more common "just reopen it" path. Now resets
+  `current_step_order` to 1 and clears `invoice_approvals` for
+  `on_approval` too, unless coming from `on_hold` (that's resuming the
+  same in-progress step, not restarting — and holding never records a
+  decision to clear anyway).
+- New `setInvoiceStage` + a "Stage" dropdown in the Bill panel's Admin row
+  (only shown for multi-step workflows) lets an admin send an invoice
+  straight to a **specific** stage regardless of current status —
+  "reassign at any stage, and that's where it starts from." Clears
+  `invoice_approvals` for that step and any AFTER it, but leaves EARLIER
+  steps' genuine decisions on the record.
+
+**Audit trail now sorts newest-first** for everyone — was oldest-first, so
+seeing "what just happened" meant scrolling to the bottom.
+
 ---
 
 ## Environment variables
