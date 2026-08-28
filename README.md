@@ -1699,6 +1699,16 @@ always reachable). Previously it was every org member regardless of
 project: mentioning someone outside the invoice's project sent them a
 notification linking to an invoice they couldn't even see.
 
+**Hardened server-side, not just in the dropdown.** The scoped list above
+is only a UI convenience — `mentioned_ids` is client-supplied, so
+`addComment` couldn't actually trust it. `eligibleMentionIdsForInvoice`
+(dashboard-actions.ts) is the real gate: queried fresh per comment (an
+approver on ANY step of the invoice's workflow, its submitter, or an
+admin), and `addComment` now intersects the requested ids against it
+before creating any notification/email — a crafted request naming
+someone outside the project no longer gets through just because they
+happen to be an org member.
+
 **"It's your turn" notifications** (migration 0069, `notifications.type =
 'assigned'`): whenever an invoice's responsibility actually moves to a new
 approver — first entering the approval workflow (`reviewComplete`),

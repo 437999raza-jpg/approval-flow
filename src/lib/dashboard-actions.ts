@@ -75,6 +75,57 @@ export async function requiredApproversFor(
   );
 }
 
+// Everyone actually allowed to be @mentioned on this invoice: an eligible
+// approver on ANY step of its workflow (not just the current one — same
+// rule as the "user"-role visibility restriction, migration 0067), the
+// submitter, and every org admin unconditionally (admins can see and act
+// on anything, so they're always reachable). This is the real server-side
+// gate — the dashboard page's own scoped mention dropdown is only a
+// convenience built from cached org-wide data; a crafted request could
+// otherwise still get a notification/email created for someone who can't
+// see the invoice it links to. Queried fresh, not from a cache — this
+// runs once per comment, not once per invoice in a list.
+export async function eligibleMentionIdsForInvoice(
+  supabase: ReturnType<typeof createClient>,
+  invoiceId: string
+): Promise<Set<string>> {
+  const ids = new Set<string>();
+
+  const { data: invoice } = await supabase
+    .from("invoices")
+    .select("organization_id, workflow_id, vendor_name, project_id, submitted_by")
+    .eq("id", invoiceId)
+    .maybeSingle();
+  if (!invoice) return ids;
+
+  if (invoice.submitted_by) ids.add(invoice.submitted_by);
+
+  const { data: admins } = await supabase
+    .from("organization_members")
+    .select("user_id")
+    .eq("organization_id", invoice.organization_id)
+    .eq("role", "admin");
+  for (const a of admins ?? []) ids.add(a.user_id);
+
+  if (invoice.workflow_id) {
+    const { data: steps } = await supabase
+      .from("approval_workflow_steps")
+      .select("*")
+      .eq("workflow_id", invoice.workflow_id);
+    for (const step of steps ?? []) {
+      const stepIds = await requiredApproversFor(supabase, step, {
+        id: invoiceId,
+        vendor_name: invoice.vendor_name,
+        project_id: invoice.project_id,
+        step_override_approver_id: null,
+      });
+      for (const id of stepIds) ids.add(id);
+    }
+  }
+
+  return ids;
+}
+
 // A matrix workflow's steps aren't all relevant to every invoice — a step
 // nobody's Class/Category/Supplier/Customer condition covers (and no
 // default approver) isn't a dead end for THIS invoice, it's just not one
@@ -491,19 +542,28 @@ export async function addComment(invoiceId: string, formData: FormData) {
     .single();
   if (!invoice) return;
 
-  // Only notify people who are actually members of this org — the
-  // mentioned_ids field is client-supplied, don't trust it blindly. Never
-  // notify yourself for your own comment.
+  // The mentioned_ids field is client-supplied, don't trust it blindly.
+  // Two gates: actually a member of this org, AND actually eligible to be
+  // mentioned on THIS invoice (an approver on its workflow, its
+  // submitter, or an admin — see eligibleMentionIdsForInvoice). The
+  // dashboard's own mention dropdown already only offers eligible people,
+  // but that's a UI convenience, not enforcement — without this, a
+  // crafted request could still create a notification/email for someone
+  // who can't even see the invoice it links to. Never notify yourself for
+  // your own comment.
   let mentionedIds: string[] = [];
   if (requestedMentionIds.length > 0) {
-    const { data: members } = await supabase
-      .from("organization_members")
-      .select("user_id")
-      .eq("organization_id", invoice.organization_id)
-      .in("user_id", requestedMentionIds);
+    const [{ data: members }, eligibleIds] = await Promise.all([
+      supabase
+        .from("organization_members")
+        .select("user_id")
+        .eq("organization_id", invoice.organization_id)
+        .in("user_id", requestedMentionIds),
+      eligibleMentionIdsForInvoice(supabase, invoiceId),
+    ]);
     mentionedIds = (members ?? [])
       .map((m) => m.user_id)
-      .filter((id) => id !== user.id);
+      .filter((id) => id !== user.id && eligibleIds.has(id));
   }
 
   const { data: comment } = await supabase
