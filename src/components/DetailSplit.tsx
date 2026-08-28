@@ -168,19 +168,20 @@ export function DetailSplit({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [invoiceId]);
 
-  // Snap to an even 50/50 split every time the document opens — the
-  // sidebar and invoice list have just hidden (see setFocused below), so
-  // this pane's own width has grown to the full screen by the time this
-  // runs (useLayoutEffect fires after that DOM update, before paint, so
-  // there's no visible flash of the old width first). Floored at 600px —
-  // an exact half on a smaller/laptop screen was squeezing the bill's
-  // line-items table (Description especially) down to an unreadably
-  // narrow, cramped column. Still a real drag handle afterward if a
-  // narrower bill is genuinely wanted.
+  // Snap to a 55/45 split (bill/document) every time the document opens —
+  // the bill is the thing actually being worked on, the document is a
+  // reference — the sidebar and invoice list have just hidden (see
+  // setFocused below), so this pane's own width has grown to the full
+  // screen by the time this runs (useLayoutEffect fires after that DOM
+  // update, before paint, so there's no visible flash of the old width
+  // first). Floored at 600px — a document-first split on a smaller/laptop
+  // screen was squeezing the bill's line-items table (Description
+  // especially) down to an unreadably narrow, cramped column. Still a real
+  // drag handle afterward if a different width is genuinely wanted.
   useLayoutEffect(() => {
     if (showDoc && outerRef.current) {
       const total = outerRef.current.getBoundingClientRect().width;
-      setBillW(Math.max(600, Math.round(total / 2)));
+      setBillW(Math.max(600, Math.round(total * 0.55)));
     }
   }, [showDoc]);
 
