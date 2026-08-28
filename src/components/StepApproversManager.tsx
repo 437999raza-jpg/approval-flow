@@ -55,6 +55,22 @@ export function StepApproversManager({
     setPendingNewRows([]);
   };
 
+  // Two ways in to close reliably regardless of how tall the matrix gets:
+  // Escape, and clicking the backdrop outside the card. Previously the
+  // only way out was the small × in the header, and the header scrolled
+  // away with the rest of the content once there were enough approver
+  // rows to make the modal taller than the viewport — reported as
+  // "awkward to get out of that screen" once a step has several
+  // approvers saved.
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") close();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [open]);
+
   return (
     <>
       <button
@@ -68,9 +84,15 @@ export function StepApproversManager({
       </button>
 
       {open && (
-        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-900/40 p-6">
-          <div className="w-full max-w-6xl rounded-lg bg-white shadow-xl">
-            <div className="flex items-center gap-3 border-b border-slate-200 px-5 py-4">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-6"
+          onClick={close}
+        >
+          <div
+            className="flex max-h-[85vh] w-full max-w-6xl flex-col rounded-lg bg-white shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex shrink-0 items-center gap-3 border-b border-slate-200 px-5 py-4">
               <button
                 type="button"
                 onClick={close}
@@ -82,7 +104,7 @@ export function StepApproversManager({
                 Approval matrix for the step &quot;{stepName}&quot;
               </h2>
             </div>
-            <div className="max-h-[70vh] overflow-y-auto p-5">
+            <div className="flex-1 overflow-y-auto p-5">
               {!readOnly && (
                 <p className="mb-3 text-xs text-slate-400">
                   Need &quot;approve if X, OR if Y&quot; for one person? Add them

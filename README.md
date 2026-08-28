@@ -1453,6 +1453,16 @@ and `is_eligible_approver()` in migration 0027/0028 (the same logic in
 SQL, driving RLS visibility). If you change the matching rules, update
 both.
 
+**Getting out of the Approval matrix modal ([`StepApproversManager.tsx`](src/components/StepApproversManager.tsx)).**
+Reported as "awkward to get out of that screen" once a step had several
+approvers saved: the whole overlay (header included) scrolled as one
+block, so scrolling down to see a long approver list scrolled the ✕
+close button away too, and there was no other way to close it — no
+click-outside, no Escape. Fixed by pinning the header (`shrink-0`)
+outside the scrolling area so only the approver list scrolls under it,
+and adding both click-outside-to-close (an `onClick` on the backdrop,
+`stopPropagation`'d on the card itself) and Escape-to-close.
+
 **A step nobody matches gets skipped, not stuck.** Reported live: a
 3-stage matrix workflow (PM Approval → CO Team Approval → Accounting)
 where the PM sometimes hands an invoice straight to the CO team, skipping
