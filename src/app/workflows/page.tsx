@@ -8,6 +8,7 @@ import { fetchAllQboSuppliers } from "@/lib/qbo-all";
 import { SignOutButton } from "@/components/SignOutButton";
 import { WorkflowRuleRow } from "@/components/WorkflowRuleRow";
 import { StepApproversManager } from "@/components/StepApproversManager";
+import { CollapsibleWorkflowSection } from "@/components/CollapsibleWorkflowSection";
 import { SubmitButton } from "@/components/SubmitButton";
 import type { RowCondition as StepApproverCondition } from "@/components/StepApproverMatrixRow";
 import {
@@ -778,49 +779,54 @@ export default async function WorkflowsPage() {
                   key={w.id}
                   className="rounded-lg border border-slate-200 bg-white"
                 >
-                  <div className="flex flex-wrap items-center gap-3 border-b border-slate-200 px-4 py-3">
-                    <h2 className="text-base font-semibold text-slate-800">
-                      {w.name}
-                    </h2>
-                    {w.is_default && (
-                      <span className="rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-600">
-                        default
-                      </span>
-                    )}
-                    <span className="flex-1" />
-                    {isAdmin && (
+                  <CollapsibleWorkflowSection
+                    storageKey={`workflow-collapsed:${w.id}`}
+                    title={
                       <>
-                        <form
-                          action={updateWorkflow.bind(null, w.id)}
-                          className="flex items-center gap-2"
-                        >
-                          <input
-                            name="name"
-                            defaultValue={w.name}
-                            className="rounded-md border border-slate-300 px-2 py-1 text-xs"
-                          />
-                          <label className="flex items-center gap-1 text-xs text-slate-600">
-                            <input
-                              name="is_default"
-                              type="checkbox"
-                              defaultChecked={w.is_default}
-                              className="h-3.5 w-3.5 rounded border-slate-300"
-                            />
+                        <h2 className="text-base font-semibold text-slate-800">
+                          {w.name}
+                        </h2>
+                        {w.is_default && (
+                          <span className="rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-600">
                             default
-                          </label>
-                          <SubmitButton className="rounded-md bg-slate-800 px-2 py-1 text-xs font-medium text-white hover:bg-slate-700">
-                            Save
-                          </SubmitButton>
-                        </form>
-                        <form action={deleteWorkflow.bind(null, w.id)}>
-                          <SubmitButton className="text-xs text-red-500 hover:underline">
-                            Delete
-                          </SubmitButton>
-                        </form>
+                          </span>
+                        )}
                       </>
-                    )}
-                  </div>
-
+                    }
+                    actions={
+                      isAdmin && (
+                        <>
+                          <form
+                            action={updateWorkflow.bind(null, w.id)}
+                            className="flex items-center gap-2"
+                          >
+                            <input
+                              name="name"
+                              defaultValue={w.name}
+                              className="rounded-md border border-slate-300 px-2 py-1 text-xs"
+                            />
+                            <label className="flex items-center gap-1 text-xs text-slate-600">
+                              <input
+                                name="is_default"
+                                type="checkbox"
+                                defaultChecked={w.is_default}
+                                className="h-3.5 w-3.5 rounded border-slate-300"
+                              />
+                              default
+                            </label>
+                            <SubmitButton className="rounded-md bg-slate-800 px-2 py-1 text-xs font-medium text-white hover:bg-slate-700">
+                              Save
+                            </SubmitButton>
+                          </form>
+                          <form action={deleteWorkflow.bind(null, w.id)}>
+                            <SubmitButton className="text-xs text-red-500 hover:underline">
+                              Delete
+                            </SubmitButton>
+                          </form>
+                        </>
+                      )
+                    }
+                  >
                   {/* Approval steps */}
                   <div className="px-4 py-3">
                     <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">
@@ -1016,6 +1022,7 @@ export default async function WorkflowsPage() {
                       </div>
                     )}
                   </div>
+                  </CollapsibleWorkflowSection>
                 </section>
               );
             })}
