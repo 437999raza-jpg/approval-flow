@@ -89,26 +89,36 @@ export default function LoginPage() {
       <div className="grid w-full max-w-4xl overflow-hidden rounded-2xl border border-brand-line bg-white shadow-sm shadow-brand-ink/5 md:grid-cols-2">
         {/* Hero panel — hidden on narrow screens, the form alone still
             carries the wordmark below. */}
-        <div className="relative hidden flex-col justify-between bg-gradient-to-br from-brand-ink to-brand-navy p-10 text-white md:flex">
-          <Image
-            src="/brand/ufirst-wordmark-white.png"
-            alt="ufirst"
-            width={2400}
-            height={878}
-            className="h-7 w-auto"
-            priority
-          />
-          <div>
-            <h1 className="font-display text-[27px] font-extrabold italic leading-tight">
-              No more chasing down who approves what.
-              <br />
-              Flow already knows — <span className="text-brand-green-light">automatically.</span>
-            </h1>
-            <p className="mt-4 text-[13.5px] leading-relaxed text-[#C4D0DE]">
-              Matrix routing by project, class, and supplier · deadlines with
-              automatic reminders · a full audit trail on every decision
-            </p>
-          </div>
+        <div className="relative hidden flex-col bg-gradient-to-br from-brand-ink to-brand-navy p-10 text-white md:flex">
+          <h1 className="font-display text-[27px] font-extrabold italic leading-tight">
+            No more chasing down who approves what.
+            <br />
+            Flow already knows — <span className="text-brand-green-light">automatically.</span>
+          </h1>
+          <ul className="mt-6 space-y-3 text-[13.5px] leading-relaxed text-[#C4D0DE]">
+            {[
+              "Routes each bill to the right approver by project, class, or supplier — no manual reassigning.",
+              "Flags anything sitting past its deadline, with reminders and escalation so nothing goes quiet.",
+              "Every approval, rejection, and comment logged automatically — a clean audit trail, always.",
+            ].map((line) => (
+              <li key={line} className="flex items-start gap-2.5">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  className="mt-0.5 h-4 w-4 flex-none text-brand-green-light"
+                >
+                  <path
+                    d="M5 13l4 4L19 7"
+                    stroke="currentColor"
+                    strokeWidth="2.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+                <span>{line}</span>
+              </li>
+            ))}
+          </ul>
           <div className="brand-rule absolute bottom-0 left-0 right-0" />
         </div>
 

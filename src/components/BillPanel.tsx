@@ -542,12 +542,25 @@ export function BillPanel({
               </div>
               <div className="flex flex-1 flex-col">
                 {approval.currentStepApproverNames.length > 0 && (
-                  <p className="mt-2 text-sm text-slate-600">
-                    Currently with{" "}
-                    <span className="font-medium text-slate-800">
-                      {approval.currentStepApproverNames.join(", ")}
+                  <div className="mt-2 flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+                    <span className="flex h-6 w-6 flex-none items-center justify-center rounded-full bg-amber-100 text-amber-700">
+                      <svg viewBox="0 0 24 24" fill="none" className="h-3.5 w-3.5">
+                        <path
+                          d="M12 12a4 4 0 100-8 4 4 0 000 8zM4 20c0-3.5 3.5-6 8-6s8 2.5 8 6"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
                     </span>
-                  </p>
+                    <p className="text-sm text-amber-900">
+                      Currently with{" "}
+                      <span className="font-bold">
+                        {approval.currentStepApproverNames.join(", ")}
+                      </span>
+                    </p>
+                  </div>
                 )}
                 {approval.steps.length > 0 && (
                   <div className="mt-3">
