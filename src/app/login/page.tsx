@@ -98,8 +98,8 @@ export default function LoginPage() {
               />
             </svg>
           </div>
-          <h1 className="mt-3 text-lg font-semibold text-slate-900">
-            Approval Flow
+          <h1 className="mt-3 text-xl font-bold text-slate-900">
+            Flow by UFIRST
           </h1>
           <p className="mt-1 text-sm text-slate-500">
             Sign in to review and approve invoices

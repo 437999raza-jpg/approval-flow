@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Approval Flow",
+  title: "Flow by UFIRST",
   description: "Invoice approval workflows",
 };
 

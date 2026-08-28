@@ -61,7 +61,7 @@ function emailShell({
         </tr>
         <tr>
           <td style="padding:16px 28px;background:#f8fafc;border-top:1px solid #eef2f7;">
-            <p style="margin:0;font-size:11px;color:#94a3b8;">Approval Flow</p>
+            <p style="margin:0;font-size:11px;color:#94a3b8;">Flow by UFIRST</p>
           </td>
         </tr>
       </table>

@@ -1,4 +1,4 @@
-# Approval Flow
+# Flow by UFIRST
 
 Invoice approval workflows (ApprovalMax-style), built on Next.js, deployed on
 Vercel, with Supabase for Postgres, Auth, and Storage, and an OpenRouter
