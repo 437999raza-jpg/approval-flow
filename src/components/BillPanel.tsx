@@ -1155,21 +1155,33 @@ export function BillPanel({
               <ol className="mt-3 space-y-3">
                 {auditTimeline.map((entry) => {
                   const summaryText = entry.kind === "comment" ? "commented" : entry.summary;
-                  // Rejections need to stand out scanning the trail — bold +
-                  // red on whichever line actually mentions it (the summary
-                  // line for the decision itself, the detail line for a
-                  // reject-reason comment), not the whole entry.
+                  // Reject/approve need to stand out scanning the trail —
+                  // bold + colored on whichever line actually mentions it
+                  // (the summary line for the decision itself, the detail
+                  // line for a reject-reason comment), not the whole entry.
+                  // \bapproved\b (not a bare /approve/) so "Reassigned to a
+                  // different approver" doesn't false-positive as green.
                   const summaryIsReject = /reject/i.test(summaryText);
+                  const summaryIsApproved = /\bapproved\b/i.test(summaryText);
                   const detailIsReject = entry.detail ? /reject/i.test(entry.detail) : false;
+                  const detailIsApproved = entry.detail
+                    ? /\bapproved\b/i.test(entry.detail)
+                    : false;
+                  const summaryColorCls = summaryIsReject
+                    ? "font-bold text-red-600"
+                    : summaryIsApproved
+                      ? "font-bold text-emerald-600"
+                      : "text-slate-700";
+                  const detailColorCls = detailIsReject
+                    ? "font-bold text-red-600"
+                    : detailIsApproved
+                      ? "font-bold text-emerald-600"
+                      : "text-slate-500";
                   return (
                     <li key={entry.id} className="border-l-2 border-slate-200 pl-3">
                       <div className="flex items-baseline justify-between gap-2">
-                        <p
-                          className={`text-sm ${
-                            summaryIsReject ? "font-bold text-red-600" : "text-slate-700"
-                          }`}
-                        >
-                          <span className={summaryIsReject ? "" : "font-medium"}>
+                        <p className={`text-sm ${summaryColorCls}`}>
+                          <span className={summaryIsReject || summaryIsApproved ? "" : "font-medium"}>
                             {entry.actorName}
                           </span>{" "}
                           {summaryText}
@@ -1180,13 +1192,7 @@ export function BillPanel({
                         />
                       </div>
                       {entry.detail && (
-                        <p
-                          className={`mt-0.5 text-xs ${
-                            detailIsReject ? "font-bold text-red-600" : "text-slate-500"
-                          }`}
-                        >
-                          {entry.detail}
-                        </p>
+                        <p className={`mt-0.5 text-xs ${detailColorCls}`}>{entry.detail}</p>
                       )}
                     </li>
                   );
