@@ -1463,6 +1463,20 @@ outside the scrolling area so only the approver list scrolls under it,
 and adding both click-outside-to-close (an `onClick` on the backdrop,
 `stopPropagation`'d on the card itself) and Escape-to-close.
 
+**Each workflow is collapsible.** With several workflows configured,
+each one's full contents (steps, approval matrices, workflow items) used
+to always render in full — a page-length scroll to get from one
+workflow to the next. A chevron next to the workflow name toggles that
+whole body; the name/default badge and admin rename/delete controls stay
+visible either way, so nothing needed to open a workflow to rename or
+delete it. [`CollapsibleWorkflowSection.tsx`](src/components/CollapsibleWorkflowSection.tsx) —
+a separate component from the existing `CollapsibleSection.tsx` (used by
+BillPanel's accordion panes: whole header is the click target, plain-
+string title, no persisted state), since this one needed a header with
+live server-action forms that stay visible and clickable while
+collapsed. Collapsed/expanded state is remembered per workflow in
+`localStorage`, so it survives a reload.
+
 **A step nobody matches gets skipped, not stuck.** Reported live: a
 3-stage matrix workflow (PM Approval → CO Team Approval → Accounting)
 where the PM sometimes hands an invoice straight to the CO team, skipping
