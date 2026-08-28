@@ -828,6 +828,10 @@ removed invoice-level CO/Extras flag (see that section above — the rule
 against re-adding it still stands). Widened the Class column (118px →
 176px) to fit the third button and stop the committed class value
 truncating to "Chang…" instead of showing "Change Orders" once idle.
+Restyled per direct feedback shortly after shipping: all three buttons
+are blue by default (was three different colors per button when
+unselected/selected), turning yellow specifically when selected, instead
+of each button carrying its own distinct selected-color.
 
 ### Real per-role permissions for the plain "user" role
 
@@ -915,7 +919,71 @@ migration alone.
   steps' genuine decisions on the record.
 
 **Audit trail now sorts newest-first** for everyone — was oldest-first, so
-seeing "what just happened" meant scrolling to the bottom.
+seeing "what just happened" meant scrolling to the bottom. Lines
+mentioning **"reject"** now render bold and red, and lines mentioning
+whole-word **"approved"** render bold and green (not a bare `/approve/`,
+so "Reassigned to a different **approver**" doesn't false-positive as
+green) — applied per-line (the decision's own summary vs. a
+reject-reason comment's detail line), not the whole entry.
+
+### The `overrideStatus`/`setInvoiceStage` fixes above didn't actually work — found live
+
+Tested live right after shipping: forcing a rejected invoice back to
+`on_approval` still showed the old rejected decision (a red X on the
+stepper) and the PM it was reassigned to didn't see it under "Requires my
+approval." Root cause was one step deeper than the two bugs above —
+`invoice_approvals` **never had a DELETE policy at all**, only
+read/insert. So every `invoice_approvals.delete()` call in
+`backToReview`/`overrideStatus`/`setInvoiceStage` was silently deleting
+**zero rows** through the RLS-bound client — Postgres/PostgREST don't
+treat "no policy matched" as an error, so nothing surfaced until someone
+actually looked at the result. Migration 0068 adds `"invoice_approvals:
+admins can delete"` (mirrors `invoices`' own existing `"admins can
+delete"` policy), and the three call sites also now route the delete
+through the admin client directly as defense in depth, since `canReview()`
+already confirmed the caller.
+
+### Matrix workflows: a stage nobody matches gets skipped, not stuck
+
+Reported live on a real 3-stage matrix workflow (PM Approval → CO Team
+Approval → Accounting): a PM sometimes hands an invoice straight to the
+CO team, skipping PM Approval for that one invoice entirely. Since
+nobody's condition matched step 1 for it, the invoice got stuck with "No
+approver currently matches this invoice at step 1 ... It can't be
+approved as-is," needing a manual admin Reassign every time. A matrix
+workflow's steps were never meant to all apply to every invoice — an
+unmatched step (no conditional approver's rules apply, no default
+approver) just isn't one of that invoice's stages. New
+`firstMatchingStepFrom` (dashboard-actions.ts) finds the first step from
+a given point onward that actually has a matching approver;
+`reviewComplete` (entering the workflow) and `decide()` (advancing after
+each approval, including its self-heal branch) both use it now instead of
+blindly landing on step 1 / step+1. Falls back to the original step only
+when nothing from there through the last step matches, so a genuinely
+unconfigured workflow still surfaces the existing warning.
+
+### Document split is 60/40 (bill/document), not an even 50/50
+
+The bill is what's actually being worked on; the document is reference
+material next to it. `DetailSplit`'s auto-sizing on opening a document
+now gives the bill 60% of the available width (still floored at 600px on
+a smaller screen, still adjustable afterward via the drag handle) instead
+of an even half.
+
+### Middleware hardened against a slow Supabase Auth call taking the whole site down
+
+Live incident: `middleware.ts`'s `supabase.auth.getUser()` call had no
+timeout, and it runs on **every request across the entire app** (see its
+`matcher`). A slow/unresponsive moment from Supabase turned into a full
+site `504 MIDDLEWARE_INVOCATION_TIMEOUT` for every visitor, in every
+browser — including incognito, since this happens server-side before any
+HTML is even returned, so clearing local cache/cookies can't fix it.
+`getUser()`'s return value isn't even used in this file — its only job is
+the side-effect cookie refresh via the `setAll` callback — so it's now
+raced against a 5-second timeout and the request proceeds regardless of
+which one wins. Worst case on a genuinely slow Supabase moment: one
+request sees a slightly stale session (self-corrects on the next one)
+instead of the whole app going down.
 
 ---
 
