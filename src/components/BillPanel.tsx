@@ -10,6 +10,7 @@ import { SubmitButton } from "./SubmitButton";
 import { InstructionsBox } from "./InstructionsBox";
 import { LocalTime } from "./LocalTime";
 import { ReorderPagesModal } from "./ReorderPagesModal";
+import { RejectReasonModal } from "./RejectReasonModal";
 import { InvoiceStatusBadge } from "./InvoiceStatusBadge";
 import type { Database } from "@/lib/supabase/types";
 import { computeLineItemTotals } from "@/lib/invoice-totals";
@@ -601,11 +602,9 @@ export function BillPanel({
                                   Hold
                                 </SubmitButton>
                               </form>
-                              <form action={approval.reject} className="flex-1">
-                                <SubmitButton className="w-full rounded-md border border-transparent bg-red-600 px-4 py-2 text-center text-sm font-semibold text-white hover:bg-red-700">
-                                  Reject
-                                </SubmitButton>
-                              </form>
+                              <div className="flex-1">
+                                <RejectReasonModal reject={approval.reject} />
+                              </div>
                             </>
                           )}
                           {approval.canCancel && !approval.canUnhold && (

@@ -46,6 +46,7 @@ import {
   backToReview,
   cancelInvoice,
   decide,
+  rejectWithReason,
   addComment,
   addDocument,
   saveAccountingInstructions,
@@ -97,6 +98,7 @@ const DECISION_ERRORS: Record<string, string> = {
   "already-decided": "This invoice has already been decided at this step.",
   "step-required":
     "Earlier approval steps must be completed before this step can be decided.",
+  "reject-reason-required": "A reason is required to reject an invoice.",
 };
 
 // Record a single approve/reject decision for the current workflow step.
@@ -1367,7 +1369,7 @@ export default async function DashboardPage({
                     reviewComplete: reviewComplete.bind(null, selected.id),
                     hold: holdInvoice.bind(null, selected.id),
                     unhold: unholdInvoice.bind(null, selected.id),
-                    reject: decide.bind(null, selected.id, "rejected"),
+                    reject: rejectWithReason.bind(null, selected.id),
                     cancel: cancelInvoice.bind(null, selected.id),
                   },
                   admin: {

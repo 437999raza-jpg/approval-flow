@@ -184,7 +184,10 @@ export function buildAuditTimeline({
     detail: c.body,
   }));
 
+  // Newest first — the same convention as every other list in the app
+  // (Invoices, Discussion), and what someone checking "what just happened"
+  // actually wants without scrolling to the bottom.
   return [...events, ...commentEntries].sort(
-    (a, b) => new Date(a.at).getTime() - new Date(b.at).getTime()
+    (a, b) => new Date(b.at).getTime() - new Date(a.at).getTime()
   );
 }

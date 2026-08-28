@@ -246,6 +246,38 @@ export async function decide(
   revalidatePath("/dashboard", "layout");
 }
 
+// Reject requires a reason — typed into a required field in a popup
+// (RejectReasonModal) rather than the old bare one-click button, which
+// captured nothing at all. The reason is posted to Discussion, NOT the
+// accounting-notes thread (that stays reserved for notes to accounting,
+// per explicit instruction) — everyone already watches Discussion for
+// back-and-forth on an invoice, including @mentions.
+export async function rejectWithReason(invoiceId: string, formData: FormData) {
+
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
+  const reason = String(formData.get("reason") ?? "").trim();
+  if (!reason) {
+    redirect(`/dashboard/${invoiceId}?error=reject-reason-required`);
+  }
+
+  await supabase.from("invoice_comments").insert({
+    invoice_id: invoiceId,
+    author_id: user.id,
+    body: `Rejected: ${reason}`,
+    mentioned_user_ids: [],
+  });
+
+  // Reuse decide()'s exact eligibility/step/audit logic — pass a FRESH,
+  // empty FormData (no "instructions" key) so nothing also lands in the
+  // accounting-notes thread; the reason above is the only record of why.
+  await decide(invoiceId, "rejected", new FormData());
+}
+
 // Post a message to an invoice's discussion thread. Any org member who can
 // see the invoice can participate (RLS on invoice_comments gates it).
 // @mentions (picked from the composer's dropdown, not parsed from free
