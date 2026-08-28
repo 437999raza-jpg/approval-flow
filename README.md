@@ -1060,6 +1060,7 @@ Copy `.env.example` → `.env.local` and fill in:
 | `RESEND_FROM_EMAIL` | No (required if `RESEND_API_KEY` is set) | Must be a verified sender/domain in your Resend account |
 | `PLATFORM_ADMIN_EMAILS` | No | Comma-separated emails allowed to create new organizations at `/admin/organizations` (see [Multi-tenant onboarding tool](#multi-tenant-onboarding-tool-adminorganizations)). Leave unset to hide that page entirely. |
 | `CRON_SECRET` | Recommended | Any random string you choose; Vercel sends it as `Authorization: Bearer $CRON_SECRET` on cron-triggered requests to `/api/cron/reminders` (see [Deadlines, reminders & escalation](#deadlines-reminders--escalation-migration-0073)). Unset = the route runs unauthenticated. |
+| `STRIPE_SECRET_KEY` | For billing | dashboard.stripe.com → Developers → API keys. Powers `/billing`'s "Pay now" and "Manage billing" (see [Billing & usage](#billing--usage)). No publishable key needed — the app only redirects to Stripe-hosted pages, never loads Stripe.js client-side. |
 
 Supabase renamed its API keys at some point — you may see either
 **"Publishable and secret API keys"** or **"Legacy anon, service_role API
@@ -1907,10 +1908,28 @@ editable by admins).
   changes, then reads e.g. **"0.15 saved"** with the **saved-on date**
   (`organizations.usage_rate_updated_at`, migration 0062).
 - **Stripe Checkout** ("Pay now") charges the suggested amount via Stripe's
-  hosted page (amount = documents × rate, USD). Requires `STRIPE_SECRET_KEY`;
-  without it the page shows "Stripe is not configured". Success/cancel
-  redirect back to `/billing?payment=success|cancelled`.
-  `NEXT_PUBLIC_APP_URL` sets the redirect base (defaults to VERCEL_URL).
+  hosted page (amount = documents × rate, USD — always USD, regardless of
+  the customer's own country). Requires `STRIPE_SECRET_KEY`; without it the
+  page shows "Stripe is not connected". Success/cancel redirect back to
+  `/billing?payment=success|cancelled`. `NEXT_PUBLIC_APP_URL` sets the
+  redirect base (defaults to VERCEL_URL).
+- **Stripe customer + Billing Portal (migration 0074).** Every org gets a
+  persistent Stripe Customer (`organizations.stripe_customer_id`), created
+  lazily on first "Pay now" or "Manage billing" click via a shared
+  `ensureStripeCustomer()` helper — previously every Checkout session was
+  anonymous, so there was nothing for a Billing Portal session to attach
+  to. **"Manage billing"** opens Stripe's own hosted Billing Portal, where
+  a customer sees past receipts and updates their saved payment method
+  themselves — Flow never builds card-entry UI of its own (`no Stripe.js
+  client-side either — the page only redirects to Stripe-hosted URLs`).
+  The Billing Portal must be activated once in the Stripe Dashboard
+  (Settings → Billing → Customer portal) or `createBillingPortalSession`
+  surfaces Stripe's own error message explaining that, rather than a bare
+  status code — the fix there is a Stripe setting, not a code change.
+- The visual redesign (usage trend bar chart, brand-colored cards) uses
+  the same `brand-*` Tailwind tokens as [the rest of the ufirst brand
+  work](#brand-ufirst) — no new dependency for the chart, just a row of
+  divs sized by `height: %`.
 
 ## Support chat (migration 0071)
 

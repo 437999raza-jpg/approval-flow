@@ -48,6 +48,7 @@ export interface Database {
           default_tax_code_id: string | null;
           usage_rate_usd: number;
           usage_rate_updated_at: string | null;
+          stripe_customer_id: string | null;
           created_at: string;
         };
         Insert: Partial<

@@ -2526,12 +2526,62 @@ export async function saveUsageRate(
   return { ok: true };
 }
 
+// Shared by createUsageCheckout and createBillingPortalSession — both need
+// a persistent Stripe Customer behind the org (not the anonymous one Stripe
+// would otherwise create per Checkout Session) so a Billing Portal session
+// has an actual customer to show payment methods/receipts for. Created
+// lazily on first use, then reused forever after.
+async function ensureStripeCustomer(
+  supabase: ReturnType<typeof createClient>,
+  secret: string,
+  org: { id: string }
+): Promise<{ ok: true; customerId: string } | { ok: false; error: string }> {
+  const { data: orgRow } = await supabase
+    .from("organizations")
+    .select("stripe_customer_id, name")
+    .eq("id", org.id)
+    .single();
+  if (orgRow?.stripe_customer_id) {
+    return { ok: true, customerId: orgRow.stripe_customer_id };
+  }
+
+  try {
+    const res = await fetch("https://api.stripe.com/v1/customers", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${secret}`,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({
+        name: orgRow?.name ?? "Flow customer",
+        "metadata[organization_id]": org.id,
+      }),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      console.error("Stripe customer create failed:", res.status, text.slice(0, 300));
+      return { ok: false, error: `Could not create a Stripe customer (${res.status}).` };
+    }
+    const json = (await res.json()) as { id: string };
+    await supabase
+      .from("organizations")
+      .update({ stripe_customer_id: json.id })
+      .eq("id", org.id);
+    return { ok: true, customerId: json.id };
+  } catch (err) {
+    console.error("ensureStripeCustomer error:", err);
+    return { ok: false, error: err instanceof Error ? err.message : "Stripe error." };
+  }
+}
+
 // Stripe Checkout for the org's suggested usage charge. Creates a hosted
 // Checkout Session (Stripe handles the card form) and returns its URL so
 // the client can redirect. Amount = documents processed × the org's
-// per-document rate, in USD. Requires STRIPE_SECRET_KEY; without it returns
-// a clear error (the Billing page shows the "not configured" state).
-// No Stripe SDK — a single form POST to the API, like OpenRouter/Resend.
+// per-document rate, in USD (always USD, regardless of the customer's own
+// country — this is Flow's own billing, not a localized storefront).
+// Requires STRIPE_SECRET_KEY; without it returns a clear error (the
+// Billing page shows the "not configured" state). No Stripe SDK — a single
+// form POST to the API, like OpenRouter/Resend.
 export async function createUsageCheckout(): Promise<{ ok: boolean; url?: string; error?: string }> {
 
   const supabase = createClient();
@@ -2548,7 +2598,7 @@ export async function createUsageCheckout(): Promise<{ ok: boolean; url?: string
     return { ok: false, error: "Stripe is not configured (STRIPE_SECRET_KEY missing)." };
   }
 
-  const [{ count }, { data: orgRow }] = await Promise.all([
+  const [{ count }, { data: orgRow }, customer] = await Promise.all([
     supabase
       .from("usage_events")
       .select("id", { count: "exact", head: true })
@@ -2558,12 +2608,14 @@ export async function createUsageCheckout(): Promise<{ ok: boolean; url?: string
       .select("usage_rate_usd, name")
       .eq("id", org.id)
       .single(),
+    ensureStripeCustomer(supabase, secret, org),
   ]);
   const rate = orgRow?.usage_rate_usd ?? 0.15;
   const amountCents = Math.round((count ?? 0) * rate * 100);
   if (amountCents <= 0) {
     return { ok: false, error: "No usage to bill yet — nothing to charge." };
   }
+  if (!customer.ok) return { ok: false, error: customer.error };
 
   const origin =
     process.env.NEXT_PUBLIC_APP_URL ??
@@ -2572,6 +2624,7 @@ export async function createUsageCheckout(): Promise<{ ok: boolean; url?: string
   try {
     const body = new URLSearchParams({
       mode: "payment",
+      customer: customer.customerId,
       success_url: `${origin}/billing?payment=success`,
       cancel_url: `${origin}/billing?payment=cancelled`,
       "line_items[0][quantity]": "1",
@@ -2599,6 +2652,72 @@ export async function createUsageCheckout(): Promise<{ ok: boolean; url?: string
     return { ok: true, url: json.url };
   } catch (err) {
     console.error("createUsageCheckout error:", err);
+    return { ok: false, error: err instanceof Error ? err.message : "Stripe error." };
+  }
+}
+
+// "Manage billing" — a Stripe-hosted Billing Portal session where a
+// customer can see past receipts and update their saved payment method
+// themselves, without Flow ever building (or touching) card-entry UI.
+// Requires the org to already have a Stripe customer — created lazily
+// here too, so this works even before a first payment.
+export async function createBillingPortalSession(): Promise<{ ok: boolean; url?: string; error?: string }> {
+
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
+  const org = await getCurrentOrg(supabase);
+  if (!org) return { ok: false, error: "No organization." };
+
+  const secret = process.env.STRIPE_SECRET_KEY;
+  if (!secret) {
+    return { ok: false, error: "Stripe is not configured (STRIPE_SECRET_KEY missing)." };
+  }
+
+  const customer = await ensureStripeCustomer(supabase, secret, org);
+  if (!customer.ok) return { ok: false, error: customer.error };
+
+  const origin =
+    process.env.NEXT_PUBLIC_APP_URL ??
+    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3210");
+
+  try {
+    const res = await fetch("https://api.stripe.com/v1/billing_portal/sessions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${secret}`,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({
+        customer: customer.customerId,
+        return_url: `${origin}/billing`,
+      }),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      console.error("Stripe billing portal failed:", res.status, text.slice(0, 300));
+      // Stripe returns a specific, human-readable message when the
+      // Customer Portal hasn't been activated in the Stripe Dashboard
+      // yet (Settings -> Billing -> Customer portal) — surface it as-is
+      // rather than a generic status-code error, since the fix is a
+      // one-click Stripe setting, not a code change.
+      let detail = `Stripe billing portal failed (${res.status}).`;
+      try {
+        const parsed = JSON.parse(text) as { error?: { message?: string } };
+        if (parsed.error?.message) detail = parsed.error.message;
+      } catch {
+        // fall back to the generic message above
+      }
+      return { ok: false, error: detail };
+    }
+    const json = (await res.json()) as { url?: string };
+    if (!json.url) return { ok: false, error: "Stripe returned no portal URL." };
+    return { ok: true, url: json.url };
+  } catch (err) {
+    console.error("createBillingPortalSession error:", err);
     return { ok: false, error: err instanceof Error ? err.message : "Stripe error." };
   }
 }

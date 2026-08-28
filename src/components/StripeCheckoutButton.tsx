@@ -2,19 +2,26 @@
 
 import { useState } from "react";
 
-// "Pay now" button that creates a Stripe Checkout session for the org's
-// suggested usage charge and redirects to Stripe's hosted page. When Stripe
-// isn't configured yet the action returns a clear error instead of the URL,
-// shown inline below the button.
+// Redirects to a Stripe-hosted page (Checkout for "Pay now", the Billing
+// Portal for "Manage billing") — the action creates the session server-side
+// and returns its URL. When Stripe isn't configured, or the action fails
+// for any other reason, the error is shown inline rather than silently
+// doing nothing.
 export function StripeCheckoutButton({
   action,
+  label = "Pay now",
+  pendingLabel = "Opening checkout…",
+  variant = "primary",
 }: {
   action: () => Promise<{ ok: boolean; url?: string; error?: string }>;
+  label?: string;
+  pendingLabel?: string;
+  variant?: "primary" | "secondary";
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const pay = async () => {
+  const go = async () => {
     setBusy(true);
     setError(null);
     try {
@@ -30,16 +37,20 @@ export function StripeCheckoutButton({
   };
 
   return (
-    <div className="mt-3">
+    <div>
       <button
         type="button"
-        onClick={pay}
+        onClick={go}
         disabled={busy}
-        className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
+        className={
+          variant === "primary"
+            ? "rounded-md bg-brand-green px-4 py-2 text-sm font-display font-bold text-white hover:bg-brand-green-dark disabled:opacity-50"
+            : "rounded-md border border-brand-line px-4 py-2 text-sm font-medium text-brand-navy hover:bg-brand-mist disabled:opacity-50"
+        }
       >
-        {busy ? "Opening checkout…" : "Pay now"}
+        {busy ? pendingLabel : label}
       </button>
-      {error && <p className="mt-1 text-xs text-amber-700">{error}</p>}
+      {error && <p className="mt-1.5 text-xs text-amber-700">{error}</p>}
     </div>
   );
 }
