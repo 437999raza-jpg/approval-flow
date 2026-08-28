@@ -11,8 +11,14 @@ const SupportChatCtx = createContext<{
   setOpen: (v: boolean) => void;
 } | null>(null);
 
-export function SupportChatProvider({ children }: { children: ReactNode }) {
-  const [open, setOpen] = useState(false);
+export function SupportChatProvider({
+  children,
+  initialOpen = false,
+}: {
+  children: ReactNode;
+  initialOpen?: boolean;
+}) {
+  const [open, setOpen] = useState(initialOpen);
   return (
     <SupportChatCtx.Provider value={{ open, setOpen }}>
       {children}

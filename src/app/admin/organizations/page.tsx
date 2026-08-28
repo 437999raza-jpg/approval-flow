@@ -195,7 +195,7 @@ export default async function AdminOrganizationsPage({
                     </form>
                     <form action={joinOrganizationAction}>
                       <input type="hidden" name="org_id" value={org.id} />
-                      <input type="hidden" name="redirect_to" value="/support" />
+                      <input type="hidden" name="redirect_to" value="/dashboard?openSupport=1" />
                       <button
                         type="submit"
                         className="rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"

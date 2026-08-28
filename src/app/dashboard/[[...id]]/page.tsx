@@ -142,6 +142,7 @@ export default async function DashboardPage({
     amountFrom?: string;
     amountTo?: string;
     doc?: string;
+    openSupport?: string;
   };
 }) {
   const supabase = createClient();
@@ -1086,7 +1087,7 @@ export default async function DashboardPage({
   return (
     <ToastProvider>
     <DocumentFocusProvider>
-    <SupportChatProvider>
+    <SupportChatProvider initialOpen={searchParams.openSupport === "1"}>
     <ExtractionPoller />
     <SupportChatWidget />
     <div className="flex h-screen bg-slate-50 text-slate-900">

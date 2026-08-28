@@ -178,11 +178,14 @@ export async function joinOrganizationAction(formData: FormData) {
     );
 
   setActiveOrgCookie(orgId);
-  // Lets the /admin/organizations "View support chat" button land
-  // directly on that org's thread instead of the dashboard — same
-  // join-and-switch, different destination.
+  // Lets the /admin/organizations "View support chat" button land on the
+  // dashboard with that org's support widget already open, instead of a
+  // bare dashboard — same join-and-switch, different destination. The
+  // widget itself lives on /dashboard now (a floating popup, not its own
+  // page — see SupportChatWidget.tsx), so this no longer points at
+  // /support directly.
   const redirectTo = String(formData.get("redirect_to") ?? "").trim();
-  redirect(redirectTo === "/support" ? "/support" : "/dashboard");
+  redirect(redirectTo === "/dashboard?openSupport=1" ? "/dashboard?openSupport=1" : "/dashboard");
 }
 
 // Switch which of your orgs you're viewing. Only ever meaningful for
