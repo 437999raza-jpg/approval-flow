@@ -1644,6 +1644,14 @@ doesn't delete the row.
 
 ## Deadlines, reminders & escalation (migration 0073)
 
+> **Status (2026-08-28): code is deployed, migration not yet run.**
+> Supabase has an active platform-wide incident (status.supabase.com —
+> "Increased response times for requests," API Gateway degraded) blocking
+> running 0073's SQL. Until it's applied, `deadline_days` doesn't exist
+> as a column yet, so the digest/escalation cron will no-op safely (no
+> step has a deadline it can read) rather than error. `CRON_SECRET` also
+> still needs to be set in Vercel. Remove this note once both are done.
+
 Another gap found comparing a real ApprovalMax export: their steps carry
 a **Deadline** (e.g. "4 days"), and — separately reported — some
 approvers just sit on bills for days with nothing prompting them.
