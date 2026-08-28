@@ -595,7 +595,15 @@ export default async function DashboardPage({
     filtered = filtered.filter((i) => i.amount !== null && i.amount <= max);
   }
 
-  const selected = selectedId ? filtered.find((i) => i.id === selectedId) : filtered[0];
+  // Deliberately looked up in the full org list (invoices), NOT filtered —
+  // the sidebar list narrows with the view tab/search/advanced filters, but
+  // the invoice you have OPEN shouldn't vanish (and 404) just because it no
+  // longer matches whatever's currently typed in the search box. A real
+  // 404 stays reserved for an id that genuinely isn't yours (wrong org,
+  // never existed, RLS-hidden) rather than one that's merely filtered out.
+  const selected = selectedId
+    ? (invoices ?? []).find((i) => i.id === selectedId)
+    : filtered[0];
   if (selectedId && !selected) notFound();
 
   // List display only: pin duplicate pairs/groups together at the very
