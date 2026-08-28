@@ -1,10 +1,13 @@
 import { NextResponse } from "next/server";
 import type { EmailOtpType } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
+import { ensureOrgForNewUser } from "@/lib/onboarding";
 
 // Companion to /auth/callback: handles the `token_hash` + `type` form of
 // email confirmation links (Supabase's documented pattern for OTP/magic-link
-// email templates), as opposed to the PKCE `?code=` form.
+// email templates), as opposed to the PKCE `?code=` form. Also where a
+// brand-new signup's "confirm your email" link lands (type=signup) —
+// verifying it both confirms the address and establishes the session.
 export async function GET(request: Request) {
   const { searchParams, origin } = new URL(request.url);
   const tokenHash = searchParams.get("token_hash");
@@ -13,11 +16,12 @@ export async function GET(request: Request) {
 
   if (tokenHash && type) {
     const supabase = createClient();
-    const { error } = await supabase.auth.verifyOtp({
+    const { data, error } = await supabase.auth.verifyOtp({
       type,
       token_hash: tokenHash,
     });
     if (!error) {
+      if (data.user) await ensureOrgForNewUser(supabase, data.user);
       return NextResponse.redirect(`${origin}${next}`);
     }
 
@@ -28,6 +32,7 @@ export async function GET(request: Request) {
       data: { user },
     } = await supabase.auth.getUser();
     if (user) {
+      await ensureOrgForNewUser(supabase, user);
       return NextResponse.redirect(`${origin}${next}`);
     }
   }

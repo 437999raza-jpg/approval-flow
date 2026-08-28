@@ -1156,23 +1156,52 @@ Find your `auth.users` id in Supabase → Authentication → Users, or via
 
 ## Authentication
 
-`/login` supports two methods:
+`/login` supports:
 
-1. **Magic link** (`signInWithOtp`) — the intended production flow. Uses
-   Supabase's **PKCE** flow by default (`@supabase/ssr`'s browser client sets
-   `flowType: "pkce"`), so the emailed link redirects to
-   `/auth/callback?code=...`, which exchanges the code for a session
-   server-side ([`src/app/auth/callback/route.ts`](src/app/auth/callback/route.ts)).
-2. **Email + password** (`signInWithPassword`) — added as a reliable
-   fallback for local testing. Set a password for a user via
-   `supabase.auth.admin.updateUserById(id, { password })` with the service
-   role key.
+1. **Sign in** — password (`signInWithPassword`), magic link
+   (`signInWithOtp`, the intended production fallback when a password is
+   forgotten — doubles as password reset since there's no separate reset
+   flow), or Google.
+2. **Sign up** (`signUp`) — self-serve: anyone can create an account.
+   Unlike everything else in this app (invite-only via
+   `organization_members`), a brand-new signup gets its **own new
+   organization**, as its admin — see
+   [`src/lib/onboarding.ts`](src/lib/onboarding.ts)'s `ensureOrgForNewUser`,
+   called from both `/auth/callback` and `/auth/confirm` right after a
+   session is established. Idempotent (checks for an existing membership
+   first), so it's safe to call on every auth completion, not just a
+   user's first — an existing invited user completing a magic-link sign-in
+   is a no-op.
+3. **Google** (`signInWithOAuth({ provider: "google" })`) — same
+   `?code=` PKCE exchange as magic link, so `/auth/callback` needed zero
+   provider-specific code. **Requires setup only you can do**: Google
+   isn't usable until you (a) create an OAuth Client in Google Cloud
+   Console (APIs & Services → Credentials → OAuth client ID → Web
+   application; authorized redirect URI is your Supabase project's
+   `https://<project-ref>.supabase.co/auth/v1/callback`) and (b) paste
+   that Client ID/Secret into Supabase → Authentication → Providers →
+   Google. Nothing to set in this app's own env vars — Supabase holds
+   those credentials itself. Until then, "Continue with Google" surfaces
+   Supabase's own error inline rather than silently failing.
+
+Uses Supabase's **PKCE** flow by default (`@supabase/ssr`'s browser
+client sets `flowType: "pkce"`), so both the magic-link email and the
+Google redirect land on `/auth/callback?code=...`, which exchanges the
+code for a session server-side
+([`src/app/auth/callback/route.ts`](src/app/auth/callback/route.ts)).
 
 There's also [`src/app/auth/confirm/route.ts`](src/app/auth/confirm/route.ts),
 which handles Supabase's alternate `token_hash` + `type` email-confirmation
 format (its documented pattern for customizing email templates, and also
-what `supabase.auth.admin.generateLink()` returns) — separate from the
-`?code=` PKCE flow that `/auth/callback` handles.
+what `supabase.auth.admin.generateLink()` returns, or a brand-new email/
+password signup's own confirmation link) — separate from the `?code=`
+PKCE flow that `/auth/callback` handles.
+
+**Email confirmation on signup** is a Supabase Auth setting (Authentication
+→ Settings → "Confirm email"), not app code — with it on (the default),
+`signUp()` returns no session and the login page shows a "confirm your
+email" state; with it off, `signUp()` returns a live session immediately
+and the new user skips straight to their brand-new org's dashboard.
 
 **Known gotcha (local dev):** Supabase's built-in email sending has a low
 rate limit (a handful of emails/hour) — you'll hit "email rate limit
