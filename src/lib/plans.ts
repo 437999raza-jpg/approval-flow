@@ -40,7 +40,12 @@ export const PLANS: Record<PlanId, Plan> = {
     priceUsd: 199,
     includedDocs: 400,
     overageRatePerDoc: 0.25,
-    blurb: "Multi-org portfolios — several client organizations at once.",
+    // Billing is strictly per-org (organizations.plan, one row each) —
+    // this is the highest single-org volume tier, not a multi-org bundle.
+    // A managing firm running several client orgs (e.g. ufirst) puts
+    // EACH one on its own plan; there's no discounted "manage N orgs for
+    // one price" tier yet (considered and deliberately deferred).
+    blurb: "High-volume single org — heavy monthly document flow.",
   },
 };
 
