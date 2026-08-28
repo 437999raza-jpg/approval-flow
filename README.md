@@ -1947,26 +1947,56 @@ anything links to the old URL shape.
 
 ## Billing & usage
 
-`/billing` — Flow's own usage billing: how many documents each client org
-has processed, at the org's per-document rate in USD (default **$0.15**,
-editable by admins).
+`/billing` — Flow's own billing: three fixed monthly plans
+([`src/lib/plans.ts`](src/lib/plans.ts)), not an admin-editable
+$/document rate (that model — `organizations.usage_rate_usd`,
+`saveUsageRate`, `UsageRateForm` — is gone; the column stays on the table,
+just unread now).
+
+| Plan | Price/mo | Docs included | Overage/doc |
+|---|---|---|---|
+| Starter | $49 | 50 | $0.45 |
+| Growth | $99 | 150 | $0.35 |
+| Scale | $199 | 400 | $0.25 |
+
+Priced against comparables actually researched: ApprovalMax's old flat
+tiers ($59.40/$95/$133.10/mo, before they too moved to usage-based
+pricing in Aug 2026) and Dext's per-user-bundle pricing (~$25–31/mo for 5
+users + 250 docs). The pitch: Flow combines what ApprovalMax (approval
+routing) and Dext (invoice OCR/extraction) do as two separate products
+into one, priced below buying both.
 
 - One `usage_events` row per document accepted into the pipeline: an
   inbound-email attachment (after the signature-image filter) or a manual
   upload. Recorded at **acceptance**, never at retry time, so a document
   that fails and gets re-queued still counts exactly once (migration 0061).
-- The Billing page shows the total documents processed, the suggested
-  charge (count × rate), a by-month rollup, and the recent documents list.
-  Any org member can view; only admins can change the rate.
-- The rate editor greys the **Save** button until the value actually
-  changes, then reads e.g. **"0.15 saved"** with the **saved-on date**
-  (`organizations.usage_rate_updated_at`, migration 0062).
-- **Stripe Checkout** ("Pay now") charges the suggested amount via Stripe's
-  hosted page (amount = documents × rate, USD — always USD, regardless of
-  the customer's own country). Requires `STRIPE_SECRET_KEY`; without it the
-  page shows "Stripe is not connected". Success/cancel redirect back to
+- `organizations.plan` (migration 0075, nullable — no plan chosen yet is a
+  valid state) + `plan_selected_at`. `selectPlan()` sets it — admin-only,
+  a plain `<form action>` (not a client-wrapped wrapper like the old rate
+  editor), so failures redirect back to `/billing?error=...` rather than
+  returning a value.
+- **"This month's charge" is plan price + overage for the current
+  calendar month** (`usage_events` since the 1st), not a lifetime running
+  total the way the old rate model was — a flat monthly plan fee doesn't
+  make sense charged against all-time usage. The "By month" table still
+  shows full history, each month priced at the *current* plan's rate
+  (there's no historical per-month plan tracking, same limitation the old
+  rate model already had — it only ever tracked the latest rate too).
+- **Stripe Checkout** ("Pay now") charges that amount via Stripe's hosted
+  page — one line item for the plan fee, a second for overage only when
+  there's overage that month (always USD, regardless of the customer's
+  own country). Requires `STRIPE_SECRET_KEY`; without it the page shows
+  "Stripe is not connected". Success/cancel redirect back to
   `/billing?payment=success|cancelled`. `NEXT_PUBLIC_APP_URL` sets the
-  redirect base (defaults to VERCEL_URL).
+  redirect base (defaults to VERCEL_URL). **Real production bug hit and
+  fixed**: the request sent `metadata: JSON.stringify({...})` as a single
+  form field — Stripe's form-encoded API needs bracket notation
+  (`metadata[organization_id]=...`) per key for object parameters, not a
+  JSON blob under a bare `metadata` field, and rejected the whole request
+  with a 400. `ensureStripeCustomer`'s own customer-creation call already
+  used the correct bracket form; only the checkout session had this bug.
+- **Recent documents is collapsible** (`CollapsibleSection`, collapsed by
+  default) — the list runs up to 50 entries.
 - **Stripe customer + Billing Portal (migration 0074).** Every org gets a
   persistent Stripe Customer (`organizations.stripe_customer_id`), created
   lazily on first "Pay now" or "Manage billing" click via a shared
