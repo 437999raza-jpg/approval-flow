@@ -2632,7 +2632,10 @@ export async function createUsageCheckout(): Promise<{ ok: boolean; url?: string
       "line_items[0][price_data][unit_amount]": String(amountCents),
       "line_items[0][price_data][product_data][name]": `${orgRow?.name ?? "Usage"} — document processing`,
       "line_items[0][price_data][product_data][description]": `${count} document${(count ?? 0) === 1 ? "" : "s"} × $${rate.toFixed(2)}`,
-      metadata: JSON.stringify({ organization_id: org.id }),
+      // Stripe's form-encoded API needs bracket notation for object
+      // params — a bare `metadata=<JSON string>` field is an invalid
+      // parameter (the actual cause of a 400 here), not a JSON blob.
+      "metadata[organization_id]": org.id,
     });
     const res = await fetch("https://api.stripe.com/v1/checkout/sessions", {
       method: "POST",
