@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getCurrentOrg } from "@/lib/current-org";
 import { SignOutButton } from "@/components/SignOutButton";
 import { SubmitButton } from "@/components/SubmitButton";
+import { ConfirmSubmitButton } from "@/components/ConfirmSubmitButton";
 import { runReport, type ReportConfig } from "@/lib/reports";
 import { buildInvoiceListReport } from "@/lib/invoice-list-report";
 import { getCachedMemberRoster } from "@/lib/org-cache";
@@ -13,6 +14,10 @@ import { getCachedMemberRoster } from "@/lib/org-cache";
 // Server actions
 // ---------------------------------------------------------------------
 
+// Same builder form creates a new report or, when a report_id is present,
+// updates the existing one in place — reported: the only way to fix a
+// mistake or tweak a filter used to be deleting the report and rebuilding
+// it from scratch.
 async function saveReport(orgId: string, formData: FormData) {
   "use server";
 
@@ -66,6 +71,18 @@ async function saveReport(orgId: string, formData: FormData) {
     },
   };
 
+  const reportId = String(formData.get("report_id") ?? "").trim() || null;
+
+  if (reportId) {
+    await supabase
+      .from("saved_reports")
+      .update({ name, config: config as unknown as Record<string, unknown> })
+      .eq("id", reportId)
+      .eq("organization_id", orgId);
+    revalidatePath("/reports");
+    redirect(`/reports?run=${reportId}`);
+  }
+
   const { data: created } = await supabase
     .from("saved_reports")
     .insert({
@@ -96,13 +113,58 @@ async function deleteReport(reportId: string) {
 }
 
 // ---------------------------------------------------------------------
+// Plain-English summary of a saved report's config — the card-grid
+// description text (see the ApprovalMax "Request reports" screen this
+// mirrors: each card names its own filters, e.g. "Status is On approval").
+// ---------------------------------------------------------------------
+
+const STATUS_LABELS: Record<string, string> = {
+  on_review: "On review",
+  on_approval: "On approval",
+  approved: "Approved",
+  cancelled: "Cancelled",
+  rejected: "Rejected",
+  on_hold: "On hold",
+};
+const GROUP_LABELS: Record<ReportConfig["groupBy"], string> = {
+  none: "",
+  month: "Month",
+  vendor: "Vendor",
+  status: "Status",
+  project: "Project",
+};
+
+function describeReportConfig(
+  config: ReportConfig,
+  projectNameById: Map<string, string>,
+  memberNameById: Map<string, string>
+): string[] {
+  const f = config.filters;
+  const lines: string[] = [];
+  if (f.status) lines.push(`Status is ${STATUS_LABELS[f.status] ?? f.status}`);
+  if (f.vendor) lines.push(`Vendor contains "${f.vendor}"`);
+  if (f.project_id) lines.push(`Customer is ${projectNameById.get(f.project_id) ?? "Unknown"}`);
+  if (f.waiting_for_user_id) {
+    lines.push(`Waiting for ${memberNameById.get(f.waiting_for_user_id) ?? "Team member"}`);
+  }
+  if (f.amount_over != null) lines.push(`Amount over ${f.amount_over}`);
+  if (f.amount_under != null) lines.push(`Amount under ${f.amount_under}`);
+  if (f.from || f.to) lines.push(`Date from ${f.from ?? "any"} to ${f.to ?? "any"}`);
+  if (config.groupBy !== "none") lines.push(`Grouped by ${GROUP_LABELS[config.groupBy]}`);
+  if (config.metric !== "count") {
+    lines.push(`Metric: ${config.metric === "amount" ? "Total amount" : "Total tax"}`);
+  }
+  return lines.length > 0 ? lines : ["All invoices — no filters"];
+}
+
+// ---------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------
 
 export default async function ReportsPage({
   searchParams,
 }: {
-  searchParams: { run?: string };
+  searchParams: { run?: string; edit?: string };
 }) {
   const supabase = createClient();
 
@@ -144,8 +206,13 @@ export default async function ReportsPage({
   const memberOptions = memberUserIds
     .map((id) => ({ id, label: memberNameById.get(id) ?? "Team member" }))
     .sort((a, b) => a.label.localeCompare(b.label));
+  const projectNameById = new Map((projects ?? []).map((p) => [p.id, p.name]));
 
-  // Run the requested report (if any).
+  // Run the requested report (if any) — RLS on `invoices` already scopes
+  // every query below to what the caller can see (admins see everything;
+  // a "user" role member only their workflow-covered projects), the same
+  // way every other invoice query in this app is scoped. No extra
+  // filtering needed here for that.
   const runningReport = searchParams.run
     ? (reports ?? []).find((r) => r.id === searchParams.run)
     : undefined;
@@ -162,6 +229,7 @@ export default async function ReportsPage({
   const listRows = runningFilters
     ? await buildInvoiceListReport(supabase, org.id, runningFilters)
     : null;
+  const listIds = (listRows ?? []).map((r) => r.id);
   const exportQs = (f: typeof runningFilters) => {
     if (!f) return "";
     const params = new URLSearchParams();
@@ -176,6 +244,17 @@ export default async function ReportsPage({
     const qs = params.toString();
     return qs ? `?${qs}` : "";
   };
+  const idsQs = listIds.length > 0 ? `?ids=${listIds.join(",")}` : "";
+
+  // Editing an existing report loads its saved config into the builder
+  // form below instead of starting blank.
+  const editingReport = searchParams.edit
+    ? (reports ?? []).find((r) => r.id === searchParams.edit)
+    : undefined;
+  const editingConfig = editingReport
+    ? (editingReport.config as unknown as ReportConfig)
+    : null;
+  const ef = editingConfig?.filters;
 
   const fmtNum = (n: number) =>
     n.toLocaleString(undefined, { maximumFractionDigits: 2 });
@@ -238,22 +317,37 @@ export default async function ReportsPage({
 
           {/* Builder */}
           <form
+            key={editingReport?.id ?? "new"}
             action={saveReport.bind(null, org.id)}
             className="mt-4 rounded-lg border border-slate-200 bg-white p-4"
           >
+            {editingReport && (
+              <input type="hidden" name="report_id" value={editingReport.id} />
+            )}
+            {editingReport && (
+              <div className="mb-3 flex items-center justify-between rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                <span>
+                  Editing <strong>{editingReport.name}</strong>
+                </span>
+                <Link href="/reports" className="font-medium hover:underline">
+                  Cancel, start a new report
+                </Link>
+              </div>
+            )}
             <div className="flex flex-wrap items-end gap-3">
               <div className="min-w-52 flex-1">
                 <span className={labelCls}>Report name</span>
                 <input
                   name="name"
                   required
+                  defaultValue={editingReport?.name ?? ""}
                   placeholder="e.g. Approved invoices by vendor"
                   className={`${inputCls} w-full`}
                 />
               </div>
               <div>
                 <span className={labelCls}>Metric</span>
-                <select name="metric" defaultValue="count" className={inputCls}>
+                <select name="metric" defaultValue={editingConfig?.metric ?? "count"} className={inputCls}>
                   <option value="count">Count</option>
                   <option value="amount">Total amount</option>
                   <option value="tax">Total tax</option>
@@ -261,7 +355,7 @@ export default async function ReportsPage({
               </div>
               <div>
                 <span className={labelCls}>Group by</span>
-                <select name="group_by" defaultValue="none" className={inputCls}>
+                <select name="group_by" defaultValue={editingConfig?.groupBy ?? "none"} className={inputCls}>
                   <option value="none">No grouping</option>
                   <option value="month">Month</option>
                   <option value="vendor">Vendor</option>
@@ -277,7 +371,7 @@ export default async function ReportsPage({
             <div className="mt-1.5 grid grid-cols-2 gap-x-3 gap-y-2 md:grid-cols-4">
               <div>
                 <span className={labelCls}>Status</span>
-                <select name="f_status" defaultValue="" className={`${inputCls} w-full`}>
+                <select name="f_status" defaultValue={ef?.status ?? ""} className={`${inputCls} w-full`}>
                   <option value="">Any</option>
                   <option value="on_review">On review</option>
                   <option value="on_approval">On approval</option>
@@ -289,11 +383,16 @@ export default async function ReportsPage({
               </div>
               <div>
                 <span className={labelCls}>Vendor contains</span>
-                <input name="f_vendor" placeholder="e.g. Acme" className={`${inputCls} w-full`} />
+                <input
+                  name="f_vendor"
+                  defaultValue={ef?.vendor ?? ""}
+                  placeholder="e.g. Acme"
+                  className={`${inputCls} w-full`}
+                />
               </div>
               <div>
                 <span className={labelCls}>Project</span>
-                <select name="f_project" defaultValue="" className={`${inputCls} w-full`}>
+                <select name="f_project" defaultValue={ef?.project_id ?? ""} className={`${inputCls} w-full`}>
                   <option value="">Any</option>
                   {(projects ?? []).map((p) => (
                     <option key={p.id} value={p.id}>
@@ -304,7 +403,11 @@ export default async function ReportsPage({
               </div>
               <div>
                 <span className={labelCls}>Waiting for</span>
-                <select name="f_waiting_for" defaultValue="" className={`${inputCls} w-full`}>
+                <select
+                  name="f_waiting_for"
+                  defaultValue={ef?.waiting_for_user_id ?? ""}
+                  className={`${inputCls} w-full`}
+                >
                   <option value="">Any</option>
                   {memberOptions.map((m) => (
                     <option key={m.id} value={m.id}>
@@ -315,52 +418,94 @@ export default async function ReportsPage({
               </div>
               <div>
                 <span className={labelCls}>Amount over</span>
-                <input name="f_amount_over" type="number" step="0.01" placeholder="e.g. 500" className={`${inputCls} w-full`} />
+                <input
+                  name="f_amount_over"
+                  type="number"
+                  step="0.01"
+                  defaultValue={ef?.amount_over ?? ""}
+                  placeholder="e.g. 500"
+                  className={`${inputCls} w-full`}
+                />
               </div>
               <div>
                 <span className={labelCls}>Amount under</span>
-                <input name="f_amount_under" type="number" step="0.01" placeholder="e.g. 5000" className={`${inputCls} w-full`} />
+                <input
+                  name="f_amount_under"
+                  type="number"
+                  step="0.01"
+                  defaultValue={ef?.amount_under ?? ""}
+                  placeholder="e.g. 5000"
+                  className={`${inputCls} w-full`}
+                />
               </div>
               <div>
                 <span className={labelCls}>From date</span>
-                <input name="f_from" type="date" className={`${inputCls} w-full`} />
+                <input name="f_from" type="date" defaultValue={ef?.from ?? ""} className={`${inputCls} w-full`} />
               </div>
               <div>
                 <span className={labelCls}>To date</span>
-                <input name="f_to" type="date" className={`${inputCls} w-full`} />
+                <input name="f_to" type="date" defaultValue={ef?.to ?? ""} className={`${inputCls} w-full`} />
               </div>
             </div>
 
             <SubmitButton className="mt-4 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700">
-              Save & run report
+              {editingReport ? "Save changes" : "Save & run report"}
             </SubmitButton>
           </form>
 
-          {/* Saved reports */}
-          <div className="mt-6 flex flex-wrap gap-2">
-            {(reports ?? []).map((r) => (
-              <div
-                key={r.id}
-                className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2"
-              >
-                <Link
-                  href={`/reports?run=${r.id}`}
-                  className="text-sm font-medium text-blue-600 hover:underline"
-                >
-                  {r.name}
-                </Link>
-                <form action={deleteReport.bind(null, r.id)}>
-                  <SubmitButton className="text-xs text-red-500 hover:underline">
-                    Delete
-                  </SubmitButton>
-                </form>
-              </div>
-            ))}
-            {(reports ?? []).length === 0 && (
-              <p className="text-sm text-slate-400">
-                No saved reports yet — build one above.
-              </p>
-            )}
+          {/* Saved reports — card grid, each naming its own filters, e.g.
+              "Status is On approval" (mirrors ApprovalMax's own "Request
+              reports" screen). Click the card to run it. */}
+          <div className="mt-6">
+            <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">
+              Saved reports
+            </div>
+            <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {(reports ?? []).map((r) => {
+                const cfg = r.config as unknown as ReportConfig;
+                const lines = describeReportConfig(cfg, projectNameById, memberNameById);
+                const active = runningReport?.id === r.id;
+                return (
+                  <div
+                    key={r.id}
+                    className={`flex flex-col rounded-lg border bg-white p-4 ${
+                      active ? "border-blue-400 ring-1 ring-blue-100" : "border-slate-200"
+                    }`}
+                  >
+                    <Link href={`/reports?run=${r.id}`} className="flex-1">
+                      <div className="text-sm font-semibold text-slate-800 hover:text-blue-600">
+                        {r.name}
+                      </div>
+                      <ul className="mt-1.5 space-y-0.5 text-xs text-slate-500">
+                        {lines.map((line, i) => (
+                          <li key={i}>{line}</li>
+                        ))}
+                      </ul>
+                    </Link>
+                    <div className="mt-3 flex items-center gap-3 border-t border-slate-100 pt-2">
+                      <Link
+                        href={`/reports?edit=${r.id}`}
+                        className="text-xs font-medium text-slate-500 hover:text-slate-700 hover:underline"
+                      >
+                        Edit
+                      </Link>
+                      <ConfirmSubmitButton
+                        action={deleteReport.bind(null, r.id)}
+                        confirmMessage={`Delete the report "${r.name}"? This can't be undone.`}
+                        className="text-xs text-red-500 hover:underline"
+                      >
+                        Delete
+                      </ConfirmSubmitButton>
+                    </div>
+                  </div>
+                );
+              })}
+              {(reports ?? []).length === 0 && (
+                <p className="text-sm text-slate-400">
+                  No saved reports yet — build one above.
+                </p>
+              )}
+            </div>
           </div>
 
           {/* Results */}
@@ -432,12 +577,12 @@ export default async function ReportsPage({
           )}
 
           {/* Invoice list — one row per matching invoice, sorted by
-              customer then supplier, with a download button — the
-              ApprovalMax-style "Request reports" list rather than the
-              grouped summary above. */}
+              customer then supplier, with downloads — the ApprovalMax-
+              style "Request reports" list rather than the grouped summary
+              above. */}
           {runningReport && listRows && (
             <div className="mt-6 rounded-lg border border-slate-200 bg-white">
-              <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-3">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-4 py-3">
                 <div>
                   <h2 className="text-base font-semibold">Invoice list</h2>
                   <p className="text-xs text-slate-400">
@@ -445,12 +590,28 @@ export default async function ReportsPage({
                     sorted by customer, then supplier
                   </p>
                 </div>
-                <a
-                  href={`/api/reports/export${exportQs(runningFilters)}`}
-                  className="flex-none rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
-                >
-                  Download CSV
-                </a>
+                {listRows.length > 0 && (
+                  <div className="flex flex-none flex-wrap gap-2">
+                    <a
+                      href={`/api/reports/export${exportQs(runningFilters)}`}
+                      className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+                    >
+                      Download CSV
+                    </a>
+                    <a
+                      href={`/api/invoices/batch-export${idsQs}`}
+                      className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+                    >
+                      Download invoices (PDF)
+                    </a>
+                    <a
+                      href={`/api/reports/audit-export${idsQs}`}
+                      className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+                    >
+                      Download audit report + invoices (PDF)
+                    </a>
+                  </div>
+                )}
               </div>
               {listRows.length === 0 ? (
                 <p className="px-4 py-6 text-sm text-slate-400">
