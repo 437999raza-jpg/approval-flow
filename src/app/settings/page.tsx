@@ -296,6 +296,10 @@ export default async function SettingsPage({
   }
 
   const isAdmin = org.role === "admin";
+  // Plain "user" members only ever see their own profile here — Integrations/
+  // Billing/Members/Projects are admin-and-auditor territory (auditor keeps
+  // its existing full-app read-only visibility; this only narrows "user").
+  const showOrgSettings = org.role !== "user";
 
   // QBO connection (RLS: admins only — everyone else sees nothing).
   const { data: qboConnection } = await supabase
@@ -527,6 +531,8 @@ export default async function SettingsPage({
             </div>
           </section>
 
+          {showOrgSettings && (
+          <>
           {/* Integrations */}
           <section className="mt-8">
             <h2 className="text-lg font-semibold">Integrations</h2>
@@ -1169,6 +1175,8 @@ export default async function SettingsPage({
               )}
             </ul>
           </section>
+          </>
+          )}
         </div>
       </main>
     </div>

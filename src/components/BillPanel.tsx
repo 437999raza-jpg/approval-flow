@@ -143,6 +143,8 @@ export function BillPanel({
   backToReview,
   canReview,
   readOnly,
+  classReadOnly,
+  canComment,
   supplierDefaults,
   saveSupplierDefaults,
   auditTimeline,
@@ -199,7 +201,19 @@ export function BillPanel({
   ) => Promise<{ ok: boolean; error?: string }>;
   backToReview: () => Promise<void>;
   canReview: boolean;
+  // Blanket lock: category/description/project/tax/amount, bill header
+  // fields, add/delete/clone lines, re-extract, reorder pages. A plain
+  // "user" member gets this true unconditionally — their only two editable
+  // fields (class, the accounting note) are gated separately below/via
+  // instructions.readOnly, since those stay open until THEY approve.
   readOnly: boolean;
+  // Independent of readOnly — a plain user can toggle CON/CO/E right up
+  // until they approve this invoice, even though everything else above is
+  // already locked for them.
+  classReadOnly: boolean;
+  // Independent of readOnly — Discussion stays open for a plain user even
+  // after everything else (including class/notes, post-approval) locks.
+  canComment: boolean;
   supplierDefaults: SupplierDefaultsValues;
   saveSupplierDefaults: (formData: FormData) => Promise<void>;
   auditTimeline: AuditTimelineEntry[];
@@ -828,6 +842,7 @@ export function BillPanel({
                 deleteLineItem={deleteLineItem}
                 cloneLineItem={cloneLineItem}
                 readOnly={readOnly}
+                classReadOnly={classReadOnly}
                 selected={selectedLineIds.has(item.id)}
                 onToggleSelected={() => toggleLineSelected(item.id)}
                 onAmountChange={(v) =>
@@ -863,6 +878,7 @@ export function BillPanel({
                 deleteLineItem={undefined}
                 cloneLineItem={undefined}
                 readOnly={false}
+                classReadOnly={false}
                 onCancel={() => setAddingLine(false)}
               />
             )}
@@ -1085,7 +1101,7 @@ export function BillPanel({
                 ))
               )}
             </div>
-            {!readOnly && (
+            {canComment && (
               <form action={addComment} className="mt-3 flex gap-2">
                 <MentionComposer
                   members={members}
@@ -1158,6 +1174,7 @@ function LineItemRow({
   deleteLineItem,
   cloneLineItem,
   readOnly,
+  classReadOnly,
   onCancel,
   selected,
   onToggleSelected,
@@ -1187,6 +1204,8 @@ function LineItemRow({
   deleteLineItem?: (lineItemId: string) => Promise<void>;
   cloneLineItem?: (lineItemId: string) => Promise<void>;
   readOnly: boolean;
+  // Independent of readOnly — see BillPanel's own classReadOnly for why.
+  classReadOnly: boolean;
   // The blank add-line row's "cancel" button — dismisses it without
   // saving. Only meaningful when itemId === "new".
   onCancel?: () => void;
@@ -1229,7 +1248,7 @@ function LineItemRow({
   // has re-rendered, so the DOM field must already hold the new value or
   // the old class gets saved.
   const commitClass = (value: string) => {
-    if (readOnly) return;
+    if (classReadOnly) return;
     setClassValue(value);
     if (classHiddenRef.current) classHiddenRef.current.value = value;
     if (!isNew) formRef.current?.requestSubmit();
@@ -1371,10 +1390,10 @@ function LineItemRow({
       <div className="flex h-full items-end gap-1 pb-1.5">
         <button
           type="button"
-          disabled={readOnly}
+          disabled={classReadOnly}
           title="Contract — original contract value (CON)"
           onClick={() => commitClass(CON_CLASS_NAME)}
-          className={`flex-none rounded border px-1 py-0.5 text-[10px] font-semibold leading-none transition-colors ${
+          className={`flex-none rounded border px-1.5 py-1.5 text-[10px] font-semibold leading-4 transition-colors ${
             classValue === CON_CLASS_NAME
               ? "border-blue-600 bg-blue-600 text-white"
               : "border-slate-300 text-slate-500 hover:border-blue-400 hover:text-blue-600"
@@ -1384,10 +1403,10 @@ function LineItemRow({
         </button>
         <button
           type="button"
-          disabled={readOnly}
+          disabled={classReadOnly}
           title="Change Order — extra work beyond contract (CO)"
           onClick={() => commitClass(CO_CLASS_NAME)}
-          className={`flex-none rounded border px-1 py-0.5 text-[10px] font-semibold leading-none transition-colors ${
+          className={`flex-none rounded border px-1.5 py-1.5 text-[10px] font-semibold leading-4 transition-colors ${
             classValue === CO_CLASS_NAME
               ? "border-amber-500 bg-amber-500 text-white"
               : "border-slate-300 text-slate-500 hover:border-amber-400 hover:text-amber-600"
@@ -1397,10 +1416,10 @@ function LineItemRow({
         </button>
         <button
           type="button"
-          disabled={readOnly}
+          disabled={classReadOnly}
           title="Extras — work outside the contract and change orders (E)"
           onClick={() => commitClass(EXTRAS_CLASS_NAME)}
-          className={`flex-none rounded border px-1 py-0.5 text-[10px] font-semibold leading-none transition-colors ${
+          className={`flex-none rounded border px-1.5 py-1.5 text-[10px] font-semibold leading-4 transition-colors ${
             classValue === EXTRAS_CLASS_NAME
               ? "border-emerald-600 bg-emerald-600 text-white"
               : "border-slate-300 text-slate-500 hover:border-emerald-400 hover:text-emerald-600"
@@ -1422,7 +1441,7 @@ function LineItemRow({
             defaultValue={defaults.class}
             placeholder={isNew ? "Search class…" : undefined}
             className={cellCls}
-            disabled={readOnly}
+            disabled={classReadOnly}
             fillCell
             onCommit={commitClass}
           />
@@ -1548,6 +1567,13 @@ function LineItemRow({
           className="h-3.5 w-3.5 rounded border-slate-300"
           {...checkboxSave}
         />
+        {/* A disabled checkbox and an enabled-but-unchecked one both submit
+            nothing under "linked" — indistinguishable to saveLineItem via
+            formData alone. This always-submitted marker tells it whether
+            the checkbox was actually editable this time, so a class-only
+            save (readOnly here, classReadOnly false) doesn't silently
+            uncheck it. See the matching check in saveLineItem. */}
+        <input type="hidden" form={formId} name="linked_editable" value={readOnly ? "" : "1"} />
       </div>
       {isNew ? (
         !readOnly && (

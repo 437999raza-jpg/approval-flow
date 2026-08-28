@@ -481,6 +481,9 @@ export default async function WorkflowsPage() {
   }
 
   const isAdmin = org.role === "admin";
+  // Plain "user" members work invoices, not the workflow that routes them —
+  // no read-only mirror here, unlike auditor's full-app visibility.
+  if (org.role === "user") redirect("/dashboard");
 
   const { data: pendingImpacts } = isAdmin
     ? await supabase

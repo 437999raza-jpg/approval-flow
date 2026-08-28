@@ -83,6 +83,8 @@ export interface BillData {
   backToReview: () => Promise<void>;
   canReview: boolean;
   readOnly: boolean;
+  classReadOnly: boolean;
+  canComment: boolean;
   supplierDefaults: SupplierDefaultsValues;
   saveSupplierDefaults: (formData: FormData) => Promise<void>;
   auditTimeline: AuditTimelineEntry[];
@@ -418,6 +420,8 @@ export function DetailSplit({
             backToReview={bill.backToReview}
             canReview={bill.canReview}
             readOnly={bill.readOnly}
+            classReadOnly={bill.classReadOnly}
+            canComment={bill.canComment}
             supplierDefaults={bill.supplierDefaults}
             saveSupplierDefaults={bill.saveSupplierDefaults}
             auditTimeline={bill.auditTimeline}

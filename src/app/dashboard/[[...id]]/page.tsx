@@ -194,7 +194,13 @@ export default async function DashboardPage({
   // at the data level too).
   const canReviewNow = org.role === "admin";
   const canSeeReviewQueue = org.role === "admin" || isAuditor;
-  const canEdit = !isAuditor;
+  // Plain "user" members don't edit the bill at all (category, description,
+  // project, tax, amount, header fields, add/delete/clone lines, document
+  // upload, re-extract, reorder pages) — only admins do. Their two
+  // exceptions (class, the accounting note) are gated separately below
+  // (classReadOnly/instructions.readOnly), since those stay editable right
+  // up until THEY approve, unlike everything gated by this flag.
+  const canEdit = org.role === "admin";
   const view: View = VIEWS.includes(searchParams.view as View)
     ? (searchParams.view as View)
     : "all";
@@ -953,6 +959,24 @@ export default async function DashboardPage({
       selected.status === "on_hold") &&
     (selected.submitted_by === user.id || canReviewNow);
 
+  // A plain "user" member's only two editable bill fields (class, the
+  // accounting note) lock the moment THEY approve this invoice — everything
+  // else is already locked for them unconditionally via canEdit above.
+  // Checked against invoice_approvals directly rather than canDecide/status,
+  // so the lock survives the invoice moving on to a later step or a
+  // different approver (canDecide naturally goes false then too, but this
+  // stays true for THIS user regardless of where the invoice is now).
+  const hasCurrentUserApprovedSelected =
+    selected != null &&
+    approvalsForSelected.some(
+      (a) => a.approver_id === user.id && a.decision === "approved"
+    );
+  const lockedForPlainUser = org.role === "user" && hasCurrentUserApprovedSelected;
+  const classReadOnly = isAuditor || lockedForPlainUser;
+  // Discussion stays open for a plain user even once everything else locks
+  // — auditors are the only role that never gets to comment.
+  const canComment = !isAuditor;
+
   const navItems: { key: View; label: string }[] = [
     { key: "all", label: "All invoices" },
     ...(canSeeReviewQueue
@@ -1078,26 +1102,28 @@ export default async function DashboardPage({
               </span>
             </Link>
           )}
-          <Link
-            href="/workflows"
-            className="flex items-center gap-2 rounded-md px-3 py-2 text-sm text-slate-600 hover:bg-slate-100"
-          >
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
+          {org.role !== "user" && (
+            <Link
+              href="/workflows"
+              className="flex items-center gap-2 rounded-md px-3 py-2 text-sm text-slate-600 hover:bg-slate-100"
             >
-              <circle cx="6" cy="6" r="3" />
-              <circle cx="6" cy="18" r="3" />
-              <path d="M20 4L8.12 15.88M14.47 14.48L20 20M8.12 8.12L12 12" />
-            </svg>
-            Workflows
-          </Link>
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <circle cx="6" cy="6" r="3" />
+                <circle cx="6" cy="18" r="3" />
+                <path d="M20 4L8.12 15.88M14.47 14.48L20 20M8.12 8.12L12 12" />
+              </svg>
+              Workflows
+            </Link>
+          )}
           <Link
             href="/reports"
             className="flex items-center gap-2 rounded-md px-3 py-2 text-sm text-slate-600 hover:bg-slate-100"
@@ -1117,25 +1143,27 @@ export default async function DashboardPage({
             </svg>
             Reports
           </Link>
-          <Link
-            href="/billing"
-            className="flex items-center gap-2 rounded-md px-3 py-2 text-sm text-slate-600 hover:bg-slate-100"
-          >
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
+          {org.role !== "user" && (
+            <Link
+              href="/billing"
+              className="flex items-center gap-2 rounded-md px-3 py-2 text-sm text-slate-600 hover:bg-slate-100"
             >
-              <rect x="2" y="5" width="20" height="14" rx="2" />
-              <path d="M2 10h20" />
-            </svg>
-            Billing
-          </Link>
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <rect x="2" y="5" width="20" height="14" rx="2" />
+                <path d="M2 10h20" />
+              </svg>
+              Billing
+            </Link>
+          )}
           <Link
             href="/settings"
             className="flex items-center gap-2 rounded-md px-3 py-2 text-sm text-slate-600 hover:bg-slate-100"
@@ -1313,6 +1341,8 @@ export default async function DashboardPage({
                   backToReview: backToReview.bind(null, selected.id),
                   canReview: canReviewNow,
                   readOnly: !canEdit,
+                  classReadOnly,
+                  canComment,
                   supplierDefaults: supplierDefaultsForSelected,
                   qboVendorId: qboVendorIdForSelected,
                   saveSupplierDefaults: saveSupplierDefaults.bind(
@@ -1365,7 +1395,7 @@ export default async function DashboardPage({
                   },
                   instructions: {
                     entries: instructionEntriesForSelected,
-                    readOnly: isAuditor,
+                    readOnly: isAuditor || lockedForPlainUser,
                     saveInstructions: saveAccountingInstructions.bind(
                       null,
                       selected.id

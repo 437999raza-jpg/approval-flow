@@ -26,6 +26,8 @@ export default async function BillingPage({
   const org = await getCurrentOrg(supabase);
   if (!org) redirect("/dashboard");
   const isAdmin = org.role === "admin";
+  // Plain "user" members don't see cost/usage — admin-and-auditor territory.
+  if (org.role === "user") redirect("/dashboard");
   const stripeConfigured = Boolean(process.env.STRIPE_SECRET_KEY);
 
   const [{ data: events }, { data: orgRow }] = await Promise.all([

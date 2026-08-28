@@ -1475,9 +1475,37 @@ export async function saveLineItem(
       .eq("id", lineItemId)
       .single();
 
+    // Partial update: a role restricted to just the class toggle (see
+    // classReadOnly in BillPanel/dashboard page) submits this SAME hidden
+    // form with every other field disabled — a disabled <input>/<textarea>
+    // is dropped from FormData entirely by the browser, so blindly writing
+    // `values` (built from formData.get, defaulting missing fields to
+    // null/false) would silently wipe description/amount/linked on every
+    // class-only save. Only touch a column whose field actually arrived —
+    // untouched fields keep their current DB value. category/project_id/
+    // tax_rate/qbo_tax_code_id/class all have their own always-submitting
+    // hidden mirror (Combobox pairs, or the class toggle's own hidden
+    // input) so they're unaffected either way; description/amount/linked
+    // are the ones a disabled control can actually make vanish.
+    const patch: Partial<
+      Database["public"]["Tables"]["invoice_line_items"]["Update"]
+    > = {};
+    if (formData.has("category")) patch.category = values.category;
+    if (formData.has("description")) patch.description = values.description;
+    if (formData.has("tax_rate")) patch.tax_rate = values.tax_rate;
+    if (formData.has("qbo_tax_code_id")) patch.qbo_tax_code_id = values.qbo_tax_code_id;
+    if (formData.has("class")) patch.class = values.class;
+    if (formData.has("project_id")) patch.project_id = values.project_id;
+    if (formData.has("amount")) patch.amount = values.amount;
+    // linked is a checkbox — unchecked-but-enabled and disabled-and-omitted
+    // are indistinguishable via formData.has alone, so its row carries an
+    // always-submitted linked_editable marker (see BillPanel) to tell them
+    // apart.
+    if (formData.get("linked_editable") === "1") patch.linked = values.linked;
+
     await supabase
       .from("invoice_line_items")
-      .update(values)
+      .update(patch)
       .eq("id", lineItemId);
 
     if (before) {
@@ -1491,9 +1519,14 @@ export async function saveLineItem(
         "qbo_tax_code_id",
         "amount",
       ] as const;
+      // Only diff fields actually present in `patch` — one that was
+      // dropped (a disabled field, e.g. description on a class-only save)
+      // was never touched, so comparing it against `values`' parsed-as-null
+      // fallback would misreport it as "changed to null".
       for (const f of fields) {
+        if (!(f in patch)) continue;
         const from = before[f] ?? null;
-        const to = values[f] ?? null;
+        const to = patch[f] ?? null;
         if (String(from) !== String(to)) changes[f] = { from, to };
       }
       if (Object.keys(changes).length > 0) {
