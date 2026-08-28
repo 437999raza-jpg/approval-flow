@@ -1933,13 +1933,26 @@ editable by admins).
 
 ## Support chat (migration 0071)
 
-`/support` — one continuous chat thread per organization. Any member can
-read and post (RLS: `is_org_member`, no role restriction — reaching
-support shouldn't need admin permissions), reached via "Chat with
-Support" in the sidebar, next to Settings. Polls every 4s while the page
-is open (`SupportChatPoller`) so a reply shows up without a manual
-reload — no websocket/Realtime subscription, same "poll while mounted"
-shape as `ExtractionPoller`, just simpler (nothing to call, no backoff).
+One continuous chat thread per organization — any member can read and
+post (RLS: `is_org_member`, no role restriction — reaching support
+shouldn't need admin permissions). **A floating popup
+([`SupportChatWidget.tsx`](src/components/SupportChatWidget.tsx)), not a
+full-screen page** — the original `/support` route took over the whole
+screen, leaving nothing on screen for a customer to point at when
+describing an error, so it's now a corner bubble + panel opened from
+"Chat with Support" in the dashboard sidebar
+(`SupportChatNavButton.tsx`) or its own always-visible bubble, both
+driven by shared state (`SupportChatContext.tsx`, same
+provider/context shape as `ToastContext`/`DocumentFocusContext`).
+`/support` itself is now just a redirect to `/dashboard`, kept only so
+an old bookmark doesn't 404.
+
+Backed by a dedicated JSON endpoint,
+[`/api/support/messages`](src/app/api/support/messages/route.ts)
+(GET list, POST send), which the widget polls every 4s while open —
+**not** `router.refresh()` (the original page's approach), which would
+re-fetch the entire host page's data (the dashboard's full invoice list,
+most often) on every poll tick just to check for a new chat message.
 Messages from a platform admin (`isPlatformAdmin`, checked against the
 author's email via the admin API) get a small green "Support" badge so a
 customer can tell the vendor's reply from their own teammates' messages
@@ -1950,10 +1963,10 @@ members do — by actually being an `organization_members` row on that
 org, not a separate cross-org bypass. `/admin/organizations` shows a
 message count + last-message date per org and a "Support chat" button
 (reuses `joinOrganizationAction`'s existing join-and-switch-active-org
-flow, just redirecting to `/support` instead of `/dashboard` — a new
-`redirect_to` field on that same action) so checking in on every
-tenant's support activity doesn't require switching into each one by
-hand first.
+flow, redirecting to `/dashboard?openSupport=1` — a `redirect_to` field
+on that same action — instead of a bare `/dashboard`) so checking in on
+every tenant's support activity doesn't require switching into each one
+by hand first, then hunting for the chat bubble.
 
 ---
 
