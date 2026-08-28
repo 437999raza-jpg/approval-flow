@@ -42,6 +42,12 @@ export interface BillAdminData {
   reassignDefaultValue: string;
   memberOptions: { id: string; label: string }[];
   reassign: (formData: FormData) => Promise<void>;
+  // Send the invoice straight to a specific workflow stage — works
+  // regardless of current status (rejected, approved, on_review, …), unlike
+  // overrideStatus's on_approval case which always restarts at step 1.
+  stageOptions: { value: string; label: string }[];
+  stageDefaultValue: string;
+  setStage: (formData: FormData) => Promise<void>;
   statusOptions: { value: string; label: string }[];
   overrideStatus: (formData: FormData) => Promise<void>;
   deleteInvoice: () => Promise<void>;
@@ -462,6 +468,18 @@ export function BillPanel({
                         })),
                       ]}
                       action={admin.reassign}
+                    />
+                  </div>
+                )}
+                {admin.stageOptions.length > 1 && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-slate-500">Stage</span>
+                    <InlineSelectSave
+                      key={`stage-${invoice.id}`}
+                      name="stage"
+                      defaultValue={admin.stageDefaultValue}
+                      options={admin.stageOptions}
+                      action={admin.setStage}
                     />
                   </div>
                 )}

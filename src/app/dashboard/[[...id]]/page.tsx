@@ -61,6 +61,7 @@ import {
   clearQboPublishDataAction,
   emailInvoicesAction,
   reassignApprover,
+  setInvoiceStage,
   overrideStatus,
   saveLineItem,
   deleteLineItem,
@@ -493,17 +494,51 @@ export default async function DashboardPage({
     invoice.workflow_id !== null &&
     holderOf(invoice).includes(user.id);
 
+  // A plain "user" only sees invoices for projects they're actually
+  // eligible-approver-on (matches the DB's is_eligible_approver() — ANY
+  // step of the invoice's workflow, not just the current one, unlike
+  // holderOf above) plus whatever they submitted themselves. Needed
+  // because getCachedInvoiceList fetches via the admin client for
+  // org-wide caching (RLS is per-user and can't be cached that way), so
+  // migration 0067's RLS policy never actually runs against this list —
+  // this mirrors it in JS instead. Reports/other RLS-bound queries are
+  // already covered by the migration alone.
+  const isEligibleApproverForInvoice = (invoice: Invoice): boolean => {
+    if (invoice.workflow_id === null) return false;
+    for (const step of allSteps ?? []) {
+      if (step.workflow_id !== invoice.workflow_id) continue;
+      const approvers = stepApproversByStepId.get(step.id) ?? [];
+      const conditions = approvers.flatMap(
+        (a) => conditionsByStepApproverId.get(a.id) ?? []
+      );
+      const effective = effectiveApproversForStep(
+        approvers,
+        conditions,
+        { vendor_name: invoice.vendor_name, project_id: invoice.project_id },
+        lineItemsByInvoiceForMatching.get(invoice.id) ?? []
+      );
+      if (effective.includes(user.id)) return true;
+    }
+    return false;
+  };
+  const visibleInvoices =
+    org.role === "user"
+      ? (invoices ?? []).filter(
+          (i) => i.submitted_by === user.id || isEligibleApproverForInvoice(i)
+        )
+      : (invoices ?? []);
+
   const counts = {
-    all: invoices?.length ?? 0,
-    review: invoices?.filter((i) => i.status === "on_review").length ?? 0,
-    mine: invoices?.filter(requiresMyApproval).length ?? 0,
-    ready: invoices?.filter((i) => i.status === "qbo_ready").length ?? 0,
-    created: invoices?.filter((i) => i.submitted_by === user.id).length ?? 0,
-    approved: invoices?.filter((i) => i.status === "approved").length ?? 0,
-    rejected: invoices?.filter((i) => i.status === "rejected").length ?? 0,
+    all: visibleInvoices.length,
+    review: visibleInvoices.filter((i) => i.status === "on_review").length,
+    mine: visibleInvoices.filter(requiresMyApproval).length,
+    ready: visibleInvoices.filter((i) => i.status === "qbo_ready").length,
+    created: visibleInvoices.filter((i) => i.submitted_by === user.id).length,
+    approved: visibleInvoices.filter((i) => i.status === "approved").length,
+    rejected: visibleInvoices.filter((i) => i.status === "rejected").length,
   };
 
-  let filtered = invoices ?? [];
+  let filtered = visibleInvoices;
   if (view === "review") filtered = filtered.filter((i) => i.status === "on_review");
   else if (view === "mine") filtered = filtered.filter(requiresMyApproval);
   else if (view === "ready") filtered = filtered.filter((i) => i.status === "qbo_ready");
@@ -603,14 +638,15 @@ export default async function DashboardPage({
     filtered = filtered.filter((i) => i.amount !== null && i.amount <= max);
   }
 
-  // Deliberately looked up in the full org list (invoices), NOT filtered —
-  // the sidebar list narrows with the view tab/search/advanced filters, but
-  // the invoice you have OPEN shouldn't vanish (and 404) just because it no
+  // Deliberately looked up in visibleInvoices, NOT filtered — the sidebar
+  // list narrows further with the view tab/search/advanced filters, but the
+  // invoice you have OPEN shouldn't vanish (and 404) just because it no
   // longer matches whatever's currently typed in the search box. A real
   // 404 stays reserved for an id that genuinely isn't yours (wrong org,
-  // never existed, RLS-hidden) rather than one that's merely filtered out.
+  // never existed, not one of your projects) rather than one that's merely
+  // filtered out of the current view.
   const selected = selectedId
-    ? (invoices ?? []).find((i) => i.id === selectedId)
+    ? visibleInvoices.find((i) => i.id === selectedId)
     : filtered[0];
   if (selectedId && !selected) notFound();
 
@@ -1380,6 +1416,14 @@ export default async function DashboardPage({
                     reassignDefaultValue: selected.step_override_approver_id ?? "",
                     memberOptions,
                     reassign: reassignApprover.bind(null, selected.id),
+                    stageOptions: [...stepsForSelected]
+                      .sort((a, b) => a.step_order - b.step_order)
+                      .map((s) => ({
+                        value: String(s.step_order),
+                        label: s.name ? `${s.step_order}. ${s.name}` : `Step ${s.step_order}`,
+                      })),
+                    stageDefaultValue: String(selected.current_step_order),
+                    setStage: setInvoiceStage.bind(null, selected.id),
                     statusOptions: STATUS_OPTIONS.map((s) => ({
                       value: s.id,
                       label: s.label,

@@ -1377,6 +1377,78 @@ export async function reassignApprover(invoiceId: string, formData: FormData) {
   revalidatePath("/dashboard", "layout");
 }
 
+// Admin-only: send the invoice to a specific workflow stage directly,
+// regardless of its current status — a rejected, already-approved, or
+// on_review invoice can all be moved straight to "on_approval" at whatever
+// step the admin picks. Unlike overrideStatus's on_approval case (which
+// always restarts at step 1), this resumes exactly where told to.
+// Clears invoice_approvals for that step and any AFTER it — a fresh
+// decision at the chosen stage onward — but leaves EARLIER steps' genuine
+// decisions on the record; reassigning to step 2 shouldn't erase that
+// step 1 was legitimately already approved.
+export async function setInvoiceStage(invoiceId: string, formData: FormData) {
+
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+  if (!(await canReview(supabase))) return;
+
+  const stage = Number(formData.get("stage"));
+  if (!Number.isInteger(stage) || stage < 1) return;
+
+  const { data: invoice } = await supabase
+    .from("invoices")
+    .select("id, organization_id, workflow_id, status, current_step_order")
+    .eq("id", invoiceId)
+    .single();
+  if (!invoice || !invoice.workflow_id) return;
+
+  // The stage must be a real step on THIS invoice's workflow — a bare
+  // number typed by a client can't be trusted otherwise.
+  const { data: validStep } = await supabase
+    .from("approval_workflow_steps")
+    .select("id")
+    .eq("workflow_id", invoice.workflow_id)
+    .eq("step_order", stage)
+    .maybeSingle();
+  if (!validStep) return;
+
+  await supabase
+    .from("invoice_approvals")
+    .delete()
+    .eq("invoice_id", invoiceId)
+    .gte("step_order", stage);
+
+  const { error: updateError } = await supabase
+    .from("invoices")
+    .update({
+      status: "on_approval",
+      current_step_order: stage,
+      step_override_approver_id: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", invoiceId);
+  if (updateError) throw updateError;
+
+  await supabase.from("audit_log").insert({
+    organization_id: invoice.organization_id,
+    invoice_id: invoiceId,
+    actor_id: user.id,
+    action: "invoice.stage_set",
+    metadata: {
+      from_status: invoice.status,
+      from_step: invoice.current_step_order,
+      to_step: stage,
+    },
+  });
+
+  revalidateTag(INVOICES_TAG);
+
+  revalidatePath("/dashboard", "layout");
+}
+
 // Admin-only: force the invoice to any status directly, bypassing the
 // normal step-by-step gate. Doesn't fabricate an invoice_approvals row for
 // whatever step got skipped — that would misrepresent who actually decided
@@ -1421,8 +1493,23 @@ export async function overrideStatus(invoiceId: string, formData: FormData) {
   if (newStatus !== "on_approval" && newStatus !== "on_hold") {
     update.step_override_approver_id = null;
   }
-  if (newStatus === "on_review") {
+  // Reported bug: reject an invoice, then override its status back to
+  // on_approval to restart it (e.g. the PM says it's actually fine) — it
+  // didn't restart at all. current_step_order was left wherever it was
+  // when rejected, AND the old rejected invoice_approvals row for that
+  // step stayed put, so decide()'s alreadyDecided check treated the
+  // approver as having already voted (rejected) and the step's stepper UI
+  // kept showing red. Only clearing on "on_review" missed the far more
+  // common "just re-open it" path. Skip the reset when coming FROM
+  // on_hold, though — that's just resuming the same in-progress step
+  // (Unhold), not restarting the workflow, and has no stale decision to
+  // clear anyway (holding never records one).
+  if (
+    newStatus === "on_review" ||
+    (newStatus === "on_approval" && invoice.status !== "on_hold")
+  ) {
     update.current_step_order = 1;
+    update.step_override_approver_id = null;
     await supabase.from("invoice_approvals").delete().eq("invoice_id", invoiceId);
   }
 
