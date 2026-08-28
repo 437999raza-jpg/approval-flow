@@ -321,6 +321,17 @@ export default async function DashboardPage({
   ]);
 
   const { memberUserIds, profileRows } = await getCachedMemberRoster(org.id);
+  // Roles aren't part of the cached roster (it's shared with pages that
+  // don't need them) — fetched separately here, just to know who's an
+  // admin for the @mention scoping below (admins are always mentionable,
+  // regardless of project).
+  const { data: memberRoleRows } = await supabase
+    .from("organization_members")
+    .select("user_id, role")
+    .eq("organization_id", org.id);
+  const adminUserIds = new Set(
+    (memberRoleRows ?? []).filter((m) => m.role === "admin").map((m) => m.user_id)
+  );
 
   const stepApproverIds = (allStepApprovers ?? []).map((a) => a.id);
   const { data: allStepConditions } =
@@ -495,17 +506,14 @@ export default async function DashboardPage({
     invoice.workflow_id !== null &&
     holderOf(invoice).includes(user.id);
 
-  // A plain "user" only sees invoices for projects they're actually
-  // eligible-approver-on (matches the DB's is_eligible_approver() — ANY
-  // step of the invoice's workflow, not just the current one, unlike
-  // holderOf above) plus whatever they submitted themselves. Needed
-  // because getCachedInvoiceList fetches via the admin client for
-  // org-wide caching (RLS is per-user and can't be cached that way), so
-  // migration 0067's RLS policy never actually runs against this list —
-  // this mirrors it in JS instead. Reports/other RLS-bound queries are
-  // already covered by the migration alone.
-  const isEligibleApproverForInvoice = (invoice: Invoice): boolean => {
-    if (invoice.workflow_id === null) return false;
+  // Every user id who'd end up an effective approver of SOME step on this
+  // invoice's workflow — ANY step, not just the current one (matches the
+  // DB's is_eligible_approver()). Shared by isEligibleApproverForInvoice
+  // below (visibility) and the @mention scoping further down (who's
+  // offered when someone types "@" in Discussion).
+  const eligibleApproverIdsForInvoice = (invoice: Invoice): string[] => {
+    if (invoice.workflow_id === null) return [];
+    const ids = new Set<string>();
     for (const step of allSteps ?? []) {
       if (step.workflow_id !== invoice.workflow_id) continue;
       const approvers = stepApproversByStepId.get(step.id) ?? [];
@@ -518,10 +526,22 @@ export default async function DashboardPage({
         { vendor_name: invoice.vendor_name, project_id: invoice.project_id },
         lineItemsByInvoiceForMatching.get(invoice.id) ?? []
       );
-      if (effective.includes(user.id)) return true;
+      for (const id of effective) ids.add(id);
     }
-    return false;
+    return [...ids];
   };
+
+  // A plain "user" only sees invoices for projects they're actually
+  // eligible-approver-on (matches the DB's is_eligible_approver() — ANY
+  // step of the invoice's workflow, not just the current one, unlike
+  // holderOf above) plus whatever they submitted themselves. Needed
+  // because getCachedInvoiceList fetches via the admin client for
+  // org-wide caching (RLS is per-user and can't be cached that way), so
+  // migration 0067's RLS policy never actually runs against this list —
+  // this mirrors it in JS instead. Reports/other RLS-bound queries are
+  // already covered by the migration alone.
+  const isEligibleApproverForInvoice = (invoice: Invoice): boolean =>
+    eligibleApproverIdsForInvoice(invoice).includes(user.id);
   const visibleInvoices =
     org.role === "user"
       ? (invoices ?? []).filter(
@@ -650,6 +670,23 @@ export default async function DashboardPage({
     ? visibleInvoices.find((i) => i.id === selectedId)
     : filtered[0];
   if (selectedId && !selected) notFound();
+
+  // @mention list for Discussion, scoped to THIS invoice: whoever's an
+  // eligible approver on some step of its workflow (any step, matching
+  // the project — same rule as eligibleApproverIdsForInvoice/visibility),
+  // plus the submitter, plus every admin unconditionally (admins can see
+  // and act on anything, so they should always be reachable). Previously
+  // the mention list was every org member regardless of project — someone
+  // could @mention a teammate who then couldn't even see the invoice the
+  // notification links to.
+  const mentionableMemberOptions: MultiSelectOption[] = selected
+    ? (() => {
+        const ids = new Set(eligibleApproverIdsForInvoice(selected));
+        for (const id of adminUserIds) ids.add(id);
+        if (selected.submitted_by) ids.add(selected.submitted_by);
+        return memberOptions.filter((m) => ids.has(m.id));
+      })()
+    : [];
 
   // List display only: pin duplicate pairs/groups together at the very
   // top, newest group first — grouped by their duplicate key (not just
@@ -1412,7 +1449,7 @@ export default async function DashboardPage({
                   comments: commentsForSelected,
                   authorNameById,
                   addComment: addComment.bind(null, selected.id),
-                  members: memberOptions,
+                  members: mentionableMemberOptions,
                   approval: {
                     currentStepApproverNames: currentStepApprovers.map(
                       (id) => memberNameById.get(id) ?? "Team member"

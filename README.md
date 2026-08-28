@@ -1689,6 +1689,16 @@ is configured, a best-effort email
 ([`src/lib/notify.ts`](src/lib/notify.ts)) — a missing key or failed send
 never blocks posting the comment itself.
 
+**The @mention list is scoped per-invoice, not every org member.**
+`mentionableMemberOptions` (dashboard page) narrows it to whoever's an
+eligible approver on some step of THIS invoice's workflow — reusing
+`eligibleApproverIdsForInvoice` (the same rule as the `user`-role
+visibility restriction, migration 0067) — plus the submitter, plus every
+admin unconditionally (admins can see and act on anything, so they're
+always reachable). Previously it was every org member regardless of
+project: mentioning someone outside the invoice's project sent them a
+notification linking to an invoice they couldn't even see.
+
 **"It's your turn" notifications** (migration 0069, `notifications.type =
 'assigned'`): whenever an invoice's responsibility actually moves to a new
 approver — first entering the approval workflow (`reviewComplete`),
