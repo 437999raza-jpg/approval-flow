@@ -1,8 +1,9 @@
 // Outbound transactional email via Resend's HTTP API (no SDK dependency —
 // a single POST, consistent with how this app calls OpenRouter). Every
 // call is best-effort: a missing key/misconfiguration or a failed request
-// never blocks the action that triggered it (e.g. posting a comment) —
-// see the try/catch and the env-var guard below.
+// never blocks the action that triggered it (e.g. posting a comment, or
+// an invoice advancing to the next approver) — see the try/catch and the
+// env-var guard in each send function.
 // Authored by Araza.
 
 function escapeHtml(s: string): string {
@@ -11,6 +12,62 @@ function escapeHtml(s: string): string {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+// Shared card shell — table-based layout (safe across Gmail/Outlook/Apple
+// Mail, unlike flexbox/grid), one accent color, one clear action. Kept
+// concise on purpose: a name, what happened, optional context, one
+// button. Not a bare "X did Y" paragraph — a fixed color accent bar plus
+// a real button reads as an actual product notification, not a bland
+// system alert.
+function emailShell({
+  accentColor,
+  eyebrow,
+  headline,
+  bodyHtml,
+  ctaLabel,
+  ctaUrl,
+}: {
+  accentColor: string;
+  eyebrow: string;
+  headline: string;
+  bodyHtml: string;
+  ctaLabel: string;
+  ctaUrl: string;
+}): string {
+  return `
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9;padding:32px 16px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;">
+  <tr>
+    <td align="center">
+      <table role="presentation" width="480" cellpadding="0" cellspacing="0" style="max-width:480px;width:100%;background:#ffffff;border-radius:10px;overflow:hidden;box-shadow:0 1px 3px rgba(15,23,42,0.08);">
+        <tr>
+          <td style="height:4px;background:${accentColor};line-height:4px;font-size:0;">&nbsp;</td>
+        </tr>
+        <tr>
+          <td style="padding:28px 28px 8px 28px;">
+            <p style="margin:0;font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#94a3b8;">${escapeHtml(eyebrow)}</p>
+            <h1 style="margin:8px 0 0 0;font-size:18px;line-height:1.4;color:#0f172a;font-weight:600;">${headline}</h1>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:8px 28px 24px 28px;font-size:14px;line-height:1.6;color:#334155;">
+            ${bodyHtml}
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:0 28px 32px 28px;">
+            <a href="${ctaUrl}" style="display:inline-block;background:${accentColor};color:#ffffff;text-decoration:none;font-size:14px;font-weight:600;padding:10px 20px;border-radius:6px;">${escapeHtml(ctaLabel)} &rarr;</a>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:16px 28px;background:#f8fafc;border-top:1px solid #eef2f7;">
+            <p style="margin:0;font-size:11px;color:#94a3b8;">Approval Flow</p>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+</table>`.trim();
 }
 
 export async function sendMentionEmail({
@@ -30,11 +87,14 @@ export async function sendMentionEmail({
   const from = process.env.RESEND_FROM_EMAIL;
   if (!apiKey || !from) return;
 
-  const html = `
-    <p><strong>${escapeHtml(actorName)}</strong> mentioned you on <strong>${escapeHtml(invoiceLabel)}</strong>:</p>
-    <p style="margin:12px 0;padding:12px;background:#f8fafc;border-left:3px solid #cbd5e1;white-space:pre-wrap;">${escapeHtml(commentBody)}</p>
-    <p><a href="${invoiceUrl}" style="color:#2563eb;">Open the invoice →</a></p>
-  `.trim();
+  const html = emailShell({
+    accentColor: "#2563eb",
+    eyebrow: "Mentioned in a comment",
+    headline: `<strong>${escapeHtml(actorName)}</strong> mentioned you on ${escapeHtml(invoiceLabel)}`,
+    bodyHtml: `<div style="margin:4px 0 0 0;padding:12px 14px;background:#f8fafc;border-left:3px solid #cbd5e1;border-radius:4px;white-space:pre-wrap;color:#475569;">${escapeHtml(commentBody)}</div>`,
+    ctaLabel: "Open the invoice",
+    ctaUrl: invoiceUrl,
+  });
 
   try {
     await fetch("https://api.resend.com/emails", {
@@ -52,5 +112,58 @@ export async function sendMentionEmail({
     });
   } catch {
     // best-effort — the comment itself already posted successfully
+  }
+}
+
+// "It's your turn" — sent whenever responsibility for an invoice moves to
+// a new approver: it first enters the approval workflow, advances past a
+// completed step, or an admin reassigns/sets a specific stage. `reason`
+// is a short, specific clause (e.g. "is ready for your approval" /
+// "was reassigned to you") so the one-line headline stays concrete
+// instead of a generic "an invoice needs you."
+export async function sendAssignedEmail({
+  to,
+  invoiceLabel,
+  reason,
+  stepName,
+  invoiceUrl,
+}: {
+  to: string;
+  invoiceLabel: string;
+  reason: string;
+  stepName?: string | null;
+  invoiceUrl: string;
+}): Promise<void> {
+  const apiKey = process.env.RESEND_API_KEY;
+  const from = process.env.RESEND_FROM_EMAIL;
+  if (!apiKey || !from) return;
+
+  const html = emailShell({
+    accentColor: "#059669",
+    eyebrow: "Waiting on you",
+    headline: `${escapeHtml(invoiceLabel)} ${escapeHtml(reason)}`,
+    bodyHtml: stepName
+      ? `<p style="margin:0;">Step: <strong>${escapeHtml(stepName)}</strong></p>`
+      : `<p style="margin:0;color:#64748b;">No further approvers are ahead of you on this step.</p>`,
+    ctaLabel: "Review the invoice",
+    ctaUrl: invoiceUrl,
+  });
+
+  try {
+    await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from,
+        to,
+        subject: `${invoiceLabel} ${reason}`,
+        html,
+      }),
+    });
+  } catch {
+    // best-effort — the underlying decision/reassignment already succeeded
   }
 }

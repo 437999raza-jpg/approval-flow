@@ -1636,6 +1636,27 @@ is configured, a best-effort email
 ([`src/lib/notify.ts`](src/lib/notify.ts)) — a missing key or failed send
 never blocks posting the comment itself.
 
+**"It's your turn" notifications** (migration 0069, `notifications.type =
+'assigned'`): whenever an invoice's responsibility actually moves to a new
+approver — first entering the approval workflow (`reviewComplete`),
+advancing past a completed step (`decide()`, including its self-heal
+branch), or an admin reassigning/setting a specific stage
+(`reassignApprover`/`setInvoiceStage`) — `notifyNewApprovers`
+(dashboard-actions.ts) fires the same in-app row + best-effort email
+pattern as mentions, via the new `sendAssignedEmail`
+([`src/lib/notify.ts`](src/lib/notify.ts)). Reuses `firstMatchingStepFrom`'s
+already-resolved approver list (see the matrix-workflow skip-step section
+above) rather than re-querying who's eligible a second time. Never
+notifies whoever just took the action that caused the move.
+
+Both email types now share one visual template (`emailShell` in
+`notify.ts`) — a small table-based card (safe across Gmail/Outlook/Apple
+Mail, unlike flexbox/grid) with a colored accent bar, a bold one-line
+headline, optional context, and a real button — replacing the original
+bare "X did Y" paragraph. Mentions stay blue; assignment emails are green,
+so the two read as visually distinct without needing to read the subject
+line first.
+
 **Possible-duplicate detection** pins matched invoices together at the top
 of the list pane (not just an inline banner) when opening one — see
 [Document search](#document-search).
@@ -1703,6 +1724,21 @@ org-wide totals and a `user` sees their own scope. Configs can be saved
 `project_id` only, not the per-line-item projects from migration 0019 — so
 it under-reports invoices whose lines split across multiple projects. Not
 yet rebuilt against line items.
+
+**Invoice list report** ([`src/lib/invoice-list-report.ts`](src/lib/invoice-list-report.ts)):
+modeled on ApprovalMax's "Request reports" — one row per invoice (Name,
+Amount, Supplier, Status, Approved by, Waiting for, Created, Customers),
+not a grouped count/sum, sorted by customer then supplier. The Name column
+links straight to the invoice. Shown under any running saved report
+(same filters, reuses `filterInvoicesForReport` — factored out of
+`runReport` so the two views can't drift onto different filter
+semantics), with a "Download CSV" button; a standalone "Download all
+invoices" link at the top of `/reports` runs it with no filters at all.
+`GET /api/reports/export` streams the CSV (same query params as the
+saved-report filters). "Waiting for" reuses `requiredApproversFor`
+(dashboard-actions.ts) directly, so it matches EXACTLY who'd see Approve/
+Reject on the invoice itself — not a second, possibly-drifting
+re-derivation of the same matching rules.
 
 ---
 

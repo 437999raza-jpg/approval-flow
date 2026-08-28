@@ -298,7 +298,7 @@ export interface Database {
           actor_id: string | null;
           invoice_id: string | null;
           comment_id: string | null;
-          type: "mention";
+          type: "mention" | "assigned";
           read: boolean;
           created_at: string;
         };

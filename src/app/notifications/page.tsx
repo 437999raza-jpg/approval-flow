@@ -47,11 +47,13 @@ export default async function NotificationsPage() {
       <Link href="/dashboard" className="text-sm text-slate-500 hover:underline">
         ← Back to dashboard
       </Link>
-      <h1 className="mt-2 text-xl font-semibold">Mentions</h1>
-      <p className="mt-1 text-sm text-slate-500">Comments where a teammate @mentioned you.</p>
+      <h1 className="mt-2 text-xl font-semibold">Notifications</h1>
+      <p className="mt-1 text-sm text-slate-500">
+        @mentions in Discussion, and invoices that just became yours to review.
+      </p>
 
       {(notifications ?? []).length === 0 ? (
-        <p className="mt-6 text-sm text-slate-400">No mentions yet.</p>
+        <p className="mt-6 text-sm text-slate-400">No notifications yet.</p>
       ) : (
         <ul className="mt-6 divide-y divide-slate-200 rounded-lg border border-slate-200 bg-white">
           {(notifications ?? []).map((n) => {
@@ -61,6 +63,7 @@ export default async function NotificationsPage() {
                   invoice.invoice_number ? ` #${invoice.invoice_number}` : ""
                 }`
               : "an invoice";
+            const actorName = n.actor_id ? actorNameById.get(n.actor_id) ?? "Team member" : "Someone";
             return (
               <li key={n.id}>
                 <Link
@@ -70,10 +73,17 @@ export default async function NotificationsPage() {
                   }`}
                 >
                   <p className="min-w-0 truncate text-sm text-slate-700">
-                    <span className="font-medium">
-                      {n.actor_id ? actorNameById.get(n.actor_id) ?? "Team member" : "Someone"}
-                    </span>{" "}
-                    mentioned you on <span className="font-medium">{label}</span>
+                    {n.type === "assigned" ? (
+                      <>
+                        <span className="font-medium">{label}</span> is ready for
+                        your approval
+                      </>
+                    ) : (
+                      <>
+                        <span className="font-medium">{actorName}</span>{" "}
+                        mentioned you on <span className="font-medium">{label}</span>
+                      </>
+                    )}
                   </p>
                   <span className="flex-none text-xs text-slate-400">
                     {new Date(n.created_at).toLocaleString()}

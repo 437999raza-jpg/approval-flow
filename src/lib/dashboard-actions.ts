@@ -5,7 +5,7 @@ import { revalidatePath, revalidateTag } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentOrg } from "@/lib/current-org";
-import { sendMentionEmail } from "@/lib/notify";
+import { sendMentionEmail, sendAssignedEmail } from "@/lib/notify";
 import {
   extractInvoiceFields,
   mapExtractionToInvoice,
@@ -87,12 +87,18 @@ export async function requiredApproversFor(
 // back to `from` itself so the existing "no approver matches" warning
 // still surfaces for a genuinely unconfigured workflow; decide() treats
 // it as the workflow being complete).
+interface MatchingStep {
+  stepOrder: number;
+  stepName: string | null;
+  approverIds: string[];
+}
+
 async function firstMatchingStepFrom(
   supabase: ReturnType<typeof createClient>,
   steps: Database["public"]["Tables"]["approval_workflow_steps"]["Row"][],
   from: number,
   invoice: { id: string; vendor_name: string | null; project_id: string | null }
-): Promise<number | null> {
+): Promise<MatchingStep | null> {
   const candidates = steps
     .filter((s) => s.step_order >= from)
     .sort((a, b) => a.step_order - b.step_order);
@@ -103,9 +109,79 @@ async function firstMatchingStepFrom(
       project_id: invoice.project_id,
       step_override_approver_id: null,
     });
-    if (required.length > 0) return step.step_order;
+    if (required.length > 0) {
+      return { stepOrder: step.step_order, stepName: step.name || null, approverIds: required };
+    }
   }
   return null;
+}
+
+// Notifies whoever an invoice's responsibility just moved to — an in-app
+// row plus a best-effort "it's your turn" email (see sendAssignedEmail).
+// Never notifies the person who caused the move (they already know).
+// Failures here never block the caller's own action — the decision/
+// reassignment that triggered this already succeeded.
+async function notifyNewApprovers(
+  supabase: ReturnType<typeof createClient>,
+  params: {
+    organizationId: string;
+    invoiceId: string;
+    approverIds: string[];
+    excludeUserId: string;
+    reason: string;
+    stepName?: string | null;
+  }
+) {
+  const targets = [...new Set(params.approverIds)].filter(
+    (id) => id !== params.excludeUserId
+  );
+  if (targets.length === 0) return;
+
+  try {
+    await supabase.from("notifications").insert(
+      targets.map((uid) => ({
+        organization_id: params.organizationId,
+        user_id: uid,
+        actor_id: params.excludeUserId,
+        invoice_id: params.invoiceId,
+        type: "assigned" as const,
+      }))
+    );
+
+    const { data: invoice } = await supabase
+      .from("invoices")
+      .select("vendor_name, invoice_number, file_name")
+      .eq("id", params.invoiceId)
+      .single();
+    if (!invoice) return;
+    const invoiceLabel = `${invoice.vendor_name ?? invoice.file_name}${
+      invoice.invoice_number ? ` #${invoice.invoice_number}` : ""
+    }`;
+    const invoiceUrl = `${process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3210"}/dashboard/${params.invoiceId}`;
+
+    const { data: authUsers } = await createAdminClient().auth.admin.listUsers({
+      page: 1,
+      perPage: 1000,
+    });
+    const emailById = new Map((authUsers?.users ?? []).map((u) => [u.id, u.email ?? null]));
+
+    await Promise.all(
+      targets.map((uid) => {
+        const email = emailById.get(uid);
+        return email
+          ? sendAssignedEmail({
+              to: email,
+              invoiceLabel,
+              reason: params.reason,
+              stepName: params.stepName,
+              invoiceUrl,
+            })
+          : Promise.resolve();
+      })
+    );
+  } catch {
+    // best-effort — see comment above
+  }
 }
 
 // When the form carries an "instructions" field (the Approve button lives
@@ -192,24 +268,31 @@ export async function decide(
     if (state === "approved") {
       // Skip straight past any later step nobody's conditions match for
       // this invoice, same as the main approval path below.
-      const nextStepOrder = await firstMatchingStepFrom(
+      const next = await firstMatchingStepFrom(
         supabase,
         orderedSteps,
         invoice.current_step_order + 1,
         { id: invoiceId, vendor_name: invoice.vendor_name, project_id: invoice.project_id }
       );
-      const isFinalStep = nextStepOrder === null;
       await supabase
         .from("invoices")
         .update({
-          status: isFinalStep ? "qbo_ready" : "on_approval",
-          current_step_order: isFinalStep
-            ? invoice.current_step_order
-            : nextStepOrder,
+          status: next ? "on_approval" : "qbo_ready",
+          current_step_order: next ? next.stepOrder : invoice.current_step_order,
           step_override_approver_id: null,
           updated_at: new Date().toISOString(),
         })
         .eq("id", invoiceId);
+      if (next) {
+        await notifyNewApprovers(supabase, {
+          organizationId: invoice.organization_id,
+          invoiceId,
+          approverIds: next.approverIds,
+          excludeUserId: user.id,
+          reason: "is ready for your approval",
+          stepName: next.stepName,
+        });
+      }
       revalidateTag(INVOICES_TAG);
       revalidatePath("/dashboard", "layout");
       return;
@@ -255,13 +338,12 @@ export async function decide(
     // Team Approval / Accounting, where a particular invoice skips PM
     // entirely and starts at CO Team). null means nothing from here to
     // the last step matches, i.e. the workflow really is done.
-    const nextStepOrder = await firstMatchingStepFrom(
+    const next = await firstMatchingStepFrom(
       supabase,
       orderedSteps,
       invoice.current_step_order + 1,
       { id: invoiceId, vendor_name: invoice.vendor_name, project_id: invoice.project_id }
     );
-    const isFinalStep = nextStepOrder === null;
 
     await supabase
       .from("invoices")
@@ -270,16 +352,25 @@ export async function decide(
         // the admin-only final gate — it sits there until an admin
         // presses "Sync to QuickBooks". An earlier match stays
         // 'on_approval' at that step.
-        status: isFinalStep ? "qbo_ready" : "on_approval",
-        current_step_order: isFinalStep
-          ? invoice.current_step_order
-          : nextStepOrder,
+        status: next ? "on_approval" : "qbo_ready",
+        current_step_order: next ? next.stepOrder : invoice.current_step_order,
         // The reassignment applied to the step just decided, not
         // whatever comes next.
         step_override_approver_id: null,
         updated_at: new Date().toISOString(),
       })
       .eq("id", invoiceId);
+
+    if (next) {
+      await notifyNewApprovers(supabase, {
+        organizationId: invoice.organization_id,
+        invoiceId,
+        approverIds: next.approverIds,
+        excludeUserId: user.id,
+        reason: "is ready for your approval",
+        stepName: next.stepName,
+      });
+    }
   }
   // else "pending" — an "all" mode step still waiting on other required
   // approvers; this vote is recorded but the invoice stays on the same
@@ -907,18 +998,17 @@ export async function reviewComplete(invoiceId: string) {
   // actually has a matching approver, not blindly at step 1. Falls back
   // to step 1 if nothing anywhere matches, so a genuinely unconfigured
   // workflow still surfaces the existing "no approver matches" warning.
-  let startStepOrder = 1;
+  let start: MatchingStep | null = null;
   if (workflowId) {
     const { data: workflowSteps } = await supabase
       .from("approval_workflow_steps")
       .select("*")
       .eq("workflow_id", workflowId);
-    startStepOrder =
-      (await firstMatchingStepFrom(supabase, workflowSteps ?? [], 1, {
-        id: invoiceId,
-        vendor_name: inv.vendor_name,
-        project_id: inv.project_id,
-      })) ?? 1;
+    start = await firstMatchingStepFrom(supabase, workflowSteps ?? [], 1, {
+      id: invoiceId,
+      vendor_name: inv.vendor_name,
+      project_id: inv.project_id,
+    });
   }
 
   await supabase
@@ -926,10 +1016,21 @@ export async function reviewComplete(invoiceId: string) {
     .update({
       workflow_id: workflowId,
       status: "on_approval",
-      current_step_order: startStepOrder,
+      current_step_order: start?.stepOrder ?? 1,
       updated_at: new Date().toISOString(),
     })
     .eq("id", invoiceId);
+
+  if (start) {
+    await notifyNewApprovers(supabase, {
+      organizationId: inv.organization_id,
+      invoiceId,
+      approverIds: start.approverIds,
+      excludeUserId: user.id,
+      reason: "is ready for your approval",
+      stepName: start.stepName,
+    });
+  }
 
   await supabase.from("audit_log").insert({
     organization_id: inv.organization_id,
@@ -1440,6 +1541,19 @@ export async function reassignApprover(invoiceId: string, formData: FormData) {
     .eq("id", invoiceId);
   if (updateError) throw updateError;
 
+  // Only a specific person assignment has an obvious single notification
+  // target — clearing back to "workflow default" could route to several
+  // conditional/default approvers, nothing worth singling out here.
+  if (approverId) {
+    await notifyNewApprovers(supabase, {
+      organizationId: invoice.organization_id,
+      invoiceId,
+      approverIds: [approverId],
+      excludeUserId: user.id,
+      reason: "was reassigned to you",
+    });
+  }
+
   await supabase.from("audit_log").insert({
     organization_id: invoice.organization_id,
     invoice_id: invoiceId,
@@ -1476,7 +1590,9 @@ export async function setInvoiceStage(invoiceId: string, formData: FormData) {
 
   const { data: invoice } = await supabase
     .from("invoices")
-    .select("id, organization_id, workflow_id, status, current_step_order")
+    .select(
+      "id, organization_id, workflow_id, status, current_step_order, vendor_name, project_id"
+    )
     .eq("id", invoiceId)
     .single();
   if (!invoice || !invoice.workflow_id) return;
@@ -1485,7 +1601,7 @@ export async function setInvoiceStage(invoiceId: string, formData: FormData) {
   // number typed by a client can't be trusted otherwise.
   const { data: validStep } = await supabase
     .from("approval_workflow_steps")
-    .select("id")
+    .select("*")
     .eq("workflow_id", invoice.workflow_id)
     .eq("step_order", stage)
     .maybeSingle();
@@ -1513,6 +1629,23 @@ export async function setInvoiceStage(invoiceId: string, formData: FormData) {
     })
     .eq("id", invoiceId);
   if (updateError) throw updateError;
+
+  const stageApproverIds = await requiredApproversFor(supabase, validStep, {
+    id: invoiceId,
+    vendor_name: invoice.vendor_name,
+    project_id: invoice.project_id,
+    step_override_approver_id: null,
+  });
+  if (stageApproverIds.length > 0) {
+    await notifyNewApprovers(supabase, {
+      organizationId: invoice.organization_id,
+      invoiceId,
+      approverIds: stageApproverIds,
+      excludeUserId: user.id,
+      reason: "is ready for your approval",
+      stepName: validStep.name || null,
+    });
+  }
 
   await supabase.from("audit_log").insert({
     organization_id: invoice.organization_id,

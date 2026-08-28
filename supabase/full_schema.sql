@@ -3063,3 +3063,16 @@ create policy "invoice_approvals: admins can delete" on invoice_approvals
       where i.id = invoice_id and is_org_admin(i.organization_id)
     )
   );
+
+--------------------------------------------------------------------
+-- >>> supabase/migrations/0069_notifications_assigned_type.sql
+--------------------------------------------------------------------
+-- 0069: a second notifications.type, 'assigned' -- "it's your turn to
+-- review this invoice" (sent whenever responsibility moves to a new
+-- approver: entering the workflow, advancing to the next step, an admin
+-- reassigning/setting a stage), alongside the existing 'mention' type.
+-- Run via `supabase db push` or paste into the Supabase SQL editor.
+
+alter table notifications drop constraint if exists notifications_type_check;
+alter table notifications add constraint notifications_type_check
+  check (type in ('mention', 'assigned'));
