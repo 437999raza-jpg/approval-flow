@@ -145,6 +145,7 @@ export interface Database {
           step_order: number;
           name: string;
           approval_mode: "any" | "all";
+          deadline_days: number | null;
           created_at: string;
         };
         Insert: Partial<
@@ -231,6 +232,8 @@ export interface Database {
           file_name: string;
           submitted_by: string | null;
           current_step_order: number;
+          current_step_entered_at: string;
+          escalated_at: string | null;
           accounting_instructions: string | null;
           step_override_approver_id: string | null;
           qbo_bill_id: string | null;

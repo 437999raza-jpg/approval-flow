@@ -84,6 +84,13 @@ export function StepApproversManager({
             </div>
             <div className="max-h-[70vh] overflow-y-auto p-5">
               {!readOnly && (
+                <p className="mb-3 text-xs text-slate-400">
+                  Need &quot;approve if X, OR if Y&quot; for one person? Add them
+                  twice with different conditions on each row — either matching
+                  makes them an approver.
+                </p>
+              )}
+              {!readOnly && (
                 <button
                   type="button"
                   onClick={() => setPendingNewRows((r) => [...r, Date.now()])}

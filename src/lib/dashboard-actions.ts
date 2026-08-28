@@ -29,6 +29,17 @@ import { qboTag, INVOICES_TAG } from "@/lib/org-cache";
 // Server actions for the dashboard (moved out of the page component so
 // the page stays render-only). Authored by Araza.
 
+// Every write to invoices.current_step_order goes through this — it
+// resets the "days on this step" clock the reminder/escalation cron
+// (src/app/api/cron/reminders/route.ts) measures against, and clears any
+// stale reminder/escalation bookkeeping from the step just left.
+function stepEnteredReset() {
+  return {
+    current_step_entered_at: new Date().toISOString(),
+    escalated_at: null,
+  };
+}
+
 export async function requiredApproversFor(
   supabase: ReturnType<typeof createClient>,
   step: Database["public"]["Tables"]["approval_workflow_steps"]["Row"],
@@ -332,6 +343,7 @@ export async function decide(
           current_step_order: next ? next.stepOrder : invoice.current_step_order,
           step_override_approver_id: null,
           updated_at: new Date().toISOString(),
+          ...(next ? stepEnteredReset() : {}),
         })
         .eq("id", invoiceId);
       if (next) {
@@ -409,6 +421,7 @@ export async function decide(
         // whatever comes next.
         step_override_approver_id: null,
         updated_at: new Date().toISOString(),
+        ...(next ? stepEnteredReset() : {}),
       })
       .eq("id", invoiceId);
 
@@ -1119,6 +1132,7 @@ export async function reviewComplete(invoiceId: string) {
       status: "on_approval",
       current_step_order: start?.stepOrder ?? 1,
       updated_at: new Date().toISOString(),
+      ...stepEnteredReset(),
     })
     .eq("id", invoiceId);
 
@@ -1269,6 +1283,7 @@ export async function backToReview(invoiceId: string) {
       status: "on_review",
       current_step_order: 1,
       updated_at: new Date().toISOString(),
+      ...stepEnteredReset(),
     })
     .eq("id", invoiceId);
 
@@ -1727,6 +1742,7 @@ export async function setInvoiceStage(invoiceId: string, formData: FormData) {
       current_step_order: stage,
       step_override_approver_id: null,
       updated_at: new Date().toISOString(),
+      ...stepEnteredReset(),
     })
     .eq("id", invoiceId);
   if (updateError) throw updateError;
@@ -1826,6 +1842,7 @@ export async function overrideStatus(invoiceId: string, formData: FormData) {
   ) {
     update.current_step_order = 1;
     update.step_override_approver_id = null;
+    Object.assign(update, stepEnteredReset());
     // invoice_approvals has no member-facing DELETE policy (read/insert
     // only) — this silently deletes zero rows through the RLS-bound
     // client with no error surfaced. canReview() already confirmed the

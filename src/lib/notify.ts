@@ -199,3 +199,97 @@ export async function sendRejectedEmail({
     headers: { "X-MS-Categories": "Rejected" },
   });
 }
+
+// Daily "where do things stand" email — one per approver who currently
+// has at least one bill waiting on them, listing each with how long it's
+// been sitting and a direct link. Doubles as the reminder mechanism: an
+// item past its step's deadline is visually flagged, so a person who
+// lets bills sit sees it called out every single day rather than a
+// one-time notice they can miss. Sent by the daily cron
+// (src/app/api/cron/reminders/route.ts), not by any user action.
+export async function sendDigestEmail({
+  to,
+  items,
+  dashboardUrl,
+}: {
+  to: string;
+  items: { label: string; daysOnStep: number; overdue: boolean; url: string }[];
+  dashboardUrl: string;
+}): Promise<void> {
+  const overdueCount = items.filter((i) => i.overdue).length;
+  const rows = items
+    .slice(0, 25)
+    .map(
+      (i) => `
+      <tr>
+        <td style="padding:8px 0;border-top:1px solid #eef2f7;font-size:13px;color:#334155;">
+          <a href="${i.url}" style="color:#0f172a;text-decoration:none;font-weight:600;">${escapeHtml(i.label)}</a>
+          ${
+            i.overdue
+              ? `<span style="margin-left:6px;display:inline-block;padding:1px 6px;border-radius:9999px;background:#fef2f2;color:#b91c1c;font-size:11px;font-weight:700;">OVERDUE · ${i.daysOnStep}d</span>`
+              : `<span style="margin-left:6px;color:#94a3b8;font-size:11px;">${i.daysOnStep}d</span>`
+          }
+        </td>
+      </tr>`
+    )
+    .join("");
+  const more = items.length > 25 ? `<p style="margin:10px 0 0 0;color:#94a3b8;">+ ${items.length - 25} more</p>` : "";
+
+  const html = emailShell({
+    accentColor: overdueCount > 0 ? "#dc2626" : "#2563eb",
+    eyebrow: "Daily approvals digest",
+    headline: `You have ${items.length} bill${items.length === 1 ? "" : "s"} waiting for your approval${
+      overdueCount > 0 ? ` — ${overdueCount} overdue` : ""
+    }`,
+    bodyHtml: `<table role="presentation" width="100%" cellpadding="0" cellspacing="0">${rows}</table>${more}`,
+    ctaLabel: "Open your queue",
+    ctaUrl: dashboardUrl,
+  });
+
+  await sendEmail({
+    to,
+    subject:
+      overdueCount > 0
+        ? `${overdueCount} overdue bill${overdueCount === 1 ? "" : "s"} in your queue (${items.length} total)`
+        : `${items.length} bill${items.length === 1 ? "" : "s"} waiting for your approval`,
+    html,
+  });
+}
+
+// Sent to org admins when a bill blows well past its step's deadline —
+// the escalation half of the timing feature (a plain daily digest isn't
+// enough on its own if the approver just ignores it). Fired once per
+// step (invoices.escalated_at), not daily, so admins get a single alert
+// per stuck bill instead of a repeat every day it stays stuck.
+export async function sendEscalationEmail({
+  to,
+  invoiceLabel,
+  stepName,
+  daysOnStep,
+  deadlineDays,
+  stuckOnNames,
+  invoiceUrl,
+}: {
+  to: string;
+  invoiceLabel: string;
+  stepName: string | null;
+  daysOnStep: number;
+  deadlineDays: number;
+  stuckOnNames: string[];
+  invoiceUrl: string;
+}): Promise<void> {
+  const html = emailShell({
+    accentColor: "#dc2626",
+    eyebrow: "Escalation — overdue approval",
+    headline: `${escapeHtml(invoiceLabel)} has been sitting ${daysOnStep} days${
+      stepName ? ` on ${escapeHtml(stepName)}` : ""
+    }`,
+    bodyHtml: `<p style="margin:0;">Deadline for this step is <strong>${deadlineDays} day${
+      deadlineDays === 1 ? "" : "s"
+    }</strong>. Waiting on: <strong>${escapeHtml(stuckOnNames.join(", ") || "unassigned")}</strong>.</p>`,
+    ctaLabel: "Open the invoice",
+    ctaUrl: invoiceUrl,
+  });
+
+  await sendEmail({ to, subject: `Escalation: ${invoiceLabel} is overdue`, html });
+}

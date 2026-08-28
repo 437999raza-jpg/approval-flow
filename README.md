@@ -1059,6 +1059,7 @@ Copy `.env.example` → `.env.local` and fill in:
 | `RESEND_API_KEY` | Yes (for email ingestion + mentions) | resend.com — required for inbound attachments and for @mention notification emails; without it, inbound ingestion can't fetch attachments and mentions still create the in-app `notifications` row, just no email |
 | `RESEND_FROM_EMAIL` | No (required if `RESEND_API_KEY` is set) | Must be a verified sender/domain in your Resend account |
 | `PLATFORM_ADMIN_EMAILS` | No | Comma-separated emails allowed to create new organizations at `/admin/organizations` (see [Multi-tenant onboarding tool](#multi-tenant-onboarding-tool-adminorganizations)). Leave unset to hide that page entirely. |
+| `CRON_SECRET` | Recommended | Any random string you choose; Vercel sends it as `Authorization: Bearer $CRON_SECRET` on cron-triggered requests to `/api/cron/reminders` (see [Deadlines, reminders & escalation](#deadlines-reminders--escalation-migration-0073)). Unset = the route runs unauthenticated. |
 
 Supabase renamed its API keys at some point — you may see either
 **"Publishable and secret API keys"** or **"Legacy anon, service_role API
@@ -1469,6 +1470,21 @@ any that don't. Only when nothing from the current step through the last
 one matches does the old warning still surface — a genuinely
 unconfigured workflow, not a routing gap for one invoice.
 
+**One approver, two alternative rule sets ("OR" instead of "AND").** Gap
+found comparing a real ApprovalMax export against this app: one of their
+approvers needed "approve if Customer matches A and Supplier matches B,
+**or** if Class matches C" — two independent condition sets for the same
+person on the same step. Conditions on one approver row are always AND'd,
+so that's expressed by adding the **same person twice** to the step, each
+row with its own condition set (`approval_workflow_step_approvers` no
+longer has a `unique(step_id, approver_user_id)` constraint as of
+migration 0073) — `effectiveApproversForStep`/`is_eligible_approver`
+already looped over every row for a given approver and returned them as
+eligible if *any* row's conditions matched, so this needed only the
+constraint drop, no matching-logic change. The Approval matrix modal has
+a hint about this; no UI change was needed since the approver dropdown
+was never filtered to exclude already-added people.
+
 ---
 
 ## Projects & visibility
@@ -1623,6 +1639,55 @@ required-approver set changed gets written to `workflow_change_impacts`
 needs reassignment"), linking straight to each affected invoice.
 Admin-only (`is_org_admin` RLS); dismissing just sets `dismissed_at`, it
 doesn't delete the row.
+
+---
+
+## Deadlines, reminders & escalation (migration 0073)
+
+Another gap found comparing a real ApprovalMax export: their steps carry
+a **Deadline** (e.g. "4 days"), and — separately reported — some
+approvers just sit on bills for days with nothing prompting them.
+
+- **Per-step deadline** — `approval_workflow_steps.deadline_days`
+  (nullable int, `null` = no deadline, the prior behavior), set in the
+  step's inline form on `/workflows` next to approval mode. `invoices`
+  tracks `current_step_entered_at`, reset by every code path that
+  changes `current_step_order` (`decide`, `reviewComplete`,
+  `backToReview`, `setInvoiceStage`, `overrideStatus` — see
+  `stepEnteredReset()` in
+  [`dashboard-actions.ts`](src/lib/dashboard-actions.ts)) — that's the
+  clock "days on this step" is measured from. `escalated_at` tracks
+  whether an invoice has already triggered the one-time admin
+  escalation below, so it isn't re-sent every day it stays stuck.
+- **Daily digest, every approver** — a cron job
+  ([`src/app/api/cron/reminders/route.ts`](src/app/api/cron/reminders/route.ts),
+  scheduled 13:00 UTC in `vercel.json`) computes every `on_approval`
+  invoice's required approver(s)
+  ([`src/lib/reminders.ts`](src/lib/reminders.ts), reusing
+  `requiredApproversFor`/`effectiveApproversForStep` with the admin
+  client since a cron run has no signed-in user) and emails each
+  approver **one** digest listing everything waiting on them — "You have
+  25 bills waiting for your approval," each with a direct link, days-on-
+  step, and an OVERDUE flag once it's past the step's deadline. This is
+  the reminder mechanism: rather than a one-time notice easy to miss, an
+  approver who lets things sit sees it called out again every single
+  day. Sent regardless of whether any deadline is even configured — the
+  digest is "where do things stand," the overdue flag is deadline-driven.
+- **Escalation to admins** — an invoice past `deadline_days +` a 2-day
+  grace period gets a one-time email to every org admin ("X has been
+  sitting N days on step Y, waiting on Z") and its `escalated_at` is set
+  so it isn't repeated; a step change (approve/reassign/reject) clears
+  `escalated_at` via `stepEnteredReset()`, so a bill that gets moving
+  again and later stalls at a *different* step can escalate again.
+- The route checks `Authorization: Bearer $CRON_SECRET` (set the env var
+  in both Vercel and `.env.local`) so it can't be hit — and made to spam
+  every user's inbox — by an outside request; if `CRON_SECRET` isn't set
+  it runs unauthenticated (fine for local testing, not for production).
+  It's declared `export const dynamic = "force-dynamic"` — without that,
+  Next.js has no signal this route needs per-request execution (it reads
+  `request.headers` directly rather than `next/headers`' `headers()`,
+  and touches no cookies) and would optimize it as a static route, built
+  and cached once instead of re-run on every cron trigger.
 
 ---
 

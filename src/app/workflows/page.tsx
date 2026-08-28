@@ -133,6 +133,7 @@ async function addStep(workflowId: string, formData: FormData) {
 
   const name = String(formData.get("name") ?? "").trim();
   const approvalMode = String(formData.get("approval_mode") ?? "all") === "any" ? "any" : "all";
+  const deadlineDays = parseDeadlineDays(formData);
 
   const { data: last } = await supabase
     .from("approval_workflow_steps")
@@ -144,10 +145,20 @@ async function addStep(workflowId: string, formData: FormData) {
     workflow_id: workflowId,
     name,
     approval_mode: approvalMode,
+    deadline_days: deadlineDays,
     step_order: (last?.[0]?.step_order ?? 0) + 1,
   });
 
   revalidatePath("/workflows");
+}
+
+// Blank/zero/negative all mean "no deadline" — the check constraint only
+// allows null or a positive integer.
+function parseDeadlineDays(formData: FormData): number | null {
+  const raw = String(formData.get("deadline_days") ?? "").trim();
+  if (!raw) return null;
+  const n = Number(raw);
+  return Number.isInteger(n) && n > 0 ? n : null;
 }
 
 async function updateStep(stepId: string, formData: FormData) {
@@ -161,9 +172,10 @@ async function updateStep(stepId: string, formData: FormData) {
 
   const name = String(formData.get("name") ?? "").trim();
   const approvalMode = String(formData.get("approval_mode") ?? "all") === "any" ? "any" : "all";
+  const deadlineDays = parseDeadlineDays(formData);
   await supabase
     .from("approval_workflow_steps")
-    .update({ name, approval_mode: approvalMode })
+    .update({ name, approval_mode: approvalMode, deadline_days: deadlineDays })
     .eq("id", stepId);
 
   revalidatePath("/workflows");
@@ -845,6 +857,15 @@ export default async function WorkflowsPage() {
                                     <option value="all">Require all matching approvers</option>
                                     <option value="any">Require any one approver</option>
                                   </select>
+                                  <input
+                                    type="number"
+                                    name="deadline_days"
+                                    min={1}
+                                    defaultValue={s.deadline_days ?? ""}
+                                    placeholder="Deadline (days)"
+                                    title="Days before this step is flagged overdue in the daily digest and, after a grace period, escalated to admins. Leave blank for no deadline."
+                                    className="w-32 rounded-md border border-slate-300 px-2 py-1 text-xs"
+                                  />
                                   <SubmitButton className="rounded-md bg-slate-800 px-2 py-1 text-xs font-medium text-white hover:bg-slate-700">
                                     Save
                                   </SubmitButton>
@@ -855,6 +876,7 @@ export default async function WorkflowsPage() {
                                   {s.approval_mode === "any"
                                     ? "any one approver"
                                     : "all matching approvers"}
+                                  {s.deadline_days != null && ` — ${s.deadline_days}d deadline`}
                                 </span>
                               )}
                               {isAdmin && (
@@ -930,6 +952,14 @@ export default async function WorkflowsPage() {
                           <option value="all">Require all matching approvers</option>
                           <option value="any">Require any one approver</option>
                         </select>
+                        <input
+                          type="number"
+                          name="deadline_days"
+                          min={1}
+                          placeholder="Deadline (days)"
+                          title="Days before this step is flagged overdue in the daily digest and, after a grace period, escalated to admins. Leave blank for no deadline."
+                          className="w-32 rounded-md border border-slate-300 px-2 py-1 text-xs"
+                        />
                         <SubmitButton className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">
                           Add step
                         </SubmitButton>
