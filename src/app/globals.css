@@ -1,3 +1,24 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* Every button click across the app needs to feel like it registered
+   INSTANTLY — before any server round trip, and independent of whichever
+   loading spinner (SubmitButton) may or may not follow. A quick scale-down
+   + darken on :active, universally, rather than hand-adding hover/active
+   classes to every one of the app's many individually-styled buttons.
+   Also covers anchor tags styled as buttons (Queue, Download CSV, etc. —
+   `rounded-md` + a `bg-*` color together is this codebase's consistent
+   button-link convention) without touching plain text links, which never
+   carry a background color. */
+@layer base {
+  button:not(:disabled),
+  a[class*="rounded-md"][class*="bg-"] {
+    transition: transform 0.1s ease-out, filter 0.1s ease-out;
+  }
+  button:not(:disabled):active,
+  a[class*="rounded-md"][class*="bg-"]:active {
+    transform: scale(0.97);
+    filter: brightness(0.92);
+  }
+}
