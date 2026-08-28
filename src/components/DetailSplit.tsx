@@ -178,12 +178,21 @@ export function DetailSplit({
   // screen was squeezing the bill's line-items table (Description
   // especially) down to an unreadably narrow, cramped column. Still a real
   // drag handle afterward if a different width is genuinely wanted.
+  //
+  // Also keyed on invoiceId, not just showDoc: navigating to a DIFFERENT
+  // invoice while the document is already open (delete → next invoice,
+  // Prev/Next) never flips showDoc false→true — it was already true — so
+  // without invoiceId here this never re-fired, and the new invoice
+  // inherited whatever billW happened to be, not a fresh 60/40 (reported
+  // live as "the new window loses the 60-40 setting" right after
+  // deleting an invoice while its document was open).
   useLayoutEffect(() => {
     if (showDoc && outerRef.current) {
       const total = outerRef.current.getBoundingClientRect().width;
       setBillW(Math.max(600, Math.round(total * 0.6)));
     }
-  }, [showDoc]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showDoc, invoiceId]);
 
   // If this pane disappears for any reason while a document is open (e.g.
   // the invoice gets deselected), the sidebar/list must come back — there
