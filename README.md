@@ -796,6 +796,28 @@ app itself isn't finalized yet; revisit before a client outside Ufirst
 actually forwards invoices there, so their capture address doesn't
 visibly reference a different company's domain.
 
+### Fix: searching while an invoice is open could 404 the whole page
+
+Reported live: open an invoice, type anything in the top search box that
+doesn't match that invoice's vendor/file name/invoice number, and the page
+hard-404'd (`flow.ufirst.co/dashboard/<id>` → "This page could not be
+found").
+
+Cause: `selected` (the currently-open invoice) was looked up from
+`filtered` — the SAME array already narrowed by the view tab, the quick
+search, and the advanced "Document search" filters, for the sidebar list.
+The moment the open invoice no longer matched whatever was typed, it
+dropped out of `filtered`, `selected` came back `undefined`, and
+`if (selectedId && !selected) notFound()` fired for real.
+
+Fix ([page.tsx](src/app/dashboard/[[...id]]/page.tsx)): `selected` is now
+looked up from the full, unfiltered `invoices` list (still RLS-scoped to
+the org) instead of `filtered`. The sidebar keeps narrowing exactly as
+before; the invoice you have open no longer disappears — and 404s — just
+because it doesn't match the current search/filter/view. A genuine 404
+(wrong org, id never existed, RLS-hidden) still fires correctly, since
+`invoices` only ever contains what RLS actually returns for that user.
+
 ---
 
 ## Environment variables
