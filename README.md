@@ -1608,24 +1608,34 @@ already cover this need correctly and make an invoice-level flag redundant.
 **Do not re-add an invoice-level CO/Extras flag or auto-stamp rule** — if a
 line needs distinguishing from contract value, tag it CON/CO directly.
 
-### Per-line Contract / Change Order tags (CON / CO)
+### Per-line Contract / Change Order / Extras tags (CON / CO / E)
 
-Every line item in the Bill panel has a **CON / CO toggle** next to the
+Every line item in the Bill panel has a **CON / CO / E toggle** next to the
 class search box:
 
 - **CON** writes the QBO class **"Contract"** — the line is original
   contract value.
 - **CO** writes the QBO class **"Change Orders"** — the line is extra work
   beyond the contract.
-- The search box still sets any other class (Extras, HB, Chargeback, …).
+- **E** writes the QBO class **"Extras"** — the line is outside both the
+  contract and change orders. Added 2026-08-27 as a third toggle button
+  alongside CON/CO (previously "Extras" was just typed into the class
+  search box like any other class) — see [BillPanel.tsx](src/components/BillPanel.tsx)'s
+  `EXTRAS_CLASS_NAME`. This is a per-line tag, not the old invoice-level
+  CO/Extras flag — that stays removed (see below).
+- The search box still sets any other class (HB, Chargeback, …).
 
 The toggle writes the line's `class`, which syncs to QBO as that line's
 `ClassRef` — so the construction fold app can read each line's class back
-out of QBO and tell contract value from change orders (e.g. one line
-$50,000 = CON, the next $10,000 = CO, both electrical). Class is a human
-decision: it **never** comes from the document, and re-extraction preserves
-it (like project) instead of reverting it. If a supplier-default rule sets
-a class, it applies to lines with no class yet.
+out of QBO and tell contract value from change orders from extras (e.g. one
+line $50,000 = CON, the next $10,000 = CO, both electrical). Class is a
+human decision: it **never** comes from the document, and re-extraction
+preserves it (like project) instead of reverting it. If a supplier-default
+rule sets a class, it applies to lines with no class yet.
+
+The Class column was widened (118px → 176px) alongside adding the third
+button — it also fixes the committed class value truncating to "Chang…"
+instead of showing "Change Orders" once idle.
 
 The two class names are the exact QBO class names Fluid already has
 (`Contract`, `Change Orders`); the constants live at the top of

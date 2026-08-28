@@ -96,20 +96,24 @@ const ghostLabel = "block text-[10px] font-semibold uppercase tracking-wide text
 // document), wrapping into a tall, cramped column. It now gets clearly
 // the largest share of the three flexible columns.
 //
-// Class now carries the per-line CON/CO toggle (Contract vs Change
-// Orders) plus the full class search, so it needs real room: it's a
-// fixed track (like Tax/Amount), widened from 76px to hold two toggle
-// buttons and the search box side by side.
+// Class now carries the per-line CON/CO/E toggle (Contract vs Change
+// Orders vs Extras) plus the full class search, so it needs real room:
+// it's a fixed track (like Tax/Amount), widened from 76px to 118px to fit
+// two toggle buttons, then to 176px for a third plus enough room for the
+// search box to actually show "Change Orders" instead of truncating to
+// "Chang…" once a value is committed and it goes idle.
 // Leading 22px column: the per-line select checkbox (bulk delete/etc.).
 const LINE_ITEM_COLS =
-  "grid-cols-[22px_minmax(0,0.85fr)_minmax(0,1.5fr)_minmax(0,1.15fr)_118px_52px_104px_44px_42px]";
+  "grid-cols-[22px_minmax(0,0.85fr)_minmax(0,1.5fr)_minmax(0,1.15fr)_176px_52px_104px_44px_42px]";
 
-// The exact QBO class names the CON/CO toggle writes (must exist in the
-// org's qbo_classes mirror — Fluid's QBO has "Contract" and "Change
-// Orders"). The construction fold app reads these per-line class names
-// back out of QBO to separate contract value from change orders.
+// The exact QBO class names the CON/CO/E toggle writes (must exist in the
+// org's qbo_classes mirror — Fluid's QBO has "Contract", "Change Orders",
+// and "Extras"). The construction fold app reads these per-line class
+// names back out of QBO to separate contract value, change orders, and
+// extras.
 const CON_CLASS_NAME = "Contract";
 const CO_CLASS_NAME = "Change Orders";
+const EXTRAS_CLASS_NAME = "Extras";
 
 // ApprovalMax-style "Bill" panel, styled as a document: every data item is
 // editable in place and maps to QBO on sync (vendor/bill number/dates/
@@ -1359,11 +1363,11 @@ function LineItemRow({
           if (!isNew && !readOnly) formRef.current?.requestSubmit();
         }}
       />
-      {/* Class: the CON/CO toggle writes the two real QBO classes the
-          construction fold app reads back ("Contract" / "Change Orders");
-          the search box handles every other class. The value lives in one
-          hidden form field so the toggle, the search box, and the server
-          all agree on a single `class` per line. */}
+      {/* Class: the CON/CO/E toggle writes the three real QBO classes the
+          construction fold app reads back ("Contract" / "Change Orders" /
+          "Extras"); the search box handles every other class. The value
+          lives in one hidden form field so the toggle, the search box, and
+          the server all agree on a single `class` per line. */}
       <div className="flex h-full items-end gap-1 pb-1.5">
         <button
           type="button"
@@ -1390,6 +1394,19 @@ function LineItemRow({
           } disabled:cursor-not-allowed disabled:opacity-50`}
         >
           CO
+        </button>
+        <button
+          type="button"
+          disabled={readOnly}
+          title="Extras — work outside the contract and change orders (E)"
+          onClick={() => commitClass(EXTRAS_CLASS_NAME)}
+          className={`flex-none rounded border px-1 py-0.5 text-[10px] font-semibold leading-none transition-colors ${
+            classValue === EXTRAS_CLASS_NAME
+              ? "border-emerald-600 bg-emerald-600 text-white"
+              : "border-slate-300 text-slate-500 hover:border-emerald-400 hover:text-emerald-600"
+          } disabled:cursor-not-allowed disabled:opacity-50`}
+        >
+          E
         </button>
         {/* self-stretch overrides the row's own items-end for just this
             child, so it actually fills the row's full height — fillCell
