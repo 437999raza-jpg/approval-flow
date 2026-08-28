@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/types";
 import { filterInvoicesForReport, type ReportFilters } from "@/lib/reports";
-import { requiredApproversFor } from "@/lib/dashboard-actions";
+import { computeWaitingForIds } from "@/lib/workflow-waiting";
 
 // Per-invoice list, the ApprovalMax-style "Request reports" download —
 // unlike runReport (grouped counts/sums), this is one row per invoice,
@@ -31,7 +31,7 @@ export async function buildInvoiceListReport(
       "id, vendor_name, invoice_number, file_name, amount, status, created_at, project_id, workflow_id, current_step_order, step_override_approver_id"
     )
     .eq("organization_id", organizationId);
-  const invoices = filterInvoicesForReport(invoicesRaw ?? [], filters);
+  let invoices = filterInvoicesForReport(invoicesRaw ?? [], filters);
   if (invoices.length === 0) return [];
 
   const invoiceIds = invoices.map((i) => i.id);
@@ -68,40 +68,14 @@ export async function buildInvoiceListReport(
     approvedIdsByInvoice.set(a.invoice_id, set);
   }
 
-  // "Waiting for" needs the current step's effective approvers per
-  // invoice — reuses requiredApproversFor (dashboard-actions.ts) so this
-  // matches EXACTLY who'd see Approve/Reject on the invoice itself,
-  // rather than re-deriving the same matching logic a second way.
-  const waitingIdsByInvoice = new Map<string, string[]>();
-  const workflowIds = [
-    ...new Set(invoices.map((i) => i.workflow_id).filter((id): id is string => !!id)),
-  ];
-  const { data: stepsRaw } =
-    workflowIds.length > 0
-      ? await supabase
-          .from("approval_workflow_steps")
-          .select("*")
-          .in("workflow_id", workflowIds)
-      : { data: [] };
-  const stepByKey = new Map(
-    (stepsRaw ?? []).map((s) => [`${s.workflow_id}:${s.step_order}`, s])
-  );
-  for (const inv of invoices) {
-    if (
-      (inv.status !== "on_approval" && inv.status !== "on_hold") ||
-      !inv.workflow_id
-    ) {
-      continue;
-    }
-    const step = stepByKey.get(`${inv.workflow_id}:${inv.current_step_order}`);
-    if (!step) continue;
-    const ids = await requiredApproversFor(supabase, step, {
-      id: inv.id,
-      vendor_name: inv.vendor_name,
-      project_id: inv.project_id,
-      step_override_approver_id: inv.step_override_approver_id,
-    });
-    waitingIdsByInvoice.set(inv.id, ids);
+  const waitingIdsByInvoice = await computeWaitingForIds(supabase, invoices);
+
+  if (filters.waiting_for_user_id) {
+    const wantedId = filters.waiting_for_user_id;
+    invoices = invoices.filter((inv) =>
+      (waitingIdsByInvoice.get(inv.id) ?? []).includes(wantedId)
+    );
+    if (invoices.length === 0) return [];
   }
 
   const allPersonIds = [

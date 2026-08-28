@@ -35,6 +35,7 @@ export async function GET(request: Request) {
     amount_under: num("f_amount_under"),
     from: text("f_from"),
     to: text("f_to"),
+    waiting_for_user_id: text("f_waiting_for"),
   };
 
   const rows = await buildInvoiceListReport(supabase, org.id, filters);

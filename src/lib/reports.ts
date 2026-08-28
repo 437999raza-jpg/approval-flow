@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/types";
+import { computeWaitingForIds } from "@/lib/workflow-waiting";
 
 // Report runner: executes a saved report config against the caller's
 // visible invoices (RLS scopes the query, so admins see everything and
@@ -13,6 +14,13 @@ export interface ReportFilters {
   amount_under?: number;
   from?: string; // YYYY-MM-DD
   to?: string; // YYYY-MM-DD
+  // "Waiting for" — the ApprovalMax-style filter (e.g. a report named
+  // after a specific PM, scoped to what's currently sitting with them).
+  // Not a plain invoice column — matching requires per-invoice workflow-
+  // step resolution, so it's applied separately (see
+  // computeWaitingForIds/workflow-waiting.ts) rather than inside
+  // filterInvoicesForReport below.
+  waiting_for_user_id?: string;
 }
 
 export interface ReportConfig {
@@ -77,7 +85,7 @@ export async function runReport(
   const { data: invoices } = await supabase
     .from("invoices")
     .select(
-      "id, status, vendor_name, project_id, amount, tax_amount, created_at"
+      "id, status, vendor_name, project_id, amount, tax_amount, created_at, workflow_id, current_step_order, step_override_approver_id"
     )
     .eq("organization_id", organizationId);
 
@@ -89,7 +97,17 @@ export async function runReport(
     (projects ?? []).map((p) => [p.id, p.name])
   );
 
-  const list = filterInvoicesForReport(invoices ?? [], config.filters);
+  let list = filterInvoicesForReport(invoices ?? [], config.filters);
+
+  // "Waiting for" isn't a plain invoice column — needs the same per-
+  // invoice workflow-step resolution the invoice-list report uses for its
+  // own "Waiting for" column, so a saved report scoped to one approver
+  // (e.g. "Bianca") narrows the summary the same way it narrows the list.
+  if (config.filters.waiting_for_user_id) {
+    const wantedId = config.filters.waiting_for_user_id;
+    const waitingIdsByInvoice = await computeWaitingForIds(supabase, list);
+    list = list.filter((i) => (waitingIdsByInvoice.get(i.id) ?? []).includes(wantedId));
+  }
 
   const keyOf = (i: (typeof list)[number]): string => {
     switch (config.groupBy) {

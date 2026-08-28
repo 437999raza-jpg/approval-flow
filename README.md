@@ -1715,10 +1715,19 @@ name/photo):
 
 `/reports` ([`src/lib/reports.ts`](src/lib/reports.ts)): pick a metric
 (count/amount/tax), an optional group-by (month/vendor/status/project), and
-filters (status, vendor contains, project, amount range, date range) — runs
-against whatever invoices RLS already lets the caller see, so an admin sees
-org-wide totals and a `user` sees their own scope. Configs can be saved
-(`saved_reports`) for reuse.
+filters (status, vendor contains, project, amount range, date range,
+**waiting for** — a specific approver) — runs against whatever invoices
+RLS already lets the caller see, so an admin sees org-wide totals and a
+`user` sees their own scope. Configs can be saved (`saved_reports`) for
+reuse — e.g. a report named after one PM, filtered to what's currently
+sitting with them, mirroring ApprovalMax's own named-report convention.
+"Waiting for" isn't a plain invoice column (it needs the same per-invoice
+workflow-step resolution as the invoice-list report's own "Waiting for"
+column below) — `computeWaitingForIds`
+([`src/lib/workflow-waiting.ts`](src/lib/workflow-waiting.ts)) is shared by
+both `runReport` and `buildInvoiceListReport` so a report scoped to one
+approver narrows the summary and the downloadable list identically,
+without the two independently re-deriving who's eligible.
 
 **Known gap**: the project filter/grouping still reads the invoice-level
 `project_id` only, not the per-line-item projects from migration 0019 — so

@@ -7,6 +7,7 @@ import { SignOutButton } from "@/components/SignOutButton";
 import { SubmitButton } from "@/components/SubmitButton";
 import { runReport, type ReportConfig } from "@/lib/reports";
 import { buildInvoiceListReport } from "@/lib/invoice-list-report";
+import { getCachedMemberRoster } from "@/lib/org-cache";
 
 // ---------------------------------------------------------------------
 // Server actions
@@ -61,6 +62,7 @@ async function saveReport(orgId: string, formData: FormData) {
       amount_under: num("f_amount_under"),
       from: date("f_from"),
       to: date("f_to"),
+      waiting_for_user_id: text("f_waiting_for"),
     },
   };
 
@@ -121,19 +123,27 @@ export default async function ReportsPage({
     );
   }
 
-  const [{ data: reports }, { data: projects }] = await Promise.all([
-    supabase
-      .from("saved_reports")
-      .select("*")
-      .eq("organization_id", org.id)
-      .order("created_at", { ascending: false }),
-    supabase
-      .from("projects")
-      .select("id, name")
-      .eq("organization_id", org.id)
-      .eq("active", true)
-      .order("name", { ascending: true }),
-  ]);
+  const [{ data: reports }, { data: projects }, { memberUserIds, profileRows }] =
+    await Promise.all([
+      supabase
+        .from("saved_reports")
+        .select("*")
+        .eq("organization_id", org.id)
+        .order("created_at", { ascending: false }),
+      supabase
+        .from("projects")
+        .select("id, name")
+        .eq("organization_id", org.id)
+        .eq("active", true)
+        .order("name", { ascending: true }),
+      getCachedMemberRoster(org.id),
+    ]);
+  const memberNameById = new Map(
+    (profileRows ?? []).map((p) => [p.id, p.full_name ?? "Team member"])
+  );
+  const memberOptions = memberUserIds
+    .map((id) => ({ id, label: memberNameById.get(id) ?? "Team member" }))
+    .sort((a, b) => a.label.localeCompare(b.label));
 
   // Run the requested report (if any).
   const runningReport = searchParams.run
@@ -162,6 +172,7 @@ export default async function ReportsPage({
     if (f.amount_under != null) params.set("f_amount_under", String(f.amount_under));
     if (f.from) params.set("f_from", f.from);
     if (f.to) params.set("f_to", f.to);
+    if (f.waiting_for_user_id) params.set("f_waiting_for", f.waiting_for_user_id);
     const qs = params.toString();
     return qs ? `?${qs}` : "";
   };
@@ -287,6 +298,17 @@ export default async function ReportsPage({
                   {(projects ?? []).map((p) => (
                     <option key={p.id} value={p.id}>
                       {p.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <span className={labelCls}>Waiting for</span>
+                <select name="f_waiting_for" defaultValue="" className={`${inputCls} w-full`}>
+                  <option value="">Any</option>
+                  {memberOptions.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.label}
                     </option>
                   ))}
                 </select>
