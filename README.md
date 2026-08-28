@@ -1331,6 +1331,23 @@ and `is_eligible_approver()` in migration 0027/0028 (the same logic in
 SQL, driving RLS visibility). If you change the matching rules, update
 both.
 
+**A step nobody matches gets skipped, not stuck.** Reported live: a
+3-stage matrix workflow (PM Approval → CO Team Approval → Accounting)
+where the PM sometimes hands an invoice straight to the CO team, skipping
+PM Approval entirely for that one invoice — since nobody's condition
+matched PM Approval for it, the invoice got stuck there with "No approver
+currently matches this invoice at step 1 ... It can't be approved as-is,"
+requiring a manual admin Reassign/Stage every time. A matrix workflow's
+steps were never meant to all apply to every invoice — an unmatched step
+(no conditional approver's rules apply, and no default approver) just
+isn't one of THIS invoice's stages, so `reviewComplete` (entering the
+workflow) and `decide()` (advancing after each approval) both now call
+`firstMatchingStepFrom` (dashboard-actions.ts) to land on the first step
+from there onward that actually has a matching approver, skipping past
+any that don't. Only when nothing from the current step through the last
+one matches does the old warning still surface — a genuinely
+unconfigured workflow, not a routing gap for one invoice.
+
 ---
 
 ## Projects & visibility
@@ -1339,16 +1356,19 @@ both.
 separate things depend on them:
 
 1. **Access control** — a `user`-role member can only see an invoice if
-   they submitted it, it has no project at all, or `is_eligible_approver()`
-   says they'd end up as the effective approver of some step on the
-   invoice's workflow — i.e. either they're a default approver on some
-   step, or a conditional approver whose Customer condition (among
-   others) matches a project the invoice touches. Enforced in Postgres,
-   not the UI. (Through migration 0026, this ran through
-   `approval_workflow_projects` — "any approver on a workflow linked to
-   this project" — a coarser, project-linked model; 0027 replaced it with
-   the per-approver-condition check described above, and dropped that
-   table.)
+   they submitted it, or `is_eligible_approver()` says they'd end up as
+   the effective approver of some step on the invoice's workflow — i.e.
+   either they're a default approver on some step, or a conditional
+   approver whose Customer condition (among others) matches a project the
+   invoice touches. Enforced in Postgres, not the UI. (Through migration
+   0026, this ran through `approval_workflow_projects` — "any approver on
+   a workflow linked to this project" — a coarser, project-linked model;
+   0027 replaced it with the per-approver-condition check described
+   above, and dropped that table. **Migration 0067** then dropped a
+   further "or the invoice has no project at all" exception that used to
+   give every member blanket visibility into unassigned invoices
+   regardless of eligibility — see the permissions-overhaul session log
+   entry above.)
 2. **Workflow-selection routing** — the `customer` rule type in [workflow
    routing](#workflow-routing--rules), part 1.
 3. **Per-step approval routing** — the Customer condition on individual

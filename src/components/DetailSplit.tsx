@@ -168,7 +168,7 @@ export function DetailSplit({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [invoiceId]);
 
-  // Snap to a 55/45 split (bill/document) every time the document opens —
+  // Snap to a 60/40 split (bill/document) every time the document opens —
   // the bill is the thing actually being worked on, the document is a
   // reference — the sidebar and invoice list have just hidden (see
   // setFocused below), so this pane's own width has grown to the full
@@ -181,7 +181,7 @@ export function DetailSplit({
   useLayoutEffect(() => {
     if (showDoc && outerRef.current) {
       const total = outerRef.current.getBoundingClientRect().width;
-      setBillW(Math.max(600, Math.round(total * 0.55)));
+      setBillW(Math.max(600, Math.round(total * 0.6)));
     }
   }, [showDoc]);
 

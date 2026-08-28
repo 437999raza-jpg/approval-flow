@@ -75,6 +75,39 @@ export async function requiredApproversFor(
   );
 }
 
+// A matrix workflow's steps aren't all relevant to every invoice — a step
+// nobody's Class/Category/Supplier/Customer condition covers (and no
+// default approver) isn't a dead end for THIS invoice, it's just not one
+// of its stages. Finds the first step at or after `from` that DOES have
+// at least one effective approver for this invoice, skipping straight
+// past any that don't — e.g. a workflow with PM Approval / CO Team
+// Approval / Accounting, where a particular invoice skips PM entirely and
+// starts at CO Team. Returns null if nothing from `from` through the last
+// step matches: the caller decides what that means (reviewComplete falls
+// back to `from` itself so the existing "no approver matches" warning
+// still surfaces for a genuinely unconfigured workflow; decide() treats
+// it as the workflow being complete).
+async function firstMatchingStepFrom(
+  supabase: ReturnType<typeof createClient>,
+  steps: Database["public"]["Tables"]["approval_workflow_steps"]["Row"][],
+  from: number,
+  invoice: { id: string; vendor_name: string | null; project_id: string | null }
+): Promise<number | null> {
+  const candidates = steps
+    .filter((s) => s.step_order >= from)
+    .sort((a, b) => a.step_order - b.step_order);
+  for (const step of candidates) {
+    const required = await requiredApproversFor(supabase, step, {
+      id: invoice.id,
+      vendor_name: invoice.vendor_name,
+      project_id: invoice.project_id,
+      step_override_approver_id: null,
+    });
+    if (required.length > 0) return step.step_order;
+  }
+  return null;
+}
+
 // When the form carries an "instructions" field (the Approve button lives
 // in the Instructions for accounting section), it is saved as the bill
 // memo before the decision — so "type the note, press Approve" works in
@@ -157,15 +190,22 @@ export async function decide(
       existingDecisions ?? []
     );
     if (state === "approved") {
-      const lastStep = orderedSteps[orderedSteps.length - 1]?.step_order ?? 1;
-      const isFinalStep = invoice.current_step_order >= lastStep;
+      // Skip straight past any later step nobody's conditions match for
+      // this invoice, same as the main approval path below.
+      const nextStepOrder = await firstMatchingStepFrom(
+        supabase,
+        orderedSteps,
+        invoice.current_step_order + 1,
+        { id: invoiceId, vendor_name: invoice.vendor_name, project_id: invoice.project_id }
+      );
+      const isFinalStep = nextStepOrder === null;
       await supabase
         .from("invoices")
         .update({
           status: isFinalStep ? "qbo_ready" : "on_approval",
           current_step_order: isFinalStep
             ? invoice.current_step_order
-            : invoice.current_step_order + 1,
+            : nextStepOrder,
           step_override_approver_id: null,
           updated_at: new Date().toISOString(),
         })
@@ -209,19 +249,31 @@ export async function decide(
       })
       .eq("id", invoiceId);
   } else if (state === "approved") {
-    const lastStep = orderedSteps[orderedSteps.length - 1]?.step_order ?? 1;
-    const isFinalStep = invoice.current_step_order >= lastStep;
+    // Skip straight past any later step nobody's Class/Category/Supplier/
+    // Customer condition matches for THIS invoice — a matrix workflow's
+    // stages aren't all relevant to every invoice (e.g. PM Approval / CO
+    // Team Approval / Accounting, where a particular invoice skips PM
+    // entirely and starts at CO Team). null means nothing from here to
+    // the last step matches, i.e. the workflow really is done.
+    const nextStepOrder = await firstMatchingStepFrom(
+      supabase,
+      orderedSteps,
+      invoice.current_step_order + 1,
+      { id: invoiceId, vendor_name: invoice.vendor_name, project_id: invoice.project_id }
+    );
+    const isFinalStep = nextStepOrder === null;
 
     await supabase
       .from("invoices")
       .update({
-        // Completing the LAST step lands the bill in 'qbo_ready', the
-        // admin-only final gate — it sits there until an admin presses
-        // "Sync to QuickBooks". Earlier steps stay 'on_approval'.
+        // Running out of matching steps lands the bill in 'qbo_ready',
+        // the admin-only final gate — it sits there until an admin
+        // presses "Sync to QuickBooks". An earlier match stays
+        // 'on_approval' at that step.
         status: isFinalStep ? "qbo_ready" : "on_approval",
         current_step_order: isFinalStep
           ? invoice.current_step_order
-          : invoice.current_step_order + 1,
+          : nextStepOrder,
         // The reassignment applied to the step just decided, not
         // whatever comes next.
         step_override_approver_id: null,
@@ -849,12 +901,32 @@ export async function reviewComplete(invoiceId: string) {
     }
   );
 
+  // A matrix workflow's first step isn't necessarily relevant to every
+  // invoice (e.g. PM Approval / CO Team Approval / Accounting, where a
+  // particular invoice skips PM entirely) — start at the first step that
+  // actually has a matching approver, not blindly at step 1. Falls back
+  // to step 1 if nothing anywhere matches, so a genuinely unconfigured
+  // workflow still surfaces the existing "no approver matches" warning.
+  let startStepOrder = 1;
+  if (workflowId) {
+    const { data: workflowSteps } = await supabase
+      .from("approval_workflow_steps")
+      .select("*")
+      .eq("workflow_id", workflowId);
+    startStepOrder =
+      (await firstMatchingStepFrom(supabase, workflowSteps ?? [], 1, {
+        id: invoiceId,
+        vendor_name: inv.vendor_name,
+        project_id: inv.project_id,
+      })) ?? 1;
+  }
+
   await supabase
     .from("invoices")
     .update({
       workflow_id: workflowId,
       status: "on_approval",
-      current_step_order: 1,
+      current_step_order: startStepOrder,
       updated_at: new Date().toISOString(),
     })
     .eq("id", invoiceId);
