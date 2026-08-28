@@ -65,9 +65,13 @@ async function saveReport(orgId: string, formData: FormData) {
       project_id: text("f_project"),
       amount_over: num("f_amount_over"),
       amount_under: num("f_amount_under"),
+      tax_over: num("f_tax_over"),
+      tax_under: num("f_tax_under"),
       from: date("f_from"),
       to: date("f_to"),
       waiting_for_user_id: text("f_waiting_for"),
+      approved_by_user_id: text("f_approved_by"),
+      submitted_by_user_id: text("f_requester"),
     },
   };
 
@@ -147,8 +151,16 @@ function describeReportConfig(
   if (f.waiting_for_user_id) {
     lines.push(`Waiting for ${memberNameById.get(f.waiting_for_user_id) ?? "Team member"}`);
   }
+  if (f.approved_by_user_id) {
+    lines.push(`Approved by ${memberNameById.get(f.approved_by_user_id) ?? "Team member"}`);
+  }
+  if (f.submitted_by_user_id) {
+    lines.push(`Requester is ${memberNameById.get(f.submitted_by_user_id) ?? "Team member"}`);
+  }
   if (f.amount_over != null) lines.push(`Amount over ${f.amount_over}`);
   if (f.amount_under != null) lines.push(`Amount under ${f.amount_under}`);
+  if (f.tax_over != null) lines.push(`Total tax over ${f.tax_over}`);
+  if (f.tax_under != null) lines.push(`Total tax under ${f.tax_under}`);
   if (f.from || f.to) lines.push(`Date from ${f.from ?? "any"} to ${f.to ?? "any"}`);
   if (config.groupBy !== "none") lines.push(`Grouped by ${GROUP_LABELS[config.groupBy]}`);
   if (config.metric !== "count") {
@@ -238,9 +250,13 @@ export default async function ReportsPage({
     if (f.project_id) params.set("f_project", f.project_id);
     if (f.amount_over != null) params.set("f_amount_over", String(f.amount_over));
     if (f.amount_under != null) params.set("f_amount_under", String(f.amount_under));
+    if (f.tax_over != null) params.set("f_tax_over", String(f.tax_over));
+    if (f.tax_under != null) params.set("f_tax_under", String(f.tax_under));
     if (f.from) params.set("f_from", f.from);
     if (f.to) params.set("f_to", f.to);
     if (f.waiting_for_user_id) params.set("f_waiting_for", f.waiting_for_user_id);
+    if (f.approved_by_user_id) params.set("f_approved_by", f.approved_by_user_id);
+    if (f.submitted_by_user_id) params.set("f_requester", f.submitted_by_user_id);
     const qs = params.toString();
     return qs ? `?${qs}` : "";
   };
@@ -417,6 +433,36 @@ export default async function ReportsPage({
                 </select>
               </div>
               <div>
+                <span className={labelCls}>Approved by</span>
+                <select
+                  name="f_approved_by"
+                  defaultValue={ef?.approved_by_user_id ?? ""}
+                  className={`${inputCls} w-full`}
+                >
+                  <option value="">Any</option>
+                  {memberOptions.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <span className={labelCls}>Requester</span>
+                <select
+                  name="f_requester"
+                  defaultValue={ef?.submitted_by_user_id ?? ""}
+                  className={`${inputCls} w-full`}
+                >
+                  <option value="">Any</option>
+                  {memberOptions.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
                 <span className={labelCls}>Amount over</span>
                 <input
                   name="f_amount_over"
@@ -445,6 +491,28 @@ export default async function ReportsPage({
               <div>
                 <span className={labelCls}>To date</span>
                 <input name="f_to" type="date" defaultValue={ef?.to ?? ""} className={`${inputCls} w-full`} />
+              </div>
+              <div>
+                <span className={labelCls}>Total tax over</span>
+                <input
+                  name="f_tax_over"
+                  type="number"
+                  step="0.01"
+                  defaultValue={ef?.tax_over ?? ""}
+                  placeholder="e.g. 50"
+                  className={`${inputCls} w-full`}
+                />
+              </div>
+              <div>
+                <span className={labelCls}>Total tax under</span>
+                <input
+                  name="f_tax_under"
+                  type="number"
+                  step="0.01"
+                  defaultValue={ef?.tax_under ?? ""}
+                  placeholder="e.g. 500"
+                  className={`${inputCls} w-full`}
+                />
               </div>
             </div>
 
@@ -608,7 +676,7 @@ export default async function ReportsPage({
                       href={`/api/reports/audit-export${idsQs}`}
                       className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
                     >
-                      Download audit report + invoices (PDF)
+                      Download audit reports (PDF)
                     </a>
                   </div>
                 )}

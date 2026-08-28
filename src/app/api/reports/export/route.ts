@@ -33,9 +33,13 @@ export async function GET(request: Request) {
     project_id: text("f_project"),
     amount_over: num("f_amount_over"),
     amount_under: num("f_amount_under"),
+    tax_over: num("f_tax_over"),
+    tax_under: num("f_tax_under"),
     from: text("f_from"),
     to: text("f_to"),
     waiting_for_user_id: text("f_waiting_for"),
+    approved_by_user_id: text("f_approved_by"),
+    submitted_by_user_id: text("f_requester"),
   };
 
   const rows = await buildInvoiceListReport(supabase, org.id, filters);

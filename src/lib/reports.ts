@@ -12,15 +12,19 @@ export interface ReportFilters {
   project_id?: string;
   amount_over?: number;
   amount_under?: number;
+  tax_over?: number;
+  tax_under?: number;
   from?: string; // YYYY-MM-DD
   to?: string; // YYYY-MM-DD
-  // "Waiting for" — the ApprovalMax-style filter (e.g. a report named
-  // after a specific PM, scoped to what's currently sitting with them).
-  // Not a plain invoice column — matching requires per-invoice workflow-
-  // step resolution, so it's applied separately (see
-  // computeWaitingForIds/workflow-waiting.ts) rather than inside
-  // filterInvoicesForReport below.
+  // "Waiting for" / "Approved by" aren't plain invoice columns — matching
+  // needs per-invoice workflow-step resolution (waiting for) or a join
+  // against invoice_approvals (approved by), so both are applied
+  // separately (see computeWaitingForIds/workflow-waiting.ts and
+  // computeApprovedByIds below) rather than inside
+  // filterInvoicesForReport.
   waiting_for_user_id?: string;
+  approved_by_user_id?: string;
+  submitted_by_user_id?: string;
 }
 
 export interface ReportConfig {
@@ -53,6 +57,8 @@ export function filterInvoicesForReport<
     vendor_name: string | null;
     project_id: string | null;
     amount: number | null;
+    tax_amount: number | null;
+    submitted_by: string | null;
     created_at: string;
   },
 >(invoices: T[], f: ReportFilters): T[] {
@@ -70,11 +76,38 @@ export function filterInvoicesForReport<
     if (f.project_id && i.project_id !== f.project_id) return false;
     if (f.amount_over != null && (i.amount ?? 0) < f.amount_over) return false;
     if (f.amount_under != null && (i.amount ?? 0) > f.amount_under) return false;
+    if (f.tax_over != null && (i.tax_amount ?? 0) < f.tax_over) return false;
+    if (f.tax_under != null && (i.tax_amount ?? 0) > f.tax_under) return false;
+    if (f.submitted_by_user_id && i.submitted_by !== f.submitted_by_user_id) return false;
     const created = new Date(i.created_at).getTime();
     if (fromMs != null && created < fromMs) return false;
     if (toMs != null && created > toMs) return false;
     return true;
   });
+}
+
+// Who actually approved each invoice (decision = 'approved' rows in
+// invoice_approvals) — a plain join, unlike "waiting for" which needs
+// live workflow-step resolution. Shared by runReport and
+// buildInvoiceListReport so both compute this the same way.
+export async function computeApprovedByIds(
+  supabase: SupabaseClient<Database>,
+  invoiceIds: string[]
+): Promise<Map<string, Set<string>>> {
+  const map = new Map<string, Set<string>>();
+  if (invoiceIds.length === 0) return map;
+  const { data: approvals } = await supabase
+    .from("invoice_approvals")
+    .select("invoice_id, approver_id")
+    .in("invoice_id", invoiceIds)
+    .eq("decision", "approved");
+  for (const a of approvals ?? []) {
+    if (!a.approver_id) continue;
+    const set = map.get(a.invoice_id) ?? new Set<string>();
+    set.add(a.approver_id);
+    map.set(a.invoice_id, set);
+  }
+  return map;
 }
 
 export async function runReport(
@@ -85,7 +118,7 @@ export async function runReport(
   const { data: invoices } = await supabase
     .from("invoices")
     .select(
-      "id, status, vendor_name, project_id, amount, tax_amount, created_at, workflow_id, current_step_order, step_override_approver_id"
+      "id, status, vendor_name, project_id, amount, tax_amount, submitted_by, created_at, workflow_id, current_step_order, step_override_approver_id"
     )
     .eq("organization_id", organizationId);
 
@@ -107,6 +140,11 @@ export async function runReport(
     const wantedId = config.filters.waiting_for_user_id;
     const waitingIdsByInvoice = await computeWaitingForIds(supabase, list);
     list = list.filter((i) => (waitingIdsByInvoice.get(i.id) ?? []).includes(wantedId));
+  }
+  if (config.filters.approved_by_user_id) {
+    const wantedId = config.filters.approved_by_user_id;
+    const approvedIdsByInvoice = await computeApprovedByIds(supabase, list.map((i) => i.id));
+    list = list.filter((i) => approvedIdsByInvoice.get(i.id)?.has(wantedId));
   }
 
   const keyOf = (i: (typeof list)[number]): string => {

@@ -94,28 +94,33 @@ export async function buildMergedInvoicePdf(
   return mergeDocuments(files);
 }
 
-// The Reports page's "Download audit report + invoices" — per invoice,
-// its audit PDF (buildInvoiceAuditDocument) followed by its original
-// document(s), for every invoice in the report's result set, all merged
-// into ONE file. Mirrors what already happens at QBO-sync time, where
-// the audit PDF and the original document are attached to the bill as a
-// pair (see audit-trail.ts's own comment) — this is that same pairing,
-// just for many invoices at once instead of one.
-export async function buildAuditPlusInvoicesPdf(
+// The Reports page's "Download audit reports (PDF)" — every matching
+// invoice's audit PDF (buildInvoiceAuditDocument), merged into ONE file,
+// in created_at order. Deliberately audit-only, not paired with the
+// original documents — ApprovalMax's own "Request reports" screen offers
+// these as two separate downloads ("audit reports archive" vs
+// "attachment archive"), not one combined bundle; "Download invoices
+// (PDF)" (buildMergedInvoicePdf via /api/invoices/batch-export) is the
+// attachment-archive equivalent.
+export async function buildBatchAuditDocument(
   supabase: SupabaseClient<Database>,
   invoiceIds: string[]
 ): Promise<Uint8Array | null> {
   if (invoiceIds.length === 0) return null;
-  const perInvoice = await loadInvoiceFiles(supabase, invoiceIds);
-  if (perInvoice.length === 0) return null;
+
+  const { data: invoices } = await supabase
+    .from("invoices")
+    .select("id")
+    .in("id", invoiceIds)
+    .order("created_at", { ascending: true });
+  if (!invoices || invoices.length === 0) return null;
 
   const files: MergeFile[] = [];
-  for (const { invoiceId, files: docFiles } of perInvoice) {
-    const audit = await buildInvoiceAuditDocument(supabase, invoiceId);
+  for (const inv of invoices) {
+    const audit = await buildInvoiceAuditDocument(supabase, inv.id);
     if (audit) {
       files.push({ name: audit.filename, type: "application/pdf", bytes: new Uint8Array(audit.pdf) });
     }
-    files.push(...docFiles);
   }
   if (files.length === 0) return null;
   return mergeDocuments(files);

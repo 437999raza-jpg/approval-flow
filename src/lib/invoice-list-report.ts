@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/types";
-import { filterInvoicesForReport, type ReportFilters } from "@/lib/reports";
+import { filterInvoicesForReport, computeApprovedByIds, type ReportFilters } from "@/lib/reports";
 import { computeWaitingForIds } from "@/lib/workflow-waiting";
 
 // Per-invoice list, the ApprovalMax-style "Request reports" download —
@@ -28,7 +28,7 @@ export async function buildInvoiceListReport(
   const { data: invoicesRaw } = await supabase
     .from("invoices")
     .select(
-      "id, vendor_name, invoice_number, file_name, amount, status, created_at, project_id, workflow_id, current_step_order, step_override_approver_id"
+      "id, vendor_name, invoice_number, file_name, amount, tax_amount, submitted_by, status, created_at, project_id, workflow_id, current_step_order, step_override_approver_id"
     )
     .eq("organization_id", organizationId);
   let invoices = filterInvoicesForReport(invoicesRaw ?? [], filters);
@@ -36,17 +36,13 @@ export async function buildInvoiceListReport(
 
   const invoiceIds = invoices.map((i) => i.id);
 
-  const [{ data: lineItems }, { data: approvals }, { data: projects }] =
+  const [{ data: lineItems }, approvedIdsByInvoice, { data: projects }] =
     await Promise.all([
       supabase
         .from("invoice_line_items")
         .select("invoice_id, class, category, project_id")
         .in("invoice_id", invoiceIds),
-      supabase
-        .from("invoice_approvals")
-        .select("invoice_id, approver_id, decision")
-        .in("invoice_id", invoiceIds)
-        .eq("decision", "approved"),
+      computeApprovedByIds(supabase, invoiceIds),
       supabase.from("projects").select("id, name").eq("organization_id", organizationId),
     ]);
 
@@ -60,13 +56,6 @@ export async function buildInvoiceListReport(
     list.push({ class: li.class, category: li.category, project_id: li.project_id });
     lineItemsByInvoice.set(li.invoice_id, list);
   }
-  const approvedIdsByInvoice = new Map<string, Set<string>>();
-  for (const a of approvals ?? []) {
-    if (!a.approver_id) continue;
-    const set = approvedIdsByInvoice.get(a.invoice_id) ?? new Set<string>();
-    set.add(a.approver_id);
-    approvedIdsByInvoice.set(a.invoice_id, set);
-  }
 
   const waitingIdsByInvoice = await computeWaitingForIds(supabase, invoices);
 
@@ -75,6 +64,11 @@ export async function buildInvoiceListReport(
     invoices = invoices.filter((inv) =>
       (waitingIdsByInvoice.get(inv.id) ?? []).includes(wantedId)
     );
+    if (invoices.length === 0) return [];
+  }
+  if (filters.approved_by_user_id) {
+    const wantedId = filters.approved_by_user_id;
+    invoices = invoices.filter((inv) => approvedIdsByInvoice.get(inv.id)?.has(wantedId));
     if (invoices.length === 0) return [];
   }
 

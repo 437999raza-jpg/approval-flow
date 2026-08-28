@@ -4,13 +4,15 @@
 export const maxDuration = 60;
 
 import { createClient } from "@/lib/supabase/server";
-import { buildAuditPlusInvoicesPdf } from "@/lib/invoice-export";
+import { buildBatchAuditDocument } from "@/lib/invoice-export";
 
-// Download the audit report + original documents for every invoice in a
-// report's result set, merged into ONE PDF (GET
-// /api/reports/audit-export?ids=a,b,c). Authenticated; RLS scopes it to
-// whatever invoices the caller can already see, same as
-// /api/invoices/batch-export. Authored by Araza.
+// Download the audit report for every invoice in a report's result set,
+// merged into ONE PDF (GET /api/reports/audit-export?ids=a,b,c).
+// Authenticated; RLS scopes it to whatever invoices the caller can
+// already see, same as /api/invoices/batch-export (that route is the
+// separate "download invoices" archive — see invoice-export.ts's own
+// comment on why these stay two downloads, not one bundle).
+// Authored by Araza.
 export async function GET(request: Request) {
   const supabase = createClient();
 
@@ -27,7 +29,7 @@ export async function GET(request: Request) {
     .filter(Boolean);
   if (ids.length === 0) return new Response("No invoices selected", { status: 400 });
 
-  const pdf = await buildAuditPlusInvoicesPdf(supabase, ids);
+  const pdf = await buildBatchAuditDocument(supabase, ids);
   if (!pdf) return new Response("Could not build the PDF", { status: 404 });
 
   return new Response(new Uint8Array(pdf), {
