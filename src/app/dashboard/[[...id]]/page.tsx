@@ -24,6 +24,7 @@ import { InvoiceSelectionList, type SelectableInvoice } from "@/components/Invoi
 import { DetailSplit, type DocumentRef } from "@/components/DetailSplit";
 import { Sidebar } from "@/components/Sidebar";
 import { DocumentFocusProvider } from "@/components/DocumentFocusContext";
+import { ToastProvider } from "@/components/ToastContext";
 import { ExtractionPoller } from "@/components/ExtractionPoller";
 import { LocalTime } from "@/components/LocalTime";
 import { DocumentSearchModal, type DocumentSearchFilters } from "@/components/DocumentSearchModal";
@@ -1042,6 +1043,7 @@ export default async function DashboardPage({
   }));
 
   return (
+    <ToastProvider>
     <DocumentFocusProvider>
     <ExtractionPoller />
     <div className="flex h-screen bg-slate-50 text-slate-900">
@@ -1501,5 +1503,6 @@ export default async function DashboardPage({
       </div>
     </div>
     </DocumentFocusProvider>
+    </ToastProvider>
   );
 }

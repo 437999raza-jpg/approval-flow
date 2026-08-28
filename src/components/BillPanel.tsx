@@ -11,6 +11,7 @@ import { InstructionsBox } from "./InstructionsBox";
 import { LocalTime } from "./LocalTime";
 import { ReorderPagesModal } from "./ReorderPagesModal";
 import { RejectReasonModal } from "./RejectReasonModal";
+import { useToast } from "./ToastContext";
 import { InvoiceStatusBadge } from "./InvoiceStatusBadge";
 import type { Database } from "@/lib/supabase/types";
 import { computeLineItemTotals } from "@/lib/invoice-totals";
@@ -249,6 +250,15 @@ export function BillPanel({
   useEffect(() => {
     scrollerRef.current?.scrollTo({ top: 0 });
   }, [resetScrollKey]);
+
+  const { showToast } = useToast();
+  // For floating confirmation toasts (Approve/Reject/Hold) — the invoice
+  // can vanish from view the instant a decision moves it off this user's
+  // plate, so toasts name what just happened rather than a bare status
+  // word. Matches Dext/ApprovalMax's own floating confirmation.
+  const invoiceLabel = `${invoice.vendor_name ?? invoice.file_name}${
+    invoice.invoice_number ? ` #${invoice.invoice_number}` : ""
+  }`;
 
   const fmt = (n: number | null) =>
     n != null
@@ -521,6 +531,7 @@ export function BillPanel({
                   readOnly={instructions.readOnly}
                   saveInstructions={instructions.saveInstructions}
                   approve={instructions.approve}
+                  invoiceLabel={invoiceLabel}
                 />
               </div>
             </div>
@@ -615,13 +626,19 @@ export function BillPanel({
                           )}
                           {approval.canDecide && (
                             <>
-                              <form action={approval.hold} className="flex-1">
+                              <form
+                                action={async (formData) => {
+                                  await approval.hold(formData);
+                                  showToast(`${invoiceLabel} put on hold`);
+                                }}
+                                className="flex-1"
+                              >
                                 <SubmitButton className="w-full rounded-md border border-amber-300 bg-amber-50 px-4 py-2 text-center text-sm font-semibold text-amber-800 hover:bg-amber-100">
                                   Hold
                                 </SubmitButton>
                               </form>
                               <div className="flex-1">
-                                <RejectReasonModal reject={approval.reject} />
+                                <RejectReasonModal reject={approval.reject} invoiceLabel={invoiceLabel} />
                               </div>
                             </>
                           )}

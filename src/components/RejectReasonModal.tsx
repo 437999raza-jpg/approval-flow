@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { clsx } from "clsx";
+import { useToast } from "./ToastContext";
 
 // Reject requires a reason — forced via this popup instead of the old bare
 // one-click button. The reason posts to Discussion (see rejectWithReason in
@@ -9,9 +10,15 @@ import { clsx } from "clsx";
 // WHY in the same place @mentions and other back-and-forth already lives.
 export function RejectReasonModal({
   reject,
+  invoiceLabel,
 }: {
   reject: (formData: FormData) => Promise<void>;
+  // For the floating confirmation toast once this closes — the invoice
+  // can vanish from view the moment it's rejected, same reasoning as the
+  // Approve toast.
+  invoiceLabel?: string;
 }) {
+  const { showToast } = useToast();
   const [open, setOpen] = useState(false);
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
@@ -53,6 +60,9 @@ export function RejectReasonModal({
                 setBusy(true);
                 await reject(formData);
                 setBusy(false);
+                setOpen(false);
+                setReason("");
+                showToast(`${invoiceLabel ?? "Invoice"} rejected`);
               }}
             >
               <label className="block text-xs font-medium text-slate-600">

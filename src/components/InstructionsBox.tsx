@@ -3,6 +3,7 @@
 import { useRef, useState } from "react";
 import type { BillInstructionsEntry } from "./BillPanel";
 import { SubmitButton } from "./SubmitButton";
+import { useToast } from "./ToastContext";
 
 // Instructions for accounting — an append-only thread. Each approver ADDS
 // their own line (nobody can change a previous one), and the whole thread
@@ -17,12 +18,18 @@ export function InstructionsBox({
   saveInstructions,
   approve,
   readOnly = false,
+  invoiceLabel,
 }: {
   entries: BillInstructionsEntry[];
   saveInstructions: (formData: FormData) => Promise<void>;
   approve?: (formData: FormData) => Promise<void>;
   readOnly?: boolean;
+  // For the floating confirmation toast — the invoice can disappear from
+  // view the moment approval moves it off this user's plate, so this
+  // names what was just approved rather than leaving a bare "Approved."
+  invoiceLabel?: string;
 }) {
+  const { showToast } = useToast();
   const formRef = useRef<HTMLFormElement>(null);
   const formId = "instructions-form";
   const [text, setText] = useState("");
@@ -40,9 +47,16 @@ export function InstructionsBox({
   // The textarea is controlled (value=text), so its value is submitted with
   // the form; after the action resolves we reset it to empty.
   async function handleSubmit(formData: FormData) {
+    const wasApproving = !!approve;
     const action = approve ?? saveInstructions;
     await action(formData);
     setText("");
+    // The invoice can vanish from this screen the instant it's approved
+    // (it's no longer "Requires my approval") — this confirms the click
+    // actually landed, same as Dext/ApprovalMax's own floating toast.
+    if (wasApproving) {
+      showToast(`${invoiceLabel ?? "Invoice"} approved`);
+    }
   }
 
   return (
