@@ -1723,6 +1723,54 @@ approvers just sit on bills for days with nothing prompting them.
 
 ---
 
+## Brand (ufirst)
+
+The app's visual identity comes from ufirst's brand package
+(`ufirst_brand_brief.md` — colors, fonts, logo files), applied as a
+preview mockup first (an Artifact) and implemented once approved, rather
+than recolored blind. Applied incrementally, not a one-shot recolor of
+every screen:
+
+- **Tokens** — `tailwind.config.ts` adds `brand-ink` / `brand-navy` /
+  `brand-green` / `brand-green-dark` / `brand-green-light` / `brand-mist`
+  / `brand-line` / `brand-muted` (hexes match the brief exactly) alongside
+  the existing slate/blue palette, which most of the app still uses —
+  these are additive, adopted screen-by-screen.
+- **Fonts** — Inter (body) and Archivo (display, `font-display` /
+  `.font-display` — extra-bold, used for headlines and logo lockups only,
+  per the brief's own rule that italic Archivo is headline-only, never
+  body) loaded via `next/font/google` in
+  [`layout.tsx`](src/app/layout.tsx).
+- **Favicon** — [`src/app/icon.png`](src/app/icon.png) /
+  `apple-icon.png`, Next's file-based icon convention (auto-served, no
+  manifest or `<link>` tags needed). Composited from the package's
+  rectangular "u1" icon: the source is a 1200×827 rounded card with
+  transparent corners, so a plain pad-to-square left visible transparent
+  notches where the corners used to be — instead it's centered on a
+  fresh `#091727` (the documented Navy Ink, not a sampled pixel — an
+  early attempt sampled a pixel that landed on the green "1" glyph
+  instead of the background) square canvas with matching rounded outer
+  corners, giving one seamless card at any size.
+- **Login page** ([`login/page.tsx`](src/app/login/page.tsx)) — a navy
+  hero panel (hidden below `md:`) with the white wordmark and one of the
+  brief's own "signature lines" plus a documented proof point, next to
+  the sign-in form with the color wordmark, green CTA, and green-tinted
+  focus rings. Copy is pulled verbatim from `ufirst_brand_brief.md`, not
+  invented.
+- **Dashboard sidebar** — a navy strip with the white wordmark above the
+  org name (`src/app/dashboard/[[...id]]/page.tsx`) — there was no
+  existing top bar to put it in, just the sidebar.
+- **Email footer** ([`notify.ts`](src/lib/notify.ts)) — the plain-text
+  "Flow by UFIRST" footer line is now the wordmark image, referenced by
+  absolute URL (`NEXT_PUBLIC_APP_URL`) since email clients fetch images
+  remotely rather than from the bundle. Per-type accent colors (blue
+  mention / green assigned / red rejected) are semantic state, not brand
+  identity, and were left alone.
+- Logo source files live in `public/brand/` (`ufirst-wordmark.png`,
+  `ufirst-wordmark-white.png`, `ufirst-icon.png`).
+
+---
+
 ## Dashboard UI
 
 `/dashboard/[[...id]]` ([`src/app/dashboard/[[...id]]/page.tsx`](src/app/dashboard/[[...id]]/page.tsx))
