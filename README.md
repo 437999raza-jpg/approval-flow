@@ -2075,19 +2075,42 @@ name/photo):
 
 `/reports` ([`src/lib/reports.ts`](src/lib/reports.ts)): pick a metric
 (count/amount/tax), an optional group-by (month/vendor/status/project), and
-filters (status, vendor contains, project, amount range, date range,
-**waiting for** — a specific approver) — runs against whatever invoices
-RLS already lets the caller see, so an admin sees org-wide totals and a
-`user` sees their own scope. Configs can be saved (`saved_reports`) for
-reuse — e.g. a report named after one PM, filtered to what's currently
-sitting with them, mirroring ApprovalMax's own named-report convention.
-"Waiting for" isn't a plain invoice column (it needs the same per-invoice
-workflow-step resolution as the invoice-list report's own "Waiting for"
-column below) — `computeWaitingForIds`
-([`src/lib/workflow-waiting.ts`](src/lib/workflow-waiting.ts)) is shared by
-both `runReport` and `buildInvoiceListReport` so a report scoped to one
-approver narrows the summary and the downloadable list identically,
-without the two independently re-deriving who's eligible.
+filters — status, vendor contains, project, amount range, **total tax
+range**, date range, **waiting for** / **approved by** (specific
+approvers), and **requester** (who submitted it) — runs against whatever
+invoices RLS already lets the caller see, so an admin sees org-wide
+totals and a `user` sees their own scope; no extra filtering code needed
+for that, every report query already goes through the RLS-bound request
+client. Configs can be saved (`saved_reports`) for reuse — e.g. a report
+named after one PM, filtered to what's currently sitting with them,
+mirroring ApprovalMax's own named-report convention.
+
+The filter set was picked by comparing against a real ApprovalMax report-
+edit screenshot: added Approved by / Requester / Total tax range since
+they were cheap (data Flow already tracks) and clearly useful; skipped
+Category, Class, Currency, and Decision-date from ApprovalMax's own set —
+not asked for, and each needs more plumbing (line-item matching, or a
+second date source) than the three that shipped. "Waiting for" and
+"Approved by" aren't plain invoice columns: "Waiting for" needs the same
+per-invoice workflow-step resolution as the invoice-list report's own
+column below (`computeWaitingForIds`,
+[`src/lib/workflow-waiting.ts`](src/lib/workflow-waiting.ts)); "Approved
+by" is a plain `invoice_approvals` join (`computeApprovedByIds`, now in
+`reports.ts` itself, shared by `runReport` and `buildInvoiceListReport` —
+the latter used to compute this inline, duplicating the same query).
+
+**Saved reports are a card grid, and actually editable.** Each card
+names its own filters in plain English ("Status is On approval",
+"Waiting for Bianca") via `describeReportConfig()` — mirrors
+ApprovalMax's own "Request reports" screen, which shows the same kind of
+filter-chip summary per report. Click a card to run it. **Edit** loads
+the saved config back into the builder form
+(`/reports?edit=<id>`) and `saveReport()` updates that row in place
+instead of always inserting a new one — previously the only option was
+Delete, so a mistake or a filter tweak meant rebuilding the report from
+scratch. (`saved_reports` already had a working "members can update" RLS
+policy from migration 0010 — verified before relying on it, given this
+app's history of silent RLS-gap no-ops elsewhere.)
 
 **Known gap**: the project filter/grouping still reads the invoice-level
 `project_id` only, not the per-line-item projects from migration 0019 — so
@@ -2101,13 +2124,27 @@ not a grouped count/sum, sorted by customer then supplier. The Name column
 links straight to the invoice. Shown under any running saved report
 (same filters, reuses `filterInvoicesForReport` — factored out of
 `runReport` so the two views can't drift onto different filter
-semantics), with a "Download CSV" button; a standalone "Download all
-invoices" link at the top of `/reports` runs it with no filters at all.
-`GET /api/reports/export` streams the CSV (same query params as the
-saved-report filters). "Waiting for" reuses `requiredApproversFor`
+semantics). "Waiting for" reuses `requiredApproversFor`
 (dashboard-actions.ts) directly, so it matches EXACTLY who'd see Approve/
 Reject on the invoice itself — not a second, possibly-drifting
 re-derivation of the same matching rules.
+
+**Three downloads**, all scoped to the running report's exact result set
+(same RLS-based visibility as everything else):
+- **Download CSV** (`GET /api/reports/export`, same query params as the
+  saved-report filters) — a standalone "Download all invoices" link at
+  the top of `/reports` runs this with no filters at all.
+- **Download invoices (PDF)** — reuses the existing
+  `/api/invoices/batch-export?ids=...` (`buildMergedInvoicePdf`): every
+  matching invoice's original document(s), merged into one PDF.
+- **Download audit reports (PDF)** — `GET /api/reports/audit-export`
+  (`buildBatchAuditDocument`, [`src/lib/invoice-export.ts`](src/lib/invoice-export.ts)):
+  every matching invoice's audit-trail PDF, merged into one PDF.
+  Deliberately **audit-only, not paired with the original documents** —
+  an earlier version bundled both into one file, but ApprovalMax's own
+  screen offers these as two separate archive downloads ("audit reports
+  archive" vs "attachment archive"), not one combined bundle, so this
+  matches that instead.
 
 ---
 
