@@ -100,14 +100,13 @@ export default function LoginPage() {
           />
           <div>
             <h1 className="font-display text-[27px] font-extrabold italic leading-tight">
-              Don&apos;t hire a bookkeeper.
+              No more chasing down who approves what.
               <br />
-              Get a whole finance <span className="text-brand-green-light">team.</span>
+              Flow already knows — <span className="text-brand-green-light">automatically.</span>
             </h1>
             <p className="mt-4 text-[13.5px] leading-relaxed text-[#C4D0DE]">
-              <span className="font-semibold text-white">40–60% less</span> than a
-              part-time hire · up and running in days · books that never stop
-              for vacations
+              Matrix routing by project, class, and supplier · deadlines with
+              automatic reminders · a full audit trail on every decision
             </p>
           </div>
           <div className="brand-rule absolute bottom-0 left-0 right-0" />
