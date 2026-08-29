@@ -15,6 +15,16 @@ const NL_CUE_WORDS = new Set([
   "are", "that", "yet",
 ]);
 
+// Recognized without ever hitting the AI endpoint — free, instant, no
+// chance of a model deciding to search for a vendor literally named
+// "clear". Matches "clear filter(s)", "reset the search", "remove all
+// filters", etc. (typed or spoken).
+const CLEAR_INTENT = /^(clear|reset|remove)( the| all)*( filters?| search)+$/i;
+
+function isClearIntent(query: string): boolean {
+  return CLEAR_INTENT.test(query.trim());
+}
+
 function looksLikeNaturalLanguage(query: string): boolean {
   const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
   // 2+ words covers plain multi-word names too ("Clarington Toyota",
@@ -126,6 +136,11 @@ export function SearchInput({
 
   function submit(next: string) {
     const trimmed = next.trim();
+    if (trimmed && isClearIntent(trimmed)) {
+      setValue("");
+      router.push(pathname);
+      return;
+    }
     if (trimmed && looksLikeNaturalLanguage(trimmed)) aiSubmit(trimmed);
     else plainSubmit(next);
   }
