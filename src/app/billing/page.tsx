@@ -6,7 +6,7 @@ import { selectPlan, createUsageCheckout, createBillingPortalSession } from "@/l
 import { StripeCheckoutButton } from "@/components/StripeCheckoutButton";
 import { CollapsibleSection } from "@/components/CollapsibleSection";
 import { SubmitButton } from "@/components/SubmitButton";
-import { PLANS, PLAN_ORDER, isPlanId } from "@/lib/plans";
+import { PLANS, PLAN_ORDER, isPlanId, isTrialActive } from "@/lib/plans";
 
 // Flow's billing: a fixed monthly plan (Starter/Growth/Scale) rather than
 // an admin-editable $/document rate — see src/lib/plans.ts for how these
@@ -43,12 +43,18 @@ export default async function BillingPage({
       .limit(500),
     supabase
       .from("organizations")
-      .select("plan, plan_selected_at")
+      .select("plan, plan_selected_at, trial_ends_at")
       .eq("id", org.id)
       .single(),
   ]);
   const currentPlan = isPlanId(orgRow?.plan) ? PLANS[orgRow.plan] : null;
   const planSelectedAt = orgRow?.plan_selected_at ?? null;
+  const trialEndsAt = orgRow?.trial_ends_at ?? null;
+  const trialing = trialEndsAt != null && !currentPlan && isTrialActive(trialEndsAt);
+  const trialLapsed = trialEndsAt != null && !currentPlan && !isTrialActive(trialEndsAt);
+  const trialDaysLeft = trialing
+    ? Math.max(1, Math.ceil((new Date(trialEndsAt!).getTime() - Date.now()) / (24 * 60 * 60 * 1000)))
+    : 0;
 
   // Monthly rollup from the (already capped at 500) most recent events.
   const monthKey = (iso: string) => iso.slice(0, 7); // YYYY-MM
@@ -98,7 +104,11 @@ export default async function BillingPage({
       <p className="mt-1 text-sm text-brand-muted">
         {currentPlan
           ? `On the ${currentPlan.name} plan — ${currentPlan.includedDocs} documents/month included.`
-          : "Choose a plan below to get started."}{" "}
+          : trialing
+            ? `${trialDaysLeft} day${trialDaysLeft === 1 ? "" : "s"} left in your free trial — full access, no plan needed yet.`
+            : trialLapsed
+              ? "Your trial has ended — choose a plan below to keep approving and adding invoices."
+              : "Choose a plan below to get started."}{" "}
         Always billed in USD, wherever you&apos;re based.
       </p>
 

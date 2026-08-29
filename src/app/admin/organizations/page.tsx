@@ -3,8 +3,9 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isPlatformAdmin } from "@/lib/platform-admin";
-import { createOrganizationAction, joinOrganizationAction } from "@/lib/admin-actions";
+import { createOrganizationAction, joinOrganizationAction, extendTrialAction } from "@/lib/admin-actions";
 import { SubmitButton } from "@/components/SubmitButton";
+import { isTrialActive } from "@/lib/plans";
 
 const ERRORS: Record<string, string> = {
   "missing-fields": "Organization name and admin email are both required.",
@@ -12,6 +13,7 @@ const ERRORS: Record<string, string> = {
   "inbound-local-taken": "That inbound address is already used by another organization.",
   "create-failed": "Could not create the organization.",
   "invite-failed": "Organization created, but the admin account could not be created — invite them manually from that org's Settings page.",
+  "bad-extend": "Enter a valid number of days to extend the trial by.",
 };
 
 export default async function AdminOrganizationsPage({
@@ -32,7 +34,7 @@ export default async function AdminOrganizationsPage({
 
   const { data: orgs } = await admin
     .from("organizations")
-    .select("id, name, slug, inbound_email_token, inbound_email_local, created_at")
+    .select("id, name, slug, inbound_email_token, inbound_email_local, trial_ends_at, plan, created_at")
     .order("created_at", { ascending: false });
 
   const { data: memberRows } = await admin
@@ -157,6 +159,7 @@ export default async function AdminOrganizationsPage({
               <th className="py-1.5 pr-3">Invoice address</th>
               <th className="py-1.5 pr-3">Members</th>
               <th className="py-1.5 pr-3">Support</th>
+              <th className="py-1.5 pr-3">Trial</th>
               <th className="py-1.5 pr-3">Created</th>
               <th className="py-1.5"></th>
             </tr>
@@ -181,10 +184,36 @@ export default async function AdminOrganizationsPage({
                   )}
                 </td>
                 <td className="py-1.5 pr-3 text-slate-500">
+                  {org.plan ? (
+                    <span className="text-slate-300">—</span>
+                  ) : org.trial_ends_at ? (
+                    <span
+                      className={isTrialActive(org.trial_ends_at) ? "text-slate-500" : "text-rose-600"}
+                    >
+                      {isTrialActive(org.trial_ends_at) ? "Trial · " : "Ended · "}
+                      {new Date(org.trial_ends_at).toLocaleDateString()}
+                    </span>
+                  ) : (
+                    <span className="text-slate-300">—</span>
+                  )}
+                </td>
+                <td className="py-1.5 pr-3 text-slate-500">
                   {new Date(org.created_at).toLocaleDateString()}
                 </td>
                 <td className="py-1.5 text-right">
                   <div className="flex justify-end gap-1.5">
+                    {org.trial_ends_at && !org.plan && (
+                      <form action={extendTrialAction}>
+                        <input type="hidden" name="org_id" value={org.id} />
+                        <input type="hidden" name="days" value="14" />
+                        <button
+                          type="submit"
+                          className="rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
+                        >
+                          +14 days
+                        </button>
+                      </form>
+                    )}
                     <form action={joinOrganizationAction}>
                       <input type="hidden" name="org_id" value={org.id} />
                       <button

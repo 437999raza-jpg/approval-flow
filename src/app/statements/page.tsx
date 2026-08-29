@@ -27,10 +27,13 @@ export default async function StatementsPage() {
 
   const { data: orgRow } = await supabase
     .from("organizations")
-    .select("plan")
+    .select("plan, trial_ends_at")
     .eq("id", org.id)
     .single();
-  const entitled = hasStatementReconciliation(isPlanId(orgRow?.plan) ? orgRow.plan : null);
+  const entitled = hasStatementReconciliation(
+    isPlanId(orgRow?.plan) ? orgRow.plan : null,
+    orgRow?.trial_ends_at
+  );
 
   const header = (
     <>

@@ -3523,3 +3523,11 @@ create policy "vendor_statement_lines: members can update" on vendor_statement_l
         and is_org_member(s.organization_id)
     )
   );
+
+---------------------------------------------------------------------
+-- >>> supabase/migrations/0085_trial.sql
+---------------------------------------------------------------------
+-- 0085: a 14-day self-serve trial. null = no trial (every org made via
+-- the platform-admin /admin/organizations flow, or one that already
+-- picked a plan before this shipped).
+alter table organizations add column if not exists trial_ends_at timestamptz;

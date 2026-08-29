@@ -4,13 +4,14 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { createClient } from "@/lib/supabase/client";
+import { completeSelfSignup } from "@/lib/auth-actions";
 
 // Sign in has two ways in, one form visible at a time: password is the
 // default (the common path for a returning user), one-time email link is a
 // fallback reachable via a single toggle — also doubles as "forgot
 // password" since there's no separate reset flow, it just signs you in
 // without one. Sign up is a separate top-level mode (new account, own new
-// organization — see ensureOrgForNewUser) rather than a third sub-mode
+// organization — see completeSelfSignup in src/lib/auth-actions.ts) rather than a third sub-mode
 // here, since it needs its own fields (name) and its own "check your
 // email" state distinct from the magic-link one.
 type AuthMode = "signin" | "signup";
@@ -25,6 +26,7 @@ export default function LoginPage() {
   const [authMode, setAuthMode] = useState<AuthMode>("signin");
   const [signInMode, setSignInMode] = useState<SignInMode>("password");
   const [fullName, setFullName] = useState("");
+  const [companyName, setCompanyName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [sent, setSent] = useState(false);
@@ -125,7 +127,16 @@ export default function LoginPage() {
       }
       if (data.session) {
         // Email confirmation is off for this project — signUp already
-        // returned a live session, so there's no email to wait for.
+        // returned a live session, so there's no email to wait for. That
+        // session is what lets completeSelfSignup identify the caller —
+        // it creates their organization (14-day trial) before landing on
+        // the dashboard, so they see a working (if empty) app instead of
+        // the "no organization yet" wall.
+        const result = await completeSelfSignup(companyName);
+        if (!result.ok) {
+          setError(result.error ?? "Could not finish setting up your account.");
+          return;
+        }
         router.push("/dashboard");
         router.refresh();
       } else {
@@ -355,6 +366,17 @@ export default function LoginPage() {
                         placeholder="Jane Smith"
                         value={fullName}
                         onChange={(e) => setFullName(e.target.value)}
+                        className={inputCls}
+                      />
+                    </div>
+                    <div>
+                      <label className={labelCls}>Company name</label>
+                      <input
+                        type="text"
+                        required
+                        placeholder="Acme Construction"
+                        value={companyName}
+                        onChange={(e) => setCompanyName(e.target.value)}
                         className={inputCls}
                       />
                     </div>

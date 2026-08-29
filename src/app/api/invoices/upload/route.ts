@@ -15,6 +15,7 @@ import { getCurrentOrg } from "@/lib/current-org";
 import { enqueueIngestJob } from "@/lib/ingest-queue";
 import { recordUsageEvent } from "@/lib/usage";
 import { INVOICES_TAG } from "@/lib/org-cache";
+import { isOrgLocked } from "@/lib/plans";
 
 export async function POST(request: Request) {
   const supabase = createClient();
@@ -34,6 +35,18 @@ export async function POST(request: Request) {
     return NextResponse.json(
       { error: "Auditors are read-only and can't add invoices." },
       { status: 403 }
+    );
+  }
+
+  const { data: orgRow } = await supabase
+    .from("organizations")
+    .select("plan, trial_ends_at")
+    .eq("id", org.id)
+    .single();
+  if (orgRow && isOrgLocked(orgRow)) {
+    return NextResponse.json(
+      { error: "Your trial has ended — choose a plan on the Billing page to keep adding invoices." },
+      { status: 402 }
     );
   }
 

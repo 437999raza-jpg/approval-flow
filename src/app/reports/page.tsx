@@ -15,6 +15,7 @@ import {
   type ReportColumnId,
 } from "@/lib/invoice-list-report";
 import { getCachedMemberRoster } from "@/lib/org-cache";
+import { TrialBanner } from "@/components/TrialBanner";
 
 const FORM_ID = "report-builder-form";
 // Prepended to every searchable person/project dropdown below so there's
@@ -210,6 +211,12 @@ export default async function ReportsPage({
     );
   }
 
+  const { data: trialOrgRow } = await supabase
+    .from("organizations")
+    .select("plan, trial_ends_at")
+    .eq("id", org.id)
+    .single();
+
   const [{ data: reports }, { data: projects }, { memberUserIds, profileRows }] =
     await Promise.all([
       supabase
@@ -339,6 +346,7 @@ export default async function ReportsPage({
 
       <main className="min-w-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-5xl p-8">
+          <TrialBanner plan={trialOrgRow?.plan ?? null} trialEndsAt={trialOrgRow?.trial_ends_at ?? null} />
           <h1 className="text-2xl font-semibold">Reports</h1>
           <p className="mt-1 text-sm text-slate-500">
             Build and save your own reports. Every report runs against

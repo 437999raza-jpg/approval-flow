@@ -12,6 +12,7 @@ import { RemoveQueueEntryButton } from "@/components/RemoveQueueEntryButton";
 import { ReprocessQueueButton } from "@/components/ReprocessQueueButton";
 import { ExtractionPoller } from "@/components/ExtractionPoller";
 import { LocalTime } from "@/components/LocalTime";
+import { TrialBanner } from "@/components/TrialBanner";
 import { clsx } from "clsx";
 
 // The queue — ONE place showing everything that has come into the app:
@@ -49,6 +50,12 @@ export default async function QueuePage({
   // The Queue (uploads + emails + outcomes) is an admin tool.
   if (org.role !== "admin") redirect("/dashboard");
   const isAdmin = true;
+
+  const { data: trialOrgRow } = await supabase
+    .from("organizations")
+    .select("plan, trial_ends_at")
+    .eq("id", org.id)
+    .single();
 
   const filter = ["all", "pending", "processed", "failed"].includes(
     searchParams.f ?? ""
@@ -175,6 +182,7 @@ export default async function QueuePage({
 
   return (
     <main className="mx-auto max-w-4xl p-8">
+      <TrialBanner plan={trialOrgRow?.plan ?? null} trialEndsAt={trialOrgRow?.trial_ends_at ?? null} />
       <ExtractionPoller />
       <Link
         href="/dashboard"

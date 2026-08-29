@@ -25,7 +25,7 @@ import { buildQboAttachmentBundle } from "@/lib/qbo-attachments";
 import { pdfPageCount, reorderPdfPages } from "@/lib/merge-documents";
 import { buildMergedInvoicePdf } from "@/lib/invoice-export";
 import { qboTag, INVOICES_TAG } from "@/lib/org-cache";
-import { PLANS, isPlanId, hasStatementReconciliation } from "@/lib/plans";
+import { PLANS, isPlanId, hasStatementReconciliation, isOrgLocked } from "@/lib/plans";
 import { extractStatementLines } from "@/lib/extract-statement";
 
 // Server actions for the dashboard (moved out of the page component so
@@ -276,6 +276,18 @@ export async function decide(
     .single();
   if (!invoice || !invoice.workflow_id) {
     redirect(`/dashboard/${invoiceId}?error=not-your-step`);
+  }
+
+  // Trial-lapsed orgs are read-only for new decisions — everything they
+  // already built stays visible, but approving/rejecting is where the
+  // "choose a plan" nudge actually has teeth. See isOrgLocked (plans.ts).
+  const { data: orgRow } = await supabase
+    .from("organizations")
+    .select("plan, trial_ends_at")
+    .eq("id", invoice.organization_id)
+    .single();
+  if (orgRow && isOrgLocked(orgRow)) {
+    redirect(`/dashboard/${invoiceId}?error=trial-locked`);
   }
 
   if (instructions) {
@@ -3975,10 +3987,10 @@ export async function uploadAndReconcileStatement(
 
   const { data: orgRow } = await supabase
     .from("organizations")
-    .select("plan")
+    .select("plan, trial_ends_at")
     .eq("id", org.id)
     .single();
-  if (!hasStatementReconciliation(isPlanId(orgRow?.plan) ? orgRow.plan : null)) {
+  if (!hasStatementReconciliation(isPlanId(orgRow?.plan) ? orgRow.plan : null, orgRow?.trial_ends_at)) {
     return {
       ok: false,
       error: "Statement Reconciliation is part of the Detailed plan ($299/mo).",

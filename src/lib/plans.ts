@@ -65,10 +65,35 @@ export function isPlanId(value: string | null | undefined): value is PlanId {
   );
 }
 
+// Self-serve signup grants a 14-day trial (organizations.trial_ends_at)
+// with full product access, no tier restriction — set only by
+// completeSelfSignup (src/lib/auth-actions.ts); an org provisioned via
+// the platform-admin /admin/organizations flow has no trial clock at
+// all (trial_ends_at stays null forever for those).
+export function isTrialActive(trialEndsAt: string | null | undefined): boolean {
+  return trialEndsAt != null && new Date(trialEndsAt) > new Date();
+}
+
+// Soft-locked (read-only — see isOrgLocked below) once a trial that was
+// actually granted has lapsed with no plan ever chosen. An org with no
+// trial at all (trial_ends_at null) is never locked by this — that's
+// the platform-admin-provisioned case, always billed by hand today.
+export function isOrgLocked(org: {
+  plan: PlanId | null | string | null;
+  trial_ends_at: string | null;
+}): boolean {
+  return org.trial_ends_at != null && !isTrialActive(org.trial_ends_at) && org.plan == null;
+}
+
 // Statement Reconciliation is the first feature gated by plan tier —
 // kept as its own helper (rather than an inline `=== "detailed"` check
 // at each call site) so a future tier that also includes it is a
-// one-line change here, not a hunt across every caller.
-export function hasStatementReconciliation(plan: PlanId | null | undefined): boolean {
-  return plan === "detailed";
+// one-line change here, not a hunt across every caller. Full access
+// during an active trial is the point of the trial, so it passes here
+// too, independent of plan.
+export function hasStatementReconciliation(
+  plan: PlanId | null | undefined,
+  trialEndsAt?: string | null
+): boolean {
+  return plan === "detailed" || isTrialActive(trialEndsAt);
 }

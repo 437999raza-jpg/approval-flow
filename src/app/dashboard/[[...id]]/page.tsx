@@ -31,6 +31,7 @@ import { SupportChatProvider } from "@/components/SupportChatContext";
 import { SupportChatWidget } from "@/components/SupportChatWidget";
 import { SupportChatNavButton } from "@/components/SupportChatNavButton";
 import { UpdateAvailableBanner } from "@/components/UpdateAvailableBanner";
+import { TrialBanner } from "@/components/TrialBanner";
 import { LocalTime } from "@/components/LocalTime";
 import { DocumentSearchModal, type DocumentSearchFilters } from "@/components/DocumentSearchModal";
 import type { SupplierDefaultsValues } from "@/components/SupplierRulesModal";
@@ -106,6 +107,7 @@ const DECISION_ERRORS: Record<string, string> = {
   "step-required":
     "Earlier approval steps must be completed before this step can be decided.",
   "reject-reason-required": "A reason is required to reject an invoice.",
+  "trial-locked": "Your trial has ended — choose a plan on the Billing page to keep approving invoices.",
 };
 
 // Record a single approve/reject decision for the current workflow step.
@@ -177,6 +179,12 @@ export default async function DashboardPage({
       </main>
     );
   }
+
+  const { data: trialOrgRow } = await supabase
+    .from("organizations")
+    .select("plan, trial_ends_at")
+    .eq("id", org.id)
+    .single();
 
   // Almost everyone has exactly one organization_members row, so this stays
   // empty for them — only the platform admin (given standing support access
@@ -1134,6 +1142,7 @@ export default async function DashboardPage({
     <ExtractionPoller />
     <SupportChatWidget />
     <UpdateAvailableBanner />
+    <TrialBanner plan={trialOrgRow?.plan ?? null} trialEndsAt={trialOrgRow?.trial_ends_at ?? null} />
     <div className="flex h-screen bg-slate-50 text-slate-900">
       {/* Sidebar (collapsible via hamburger) */}
       <Sidebar>
