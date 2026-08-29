@@ -400,10 +400,12 @@ export function BillPanel({
   // real staged value meaning "clear it" — they must stay distinguishable,
   // or an intentional bulk-clear would be indistinguishable from "not
   // touched" and silently fall back to each line's existing value below.
+  const [bulkCategoryDraft, setBulkCategoryDraft] = useState<string | null>(null);
   const [bulkProjectDraft, setBulkProjectDraft] = useState<string | null>(null);
   const [bulkClassDraft, setBulkClassDraft] = useState<string | null>(null);
   const [bulkKey, setBulkKey] = useState(0);
   const resetBulkDrafts = () => {
+    setBulkCategoryDraft(null);
     setBulkProjectDraft(null);
     setBulkClassDraft(null);
     setBulkKey((k) => k + 1);
@@ -455,7 +457,11 @@ export function BillPanel({
   const [bulkSetting, setBulkSetting] = useState(false);
   const handleBulkSave = async () => {
     const ids = [...selectedLineIds];
-    if (ids.length === 0 || (bulkProjectDraft === null && bulkClassDraft === null)) return;
+    if (
+      ids.length === 0 ||
+      (bulkCategoryDraft === null && bulkProjectDraft === null && bulkClassDraft === null)
+    )
+      return;
     setBulkSetting(true);
     try {
       await Promise.all(
@@ -463,7 +469,7 @@ export function BillPanel({
           const line = lineItems.find((li) => li.id === id);
           if (!line) return Promise.resolve();
           const formData = new FormData();
-          formData.set("category", line.category ?? "");
+          formData.set("category", bulkCategoryDraft ?? line.category ?? "");
           formData.set("description", line.description ?? "");
           formData.set("tax_rate", line.tax_rate != null ? String(line.tax_rate) : "");
           formData.set("qbo_tax_code_id", line.qbo_tax_code_id ?? "");
@@ -1044,6 +1050,21 @@ export function BillPanel({
                 {selectedLineIds.size} line{selectedLineIds.size === 1 ? "" : "s"} selected
               </span>
               <div className="flex flex-1 flex-wrap items-center justify-end gap-2">
+                {qboCategories && qboCategories.length > 0 && (
+                  <div className="w-60">
+                    <Combobox
+                      key={`bulk-category-${bulkKey}`}
+                      name="_bulk_category"
+                      formId="_bulk_line_actions"
+                      options={qboCategories}
+                      defaultValue=""
+                      placeholder="Set category…"
+                      className="w-full rounded-md border border-blue-200 bg-white px-2 py-1 text-xs"
+                      disabled={bulkSetting}
+                      onCommit={(value) => setBulkCategoryDraft(value)}
+                    />
+                  </div>
+                )}
                 {!classReadOnly && (
                   <div className="w-60">
                     <Combobox
@@ -1074,7 +1095,9 @@ export function BillPanel({
                     />
                   </div>
                 )}
-                {!classReadOnly && (bulkProjectDraft !== null || bulkClassDraft !== null) && (
+                {(bulkCategoryDraft !== null ||
+                  bulkProjectDraft !== null ||
+                  bulkClassDraft !== null) && (
                   <button
                     type="button"
                     disabled={bulkSetting}
