@@ -1576,8 +1576,10 @@ function LineItemRow({
         <button
           type="button"
           disabled={classReadOnly}
-          title="Contract — original contract value (CON)"
-          onClick={() => commitClass(CON_CLASS_NAME)}
+          title="Contract — original contract value (CON). Click again to clear."
+          onClick={() =>
+            commitClass(classValue === CON_CLASS_NAME ? "" : CON_CLASS_NAME)
+          }
           className={`flex-none rounded border px-1.5 py-1.5 text-[10px] font-semibold leading-4 transition-colors ${
             classValue === CON_CLASS_NAME
               ? "border-yellow-400 bg-yellow-400 text-slate-900"
@@ -1589,8 +1591,10 @@ function LineItemRow({
         <button
           type="button"
           disabled={classReadOnly}
-          title="Change Order — extra work beyond contract (CO)"
-          onClick={() => commitClass(CO_CLASS_NAME)}
+          title="Change Order — extra work beyond contract (CO). Click again to clear."
+          onClick={() =>
+            commitClass(classValue === CO_CLASS_NAME ? "" : CO_CLASS_NAME)
+          }
           className={`flex-none rounded border px-1.5 py-1.5 text-[10px] font-semibold leading-4 transition-colors ${
             classValue === CO_CLASS_NAME
               ? "border-yellow-400 bg-yellow-400 text-slate-900"
@@ -1602,8 +1606,10 @@ function LineItemRow({
         <button
           type="button"
           disabled={classReadOnly}
-          title="Extras — work outside the contract and change orders (E)"
-          onClick={() => commitClass(EXTRAS_CLASS_NAME)}
+          title="Extras — work outside the contract and change orders (E). Click again to clear."
+          onClick={() =>
+            commitClass(classValue === EXTRAS_CLASS_NAME ? "" : EXTRAS_CLASS_NAME)
+          }
           className={`flex-none rounded border px-1.5 py-1.5 text-[10px] font-semibold leading-4 transition-colors ${
             classValue === EXTRAS_CLASS_NAME
               ? "border-yellow-400 bg-yellow-400 text-slate-900"
