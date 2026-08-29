@@ -5,7 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentOrg } from "@/lib/current-org";
 import { SignOutButton } from "@/components/SignOutButton";
-import { disconnectQbo, refreshQboData, saveDefaultTaxRate, saveInboundEmailLocal, syncQboTaxes, syncQboClasses, syncQboCategories, syncQboSuppliers, syncQboProjects } from "@/lib/dashboard-actions";
+import { disconnectQbo, refreshQboData, saveDefaultTaxRate, saveInboundEmailLocal, syncQboTaxes, syncQboClasses, syncQboCategories, syncQboSuppliers, syncQboProjects, syncQboPaymentStatus } from "@/lib/dashboard-actions";
 import { qboEnv } from "@/lib/qbo";
 import { Avatar } from "@/components/Avatar";
 import { AvatarUploadForm } from "@/components/AvatarUploadForm";
@@ -341,6 +341,7 @@ export default async function SettingsPage({
   const categoriesLastSync = lastSyncBySection.get("categories");
   const suppliersLastSync = lastSyncBySection.get("suppliers");
   const projectsLastSync = lastSyncBySection.get("projects");
+  const paymentStatusLastSync = lastSyncBySection.get("payment_status");
 
   // Exact "on file" counts — PostgREST caps row responses at 1000 rows, so
   // use head + count=exact rather than fetching the lists.
@@ -573,6 +574,12 @@ export default async function SettingsPage({
             {searchParams.qbo === "projects_synced" && (
               <div className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
                 Synced {searchParams.count ?? 0} projects from QuickBooks (read-only).
+              </div>
+            )}
+            {searchParams.qbo === "payment_status_synced" && (
+              <div className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+                Updated payment status on {searchParams.count ?? 0} bill
+                {searchParams.count === "1" ? "" : "s"} from QuickBooks.
               </div>
             )}
             {searchParams.taxdefault === "saved" && (
@@ -929,6 +936,39 @@ export default async function SettingsPage({
                       </ul>
                     </div>
                   )}
+                </div>
+
+                {/* Payment status — pulls Paid/Unpaid + date paid from QBO
+                    for every bill this org has already synced there. Same
+                    thing runs nightly at 2am (vercel.json cron); this is
+                    just the on-demand version. */}
+                <div className="mt-3 border-t border-slate-100 pt-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-sm font-semibold text-slate-800">
+                      Payment status
+                    </span>
+                    {isAdmin && (
+                      <ScrollPreserveForm action={syncQboPaymentStatus}>
+                        <SubmitButton className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">
+                          Sync payment status from QuickBooks
+                        </SubmitButton>
+                      </ScrollPreserveForm>
+                    )}
+                  </div>
+                  <p className="mt-1 text-xs text-slate-500">
+                    Read-only from QuickBooks — checks every bill Flow has
+                    already pushed there and marks it Paid/Unpaid (with the
+                    date paid) on the bill itself. Runs automatically every
+                    night at 2am; this button runs it right now instead of
+                    waiting.
+                  </p>
+                  <div className="mt-1 text-xs text-slate-400">
+                    {paymentStatusLastSync ? (
+                      <>Last synced on <LocalTime iso={paymentStatusLastSync} withYear />.</>
+                    ) : (
+                      <>Not synced yet.</>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>

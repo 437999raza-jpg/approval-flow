@@ -19,7 +19,7 @@ import {
   stepDecisionState,
 } from "@/lib/workflow-conditions";
 import type { Database, InvoiceStatus } from "@/lib/supabase/types";
-import { getQboConnection, listCategories, listTaxRates, listTaxCodes, listClasses, listSuppliers, listProjects, matchSupplier, createBill, attachDocuments, loadCategoryAccountCache, resolveCategoryAccount, loadTaxCodeCache, resolveTaxCode, loadClassCache, resolveClass } from "@/lib/qbo";
+import { getQboConnection, listCategories, listTaxRates, listTaxCodes, listClasses, listSuppliers, listProjects, matchSupplier, createBill, attachDocuments, loadCategoryAccountCache, resolveCategoryAccount, loadTaxCodeCache, resolveTaxCode, loadClassCache, resolveClass, runQboPaymentSync } from "@/lib/qbo";
 import { fetchAllQboSuppliers } from "@/lib/qbo-all";
 import { buildQboAttachmentBundle } from "@/lib/qbo-attachments";
 import { pdfPageCount, reorderPdfPages } from "@/lib/merge-documents";
@@ -2953,7 +2953,7 @@ export async function clearCompletedQueue(): Promise<void> {
 async function recordQboSync(
   supabase: ReturnType<typeof createClient>,
   orgId: string,
-  section: "taxes" | "classes" | "categories" | "suppliers" | "projects",
+  section: "taxes" | "classes" | "categories" | "suppliers" | "projects" | "payment_status",
   at: string
 ) {
   const { error } = await supabase
@@ -3236,6 +3236,43 @@ export async function syncQboSuppliers() {
   revalidateTag(qboTag(org.id)); // invalidate the cached QBO mirrors
   revalidatePath("/settings");
   redirect(`/settings?qbo=suppliers_synced&count=${suppliers.length}`);
+}
+
+// Pull payment status (paid/unpaid + date paid) from QuickBooks for every
+// bill this org has already synced there. Same core logic as the nightly
+// cron (/api/cron/qbo-payment-sync) — see runQboPaymentSync in qbo.ts.
+// Admin only, read-only against QBO.
+export async function syncQboPaymentStatus() {
+  "use server";
+
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
+  const org = await getCurrentOrg(supabase);
+  if (!org || org.role !== "admin") {
+    redirect("/settings?qbo=error");
+  }
+
+  const conn = await getQboConnection(supabase, org.id);
+  if (!conn) {
+    redirect("/settings?qbo=error");
+  }
+
+  let result: { checked: number; updated: number } = { checked: 0, updated: 0 };
+  try {
+    result = await runQboPaymentSync(supabase, conn, org.id);
+    await recordQboSync(supabase, org.id, "payment_status", new Date().toISOString());
+  } catch (e) {
+    console.error("syncQboPaymentStatus failed:", e);
+    redirect("/settings?qbo=error");
+  }
+
+  revalidateTag(INVOICES_TAG);
+  revalidatePath("/settings");
+  redirect(`/settings?qbo=payment_status_synced&count=${result.updated}`);
 }
 
 
@@ -3775,6 +3812,8 @@ export async function clearQboSync(invoiceId: string) {
       qbo_error: null,
       qbo_bill_id: null,
       qbo_synced_at: null,
+      qbo_payment_status: null,
+      qbo_paid_at: null,
       status: inv.status === "approved" ? "qbo_ready" : inv.status,
       updated_at: new Date().toISOString(),
     })

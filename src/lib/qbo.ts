@@ -1139,3 +1139,132 @@ export async function attachDocuments(
 export function qboBillUrl(realmId: string, billId: string): string {
   return `https://qbo.intuit.com/app/bill?txnId=${billId}`;
 }
+
+// Payment status sync: a QBO Bill's own Balance field says paid (0) vs
+// unpaid (>0), but the DATE paid isn't on the Bill at all — that only
+// exists on the separate BillPayment entity, whose Line[].LinkedTxn[]
+// says which Bill(s) it covers. Two batched reads, not one field.
+
+export async function fetchBillBalances(
+  conn: QboConnection,
+  billIds: string[]
+): Promise<Map<string, number>> {
+  const balances = new Map<string, number>();
+  const CHUNK = 30; // keep the query string comfortably under QBO's URL limit
+  for (let i = 0; i < billIds.length; i += CHUNK) {
+    const chunk = billIds.slice(i, i + CHUNK);
+    const idList = chunk.map((id) => `'${id}'`).join(",");
+    const q = `select Id, Balance from Bill where Id in (${idList})`;
+    const res = await qboFetch(conn, `/query?query=${encodeURIComponent(q)}`);
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(
+        `QBO: bill balance query failed (HTTP ${res.status}): ${body.slice(0, 300)}`
+      );
+    }
+    const json = (await res.json()) as {
+      QueryResponse?: { Bill?: { Id: string; Balance?: number }[] };
+    };
+    for (const b of json.QueryResponse?.Bill ?? []) {
+      balances.set(b.Id, b.Balance ?? 0);
+    }
+  }
+  return balances;
+}
+
+interface QboLinkedTxn {
+  TxnId?: string;
+  TxnType?: string;
+}
+interface QboBillPayment {
+  Id: string;
+  TxnDate?: string;
+  Line?: { LinkedTxn?: QboLinkedTxn[] }[];
+}
+
+export async function fetchRecentBillPayments(
+  conn: QboConnection,
+  limit = 2000
+): Promise<Map<string, string>> {
+  // billId -> payment TxnDate (YYYY-MM-DD). If a bill was paid across
+  // multiple payments, the latest date wins.
+  const paidAt = new Map<string, string>();
+  let startPosition = 1;
+  while (startPosition <= limit) {
+    const pageSize = Math.min(1000, limit - startPosition + 1);
+    const q = `select Id, TxnDate, Line from BillPayment order by TxnDate desc startposition ${startPosition} maxresults ${pageSize}`;
+    const res = await qboFetch(conn, `/query?query=${encodeURIComponent(q)}`);
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(
+        `QBO: bill payment query failed (HTTP ${res.status}): ${body.slice(0, 300)}`
+      );
+    }
+    const json = (await res.json()) as {
+      QueryResponse?: { BillPayment?: QboBillPayment[] };
+    };
+    const rows = json.QueryResponse?.BillPayment ?? [];
+    if (rows.length === 0) break;
+    for (const payment of rows) {
+      if (!payment.TxnDate) continue;
+      for (const line of payment.Line ?? []) {
+        for (const linked of line.LinkedTxn ?? []) {
+          if (linked.TxnType !== "Bill" || !linked.TxnId) continue;
+          const existing = paidAt.get(linked.TxnId);
+          if (!existing || payment.TxnDate > existing) {
+            paidAt.set(linked.TxnId, payment.TxnDate);
+          }
+        }
+      }
+    }
+    if (rows.length < pageSize) break;
+    startPosition += rows.length;
+  }
+  return paidAt;
+}
+
+// Shared by the nightly cron and the manual "Sync payment status" button
+// (Settings) so the actual sync logic only exists once. Only re-checks
+// bills that aren't already confirmed paid — a naturally shrinking set,
+// never re-queries a bill once it's marked paid.
+export async function runQboPaymentSync(
+  supabase: SupabaseClient<Database>,
+  conn: QboConnection,
+  organizationId: string
+): Promise<{ checked: number; updated: number }> {
+  const { data: candidates } = await supabase
+    .from("invoices")
+    .select("id, qbo_bill_id")
+    .eq("organization_id", organizationId)
+    .eq("qbo_sync_status", "synced")
+    .not("qbo_bill_id", "is", null)
+    .or("qbo_payment_status.is.null,qbo_payment_status.eq.unpaid");
+
+  const rows = (candidates ?? []).filter(
+    (r): r is { id: string; qbo_bill_id: string } => !!r.qbo_bill_id
+  );
+  if (rows.length === 0) return { checked: 0, updated: 0 };
+
+  const billIds = rows.map((r) => r.qbo_bill_id);
+  const [balances, paidDates] = await Promise.all([
+    fetchBillBalances(conn, billIds),
+    fetchRecentBillPayments(conn),
+  ]);
+
+  let updated = 0;
+  for (const row of rows) {
+    const balance = balances.get(row.qbo_bill_id);
+    if (balance === undefined) continue; // bill not found in QBO (deleted?) — leave as-is
+    const isPaid = balance <= 0;
+    const paidAt = isPaid ? (paidDates.get(row.qbo_bill_id) ?? null) : null;
+    await supabase
+      .from("invoices")
+      .update({
+        qbo_payment_status: isPaid ? "paid" : "unpaid",
+        qbo_paid_at: paidAt,
+      })
+      .eq("id", row.id);
+    updated++;
+  }
+  return { checked: rows.length, updated };
+}

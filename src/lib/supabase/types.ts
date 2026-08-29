@@ -243,6 +243,8 @@ export interface Database {
           qbo_sync_status: "pending" | "synced" | "error" | null;
           qbo_synced_at: string | null;
           qbo_error: string | null;
+          qbo_payment_status: "paid" | "unpaid" | null;
+          qbo_paid_at: string | null;
           qbo_vendor_matched: boolean;
           totals_note: string | null;
           created_at: string;
@@ -498,7 +500,7 @@ export interface Database {
       qbo_sync_log: {
         Row: {
           organization_id: string;
-          section: "taxes" | "classes" | "categories" | "suppliers" | "projects";
+          section: "taxes" | "classes" | "categories" | "suppliers" | "projects" | "payment_status";
           synced_at: string;
         };
         Insert: Partial<

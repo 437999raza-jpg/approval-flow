@@ -2421,6 +2421,30 @@ QuickBooks (final)"** — the only path to QBO. The bill is created with:
 On success the status becomes `approved` and the bill links straight to QBO.
 Errors are recorded on the invoice (`qbo_sync_status='error'` + message).
 
+### Payment status (migration 0079)
+
+A synced bill's own header (Bill date / Due date / Bill number /
+Documents) gains a **Payment status** field once it's actually in QBO —
+Paid (with the date) or Unpaid. QuickBooks doesn't put this on the Bill
+directly: a Bill's `Balance` field says paid (`0`) vs unpaid, but the
+*date* paid only exists on a separate `BillPayment` record, correlated
+back via its `Line[].LinkedTxn[]`. [`runQboPaymentSync`](src/lib/qbo.ts)
+does both batched reads and is shared by two callers:
+
+- **Nightly at 2am** ([`/api/cron/qbo-payment-sync`](src/app/api/cron/qbo-payment-sync/route.ts),
+  `vercel.json`'s `"0 6 * * *"` — Vercel Cron runs in UTC with no DST
+  adjustment, so this drifts to 1am Eastern once EST resumes)
+  across every org with a QBO connection.
+- **On demand**: a "Sync payment status from QuickBooks" button in
+  Settings (`syncQboPaymentStatus` in dashboard-actions.ts), admin-only,
+  logged to `qbo_sync_log` like the other mirrors.
+
+Only re-checks bills that aren't already confirmed paid
+(`qbo_payment_status IS NULL OR = 'unpaid'`) — a naturally shrinking set
+that never re-queries a bill once it's marked paid. Undoing a sync
+(`clearQboSync`) also clears the payment fields, since there's no longer
+a valid bill to check against.
+
 ### Connection & auth
 
 Requires an Intuit Developer app: create one at developer.intuit.com,
