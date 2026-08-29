@@ -51,6 +51,7 @@ export interface Database {
           stripe_customer_id: string | null;
           plan: "starter" | "growth" | "scale" | "detailed" | null;
           plan_selected_at: string | null;
+          statement_reply_to: string | null;
           created_at: string;
         };
         Insert: Partial<

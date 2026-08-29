@@ -2814,6 +2814,42 @@ export async function saveInboundEmailLocal(
   return { ok: true };
 }
 
+// Where a vendor's reply to a statement-reconciliation email should land.
+// Flow always SENDS from its own verified RESEND_FROM_EMAIL (keeps SPF/
+// DKIM/deliverability intact) — this only sets Reply-To, so the vendor's
+// reply reaches the client's own inbox instead of Flow's.
+export async function saveStatementReplyTo(
+  formData: FormData
+): Promise<{ ok: boolean; error?: string }> {
+
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Not signed in." };
+
+  const org = await getCurrentOrg(supabase);
+  if (!org || org.role !== "admin") {
+    return { ok: false, error: "Only the org admin can change this." };
+  }
+
+  const raw = String(formData.get("statement_reply_to") ?? "").trim();
+  if (raw && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(raw)) {
+    return { ok: false, error: "Enter a valid email address." };
+  }
+
+  const { error: updateError } = await supabase
+    .from("organizations")
+    .update({ statement_reply_to: raw || null })
+    .eq("id", org.id);
+  if (updateError) {
+    return { ok: false, error: "Could not save — please try again." };
+  }
+
+  revalidatePath("/settings");
+  return { ok: true };
+}
+
 // Remove a bad message from the Queue (spam, tests, wrong recipient).
 // Admin only — the page shows the button only to admins, and this action
 // re-checks.
@@ -3892,8 +3928,11 @@ export async function uploadAndReconcileStatement(
     };
   }
 
-  const supplierName = String(formData.get("supplier_name") ?? "").trim();
-  if (!supplierName) return { ok: false, error: "Choose a vendor first." };
+  // Vendor is picked up from the statement itself (extraction below) —
+  // this field is only an optional override for when the admin already
+  // knows better (or extraction can't find a name at all, e.g. a
+  // logo-only letterhead with no printed company name).
+  const supplierOverride = String(formData.get("supplier_name") ?? "").trim();
 
   const file = formData.get("file");
   if (!(file instanceof File) || file.size === 0) {
@@ -3916,6 +3955,46 @@ export async function uploadAndReconcileStatement(
     return { ok: false, error: `Upload failed: ${uploadError.message}` };
   }
 
+  const extraction = await extractStatementLines(file, org.id);
+  if (!extraction) {
+    const { data: failed } = await supabase
+      .from("vendor_statements")
+      .insert({
+        organization_id: org.id,
+        supplier_name: supplierOverride || "Unknown vendor",
+        file_path: filePath,
+        file_name: file.name,
+        uploaded_by: user.id,
+        status: "error",
+        error_message: "Could not read the statement — try a clearer scan.",
+      })
+      .select("id")
+      .single();
+    return { ok: true, statementId: failed?.id };
+  }
+  const {
+    lines,
+    vendor_name: extractedVendorName,
+    statement_date: statementDate,
+    closing_balance: closingBalance,
+  } = extraction;
+
+  // Resolve the statement to one of this org's KNOWN suppliers where
+  // possible — an admin override always wins; otherwise normalize
+  // whatever the model read off the letterhead to the exact supplier
+  // name Flow already has (matchSupplier, same helper invoice ingestion
+  // uses), since matching lines below needs an EXACT vendor_name match
+  // and OCR'd text rarely matches Flow's stored name character-for-
+  // character. Falls back to the raw extracted text (still shown, still
+  // correctable on the detail page) or "Unknown vendor" if the model
+  // found no name at all (e.g. a logo with no readable company name).
+  const allSuppliers = await fetchAllQboSuppliers(supabase, org.id);
+  const supplierName =
+    supplierOverride ||
+    matchSupplier(allSuppliers, extractedVendorName) ||
+    extractedVendorName ||
+    "Unknown vendor";
+
   const { data: statement, error: insertError } = await supabase
     .from("vendor_statements")
     .insert({
@@ -3932,16 +4011,6 @@ export async function uploadAndReconcileStatement(
     await supabase.storage.from(STATEMENT_BUCKET).remove([filePath]);
     return { ok: false, error: "Could not record the upload." };
   }
-
-  const extraction = await extractStatementLines(file, org.id);
-  if (!extraction) {
-    await supabase
-      .from("vendor_statements")
-      .update({ status: "error", error_message: "Could not read the statement — try a clearer scan." })
-      .eq("id", statement.id);
-    return { ok: true, statementId: statement.id };
-  }
-  const { lines, statement_date: statementDate, closing_balance: closingBalance } = extraction;
 
   // Match each statement line against this org's invoices for the same
   // vendor by invoice number — case/whitespace-insensitive on both sides,
@@ -4031,6 +4100,13 @@ export async function sendStatementEmail(
     .single();
   if (!statement) return { ok: false, error: "Statement not found." };
 
+  const { data: orgRow } = await supabase
+    .from("organizations")
+    .select("statement_reply_to")
+    .eq("id", org.id)
+    .single();
+  const replyTo = orgRow?.statement_reply_to?.trim() || null;
+
   const apiKey = process.env.RESEND_API_KEY;
   const from = process.env.RESEND_FROM_EMAIL;
   if (!apiKey || !from) {
@@ -4051,6 +4127,7 @@ export async function sendStatementEmail(
         to: recipient,
         subject: trimmedSubject,
         html,
+        ...(replyTo ? { reply_to: [replyTo] } : {}),
       }),
     });
     if (!res.ok) {
@@ -4100,6 +4177,73 @@ export async function updateStatementDetails(statementId: string, formData: Form
     })
     .eq("id", statementId)
     .eq("organization_id", org.id);
+
+  revalidatePath(`/statements/${statementId}`);
+}
+
+// Correct the vendor a statement was auto-matched to (extraction reads it
+// off the letterhead, but a logo-only statement or a misread name needs a
+// manual fix). Changing it re-runs the SAME per-line invoice-number
+// matching uploadAndReconcileStatement does — the lines themselves
+// (invoice numbers/dates/amounts already read off the document) don't
+// change, only which of this org's invoices they match against.
+export async function updateStatementSupplier(statementId: string, formData: FormData) {
+
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
+  const org = await getCurrentOrg(supabase);
+  if (!org || org.role !== "admin") return;
+
+  const supplierName = String(formData.get("supplier_name") ?? "").trim();
+  if (!supplierName) return;
+
+  const { data: statement } = await supabase
+    .from("vendor_statements")
+    .select("id")
+    .eq("id", statementId)
+    .eq("organization_id", org.id)
+    .single();
+  if (!statement) return;
+
+  const { data: lines } = await supabase
+    .from("vendor_statement_lines")
+    .select("id, invoice_number")
+    .eq("statement_id", statementId);
+
+  const { data: candidateInvoices } = await supabase
+    .from("invoices")
+    .select("id, invoice_number")
+    .eq("organization_id", org.id)
+    .ilike("vendor_name", supplierName);
+  const byInvoiceNumber = new Map<string, string>();
+  for (const inv of candidateInvoices ?? []) {
+    const num = inv.invoice_number?.trim().toLowerCase();
+    if (num) byInvoiceNumber.set(num, inv.id);
+  }
+
+  await Promise.all(
+    (lines ?? []).map((line) => {
+      const matchedInvoiceId = byInvoiceNumber.get(line.invoice_number.trim().toLowerCase());
+      return supabase
+        .from("vendor_statement_lines")
+        .update({
+          match_status: (matchedInvoiceId ? "matched" : "missing_in_flow") as
+            | "matched"
+            | "missing_in_flow",
+          matched_invoice_id: matchedInvoiceId ?? null,
+        })
+        .eq("id", line.id);
+    })
+  );
+
+  await supabase
+    .from("vendor_statements")
+    .update({ supplier_name: supplierName })
+    .eq("id", statementId);
 
   revalidatePath(`/statements/${statementId}`);
 }

@@ -565,12 +565,24 @@ export default async function DashboardPage({
   // migration 0067's RLS policy never actually runs against this list —
   // this mirrors it in JS instead. Reports/other RLS-bound queries are
   // already covered by the migration alone.
+  //
+  // status !== "on_review" is part of that same mirrored rule (migration
+  // 0067's policy: `status <> 'on_review' and (submitted_by = ... or
+  // is_eligible_approver(...))`) — applied unconditionally, even to the
+  // invoice's own submitter. on_review is Flow's own pre-approval intake
+  // step (nobody's turn yet, the workflow hasn't started); it was missing
+  // from this JS mirror, which is what let a plain user see on_review
+  // invoices in their inbox despite RLS itself already blocking it
+  // everywhere else (reports, direct fetches) — this list is the one
+  // place that bypasses RLS, so it needs the same clause explicitly.
   const isEligibleApproverForInvoice = (invoice: Invoice): boolean =>
     eligibleApproverIdsForInvoice(invoice).includes(user.id);
   const visibleInvoices =
     org.role === "user"
       ? (invoices ?? []).filter(
-          (i) => i.submitted_by === user.id || isEligibleApproverForInvoice(i)
+          (i) =>
+            i.status !== "on_review" &&
+            (i.submitted_by === user.id || isEligibleApproverForInvoice(i))
         )
       : (invoices ?? []);
 

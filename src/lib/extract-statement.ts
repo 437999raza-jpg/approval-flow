@@ -21,6 +21,7 @@ export interface ExtractedStatementLine {
 }
 
 export interface ExtractedStatement {
+  vendor_name: string | null; // the vendor/company the statement was issued BY
   statement_date: string | null; // YYYY-MM-DD, the date printed on the statement itself
   closing_balance: number | null; // the statement's own printed outstanding/total-due balance
   lines: ExtractedStatementLine[];
@@ -29,13 +30,15 @@ export interface ExtractedStatement {
 const DEFAULT_MODEL = "anthropic/claude-sonnet-4.5";
 const MAX_PDF_PAGES = 6; // statements run longer than a single invoice
 
-const SYSTEM_PROMPT = `You are a vendor statement data extraction engine. A statement lists the invoices a vendor has billed a customer for, usually one per row with an invoice number, a date, and an amount, plus a statement date and an outstanding balance printed near the top. Return ONLY a JSON object (no markdown, no commentary) with exactly this shape:
+const SYSTEM_PROMPT = `You are a vendor statement data extraction engine. A statement lists the invoices a vendor has billed a customer for, usually one per row with an invoice number, a date, and an amount, plus a vendor name, a statement date, and an outstanding balance printed near the top. Return ONLY a JSON object (no markdown, no commentary) with exactly this shape:
 {
+  "vendor_name": string | null,
   "statement_date": "YYYY-MM-DD" | null,
   "closing_balance": number | null,
   "lines": [ { "invoice_number": string, "date": "YYYY-MM-DD" | null, "amount": number | null } ]
 }
 Rules:
+- vendor_name is the name of the company that ISSUED the statement (whose logo/letterhead is on it, who is owed the money) — not the customer the statement was addressed to. Use the printed company name as text; if only a logo appears with no readable company name anywhere on the page, use null.
 - statement_date is the single date the statement itself was issued (often near "Statement Date" or the account/page header) — not any individual invoice's date.
 - closing_balance is the total outstanding balance the statement says is owed (often labeled "Balance Due", "Total Due", "Amount Due", or similar) — a single number, not a per-line amount.
 - One entry per invoice line on the statement — skip subtotal/balance/total rows, they are not invoices.
@@ -208,6 +211,7 @@ function parseExtraction(content: string): ExtractedStatement | null {
     .filter((l): l is ExtractedStatementLine => l !== null);
 
   return {
+    vendor_name: str(o.vendor_name),
     statement_date: date(o.statement_date),
     closing_balance: num(o.closing_balance),
     lines,

@@ -2,10 +2,13 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentOrg } from "@/lib/current-org";
-import { sendStatementEmail, updateStatementDetails } from "@/lib/dashboard-actions";
+import { sendStatementEmail, updateStatementDetails, updateStatementSupplier } from "@/lib/dashboard-actions";
+import { fetchAllQboSuppliers } from "@/lib/qbo-all";
 import { StatementEmailDraft } from "@/components/StatementEmailDraft";
 import { StatementDetailsForm } from "@/components/StatementDetailsForm";
+import { StatementSupplierField } from "@/components/StatementSupplierField";
 import { LocalTime } from "@/components/LocalTime";
+import { InvoiceStatusBadge } from "@/components/InvoiceStatusBadge";
 
 const STATEMENT_BUCKET = "statements";
 
@@ -39,6 +42,8 @@ export default async function StatementDetailPage({
     .createSignedUrl(statement.file_path, 60 * 10);
   const fileUrl = signed?.signedUrl ?? null;
 
+  const suppliers = await fetchAllQboSuppliers(supabase, org.id);
+
   const { data: lines } = await supabase
     .from("vendor_statement_lines")
     .select("id, invoice_number, statement_date, amount, match_status, matched_invoice_id, created_at")
@@ -49,9 +54,12 @@ export default async function StatementDetailPage({
     .map((l) => l.matched_invoice_id)
     .filter((id): id is string => id != null);
   const { data: matchedInvoices } = matchedIds.length
-    ? await supabase.from("invoices").select("id, status").in("id", matchedIds)
+    ? await supabase
+        .from("invoices")
+        .select("id, status, qbo_sync_status, qbo_bill_id")
+        .in("id", matchedIds)
     : { data: [] };
-  const invoiceStatusById = new Map((matchedInvoices ?? []).map((i) => [i.id, i.status]));
+  const invoiceById = new Map((matchedInvoices ?? []).map((i) => [i.id, i]));
 
   // Flow's own outstanding balance for this vendor: every invoice not yet
   // marked paid — same "still owed" semantics runQboPaymentSync (src/lib/
@@ -92,23 +100,34 @@ export default async function StatementDetailPage({
 
   const missingLines = (lines ?? []).filter((l) => l.match_status === "missing_in_flow");
 
-  const defaultSubject = `Missing invoice${missingLines.length === 1 ? "" : "s"} — ${org.name}`;
+  const money = (n: number) =>
+    n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const prettyDate = (iso: string) =>
+    new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    });
+
+  const defaultSubject = `Missing Invoice${missingLines.length === 1 ? "" : "s"} — Statement Reconciliation (${org.name})`;
   const defaultBody = [
-    `Hi ${statement.supplier_name},`,
+    `Dear ${statement.supplier_name},`,
     "",
-    `While reconciling your latest statement, we couldn't find the following invoice${missingLines.length === 1 ? "" : "s"} in our records. Could you resend ${missingLines.length === 1 ? "it" : "them"}?`,
+    `We are reconciling your most recent statement against our records and were unable to locate the following invoice${missingLines.length === 1 ? "" : "s"} in our system:`,
     "",
     ...missingLines.map(
       (l) =>
-        `- ${l.invoice_number}${l.statement_date ? ` (${l.statement_date})` : ""}${l.amount != null ? ` — $${l.amount.toFixed(2)}` : ""}`
+        `  • Invoice #${l.invoice_number}${l.statement_date ? `, dated ${prettyDate(l.statement_date)}` : ""}${l.amount != null ? ` — $${money(l.amount)}` : ""}`
     ),
     "",
-    "Thanks,",
+    `Could you please send us a copy of the invoice${missingLines.length === 1 ? "" : "s"} listed above so that we may complete our reconciliation and process payment accordingly?`,
+    "",
+    "Thank you for your assistance.",
+    "",
+    "Best regards,",
+    `Accounts Payable`,
     org.name,
   ].join("\n");
-
-  const money = (n: number) =>
-    n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
   return (
     <div className="flex h-screen flex-col">
@@ -189,13 +208,26 @@ export default async function StatementDetailPage({
                 <div className="text-[11px] font-bold uppercase tracking-wide text-brand-muted">
                   Supplier statement details
                 </div>
+                {statement.supplier_name === "Unknown vendor" && (
+                  <p className="mt-2 text-xs text-amber-700">
+                    Flow couldn&apos;t read a vendor name off this statement — pick the right one
+                    below to reconcile it.
+                  </p>
+                )}
                 <div className="mt-2 rounded-lg border border-brand-line bg-white p-4">
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="text-[11px] font-bold uppercase tracking-wide text-brand-muted">
                         Supplier
                       </label>
-                      <p className="mt-1 text-sm text-brand-ink">{statement.supplier_name}</p>
+                      <div className="mt-1">
+                        <StatementSupplierField
+                          statementId={statement.id}
+                          supplierName={statement.supplier_name}
+                          suppliers={suppliers}
+                          action={updateStatementSupplier}
+                        />
+                      </div>
                     </div>
                   </div>
                   <div className="mt-3">
@@ -233,36 +265,50 @@ export default async function StatementDetailPage({
                           </td>
                         </tr>
                       ) : (
-                        (lines ?? []).map((l) => (
-                          <tr key={l.id} className="border-b border-brand-line last:border-0">
-                            <td className="px-4 py-2.5">
-                              {l.match_status === "matched" ? (
-                                <span className="rounded-full bg-brand-mist px-2.5 py-0.5 text-xs font-medium text-brand-green-dark">
-                                  Matched
-                                </span>
-                              ) : (
-                                <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-medium text-amber-800">
-                                  Missing in Flow
-                                </span>
-                              )}
-                            </td>
-                            <td className="px-4 py-2.5 text-brand-muted">{l.statement_date ?? "—"}</td>
-                            <td className="px-4 py-2.5 font-medium text-brand-ink">{l.invoice_number}</td>
-                            <td className="px-4 py-2.5 text-right tabular-nums">
-                              {l.amount != null ? `$${money(l.amount)}` : "—"}
-                            </td>
-                            <td className="px-4 py-2.5 text-right">
-                              {l.matched_invoice_id && (
-                                <Link
-                                  href={`/dashboard/${l.matched_invoice_id}`}
-                                  className="text-xs text-brand-navy hover:underline"
-                                >
-                                  {invoiceStatusById.get(l.matched_invoice_id) ?? "Open"} →
-                                </Link>
-                              )}
-                            </td>
-                          </tr>
-                        ))
+                        (lines ?? []).map((l) => {
+                          const matchedInvoice = l.matched_invoice_id
+                            ? invoiceById.get(l.matched_invoice_id)
+                            : null;
+                          return (
+                            <tr key={l.id} className="border-b border-brand-line last:border-0">
+                              <td className="px-4 py-2.5">
+                                {l.match_status === "missing_in_flow" || !matchedInvoice ? (
+                                  <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-medium text-amber-800">
+                                    Missing in Flow
+                                  </span>
+                                ) : matchedInvoice.qbo_sync_status === "synced" &&
+                                  matchedInvoice.qbo_bill_id ? (
+                                  <a
+                                    href={`https://qbo.intuit.com/app/bill?txnId=${matchedInvoice.qbo_bill_id}`}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    title="Open this bill in QuickBooks Online"
+                                    className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-medium text-emerald-800 hover:bg-emerald-200"
+                                  >
+                                    Pushed to QBO ↗
+                                  </a>
+                                ) : (
+                                  <InvoiceStatusBadge status={matchedInvoice.status} />
+                                )}
+                              </td>
+                              <td className="px-4 py-2.5 text-brand-muted">{l.statement_date ?? "—"}</td>
+                              <td className="px-4 py-2.5 font-medium text-brand-ink">{l.invoice_number}</td>
+                              <td className="px-4 py-2.5 text-right tabular-nums">
+                                {l.amount != null ? `$${money(l.amount)}` : "—"}
+                              </td>
+                              <td className="px-4 py-2.5 text-right">
+                                {l.matched_invoice_id && (
+                                  <Link
+                                    href={`/dashboard/${l.matched_invoice_id}`}
+                                    className="text-xs text-brand-navy hover:underline"
+                                  >
+                                    Open →
+                                  </Link>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })
                       )}
                     </tbody>
                   </table>

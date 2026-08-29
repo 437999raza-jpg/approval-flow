@@ -3495,3 +3495,11 @@ create policy "statement files: members can upload"
 alter table vendor_statements add column if not exists statement_date date;
 alter table vendor_statements add column if not exists statement_balance numeric(14, 2);
 alter table vendor_statements add column if not exists note text;
+
+---------------------------------------------------------------------
+-- >>> supabase/migrations/0083_statement_reply_to.sql
+---------------------------------------------------------------------
+-- 0083: a per-org Reply-To for vendor-facing statement emails — Flow
+-- still sends from its own verified address (RESEND_FROM_EMAIL), but a
+-- vendor's reply should land in the client's own inbox, not Flow's.
+alter table organizations add column if not exists statement_reply_to text;

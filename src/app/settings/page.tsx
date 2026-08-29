@@ -6,7 +6,8 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentOrg } from "@/lib/current-org";
 import { SignOutButton } from "@/components/SignOutButton";
 import { CollapsibleSection } from "@/components/CollapsibleSection";
-import { disconnectQbo, refreshQboData, saveDefaultTaxRate, saveInboundEmailLocal, syncQboTaxes, syncQboClasses, syncQboCategories, syncQboSuppliers, syncQboProjects, syncQboPaymentStatus } from "@/lib/dashboard-actions";
+import { disconnectQbo, refreshQboData, saveDefaultTaxRate, saveInboundEmailLocal, saveStatementReplyTo, syncQboTaxes, syncQboClasses, syncQboCategories, syncQboSuppliers, syncQboProjects, syncQboPaymentStatus } from "@/lib/dashboard-actions";
+import { StatementReplyToForm } from "@/components/StatementReplyToForm";
 import { qboEnv } from "@/lib/qbo";
 import { Avatar } from "@/components/Avatar";
 import { AvatarUploadForm } from "@/components/AvatarUploadForm";
@@ -205,65 +206,6 @@ async function removeMember(membershipId: string) {
   revalidatePath("/settings");
 }
 
-async function createProject(orgId: string, formData: FormData) {
-  "use server";
-
-  const supabase = createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
-
-  const name = String(formData.get("name") ?? "").trim();
-  if (!name) return;
-  const qboId = String(formData.get("qbo_id") ?? "").trim() || null;
-
-  await supabase.from("projects").insert({
-    organization_id: orgId,
-    name,
-    qbo_id: qboId,
-    source: "manual",
-  });
-
-  revalidatePath("/settings");
-}
-
-async function updateProject(projectId: string, formData: FormData) {
-  "use server";
-
-  const supabase = createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
-
-  const name = String(formData.get("name") ?? "").trim();
-  if (!name) return;
-  const qboId = String(formData.get("qbo_id") ?? "").trim() || null;
-  const active = formData.get("active") === "on";
-
-  await supabase
-    .from("projects")
-    .update({ name, qbo_id: qboId, active })
-    .eq("id", projectId);
-
-  revalidatePath("/settings");
-}
-
-async function deleteProject(projectId: string) {
-  "use server";
-
-  const supabase = createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
-
-  await supabase.from("projects").delete().eq("id", projectId);
-
-  revalidatePath("/settings");
-}
-
 export default async function SettingsPage({
   searchParams,
 }: {
@@ -301,6 +243,12 @@ export default async function SettingsPage({
   // Billing/Members/Projects are admin-and-auditor territory (auditor keeps
   // its existing full-app read-only visibility; this only narrows "user").
   const showOrgSettings = org.role !== "user";
+
+  const { data: orgReplyToRow } = await supabase
+    .from("organizations")
+    .select("statement_reply_to")
+    .eq("id", org.id)
+    .single();
 
   // QBO connection (RLS: admins only — everyone else sees nothing).
   const { data: qboConnection } = await supabase
@@ -415,18 +363,11 @@ export default async function SettingsPage({
   const inboundEmailDomain =
     process.env.INBOUND_EMAIL_DOMAIN ?? "invoices.example.com";
 
-  const [{ data: members }, { data: projects }] = await Promise.all([
-    supabase
-      .from("organization_members")
-      .select("id, user_id, role")
-      .eq("organization_id", org.id)
-      .order("created_at", { ascending: true }),
-    supabase
-      .from("projects")
-      .select("*")
-      .eq("organization_id", org.id)
-      .order("name", { ascending: true }),
-  ]);
+  const { data: members } = await supabase
+    .from("organization_members")
+    .select("id, user_id, role")
+    .eq("organization_id", org.id)
+    .order("created_at", { ascending: true });
 
   // Names + photos from profiles, emails + 2FA status from auth (admin client).
   const userIds = [...new Set((members ?? []).map((m) => m.user_id))];
@@ -990,6 +931,29 @@ export default async function SettingsPage({
                 </p>
               )}
             </div>
+
+            {/* Statement Reconciliation vendor emails — Flow still sends
+                from its own verified address, this only controls where a
+                vendor's reply lands. */}
+            <div className="mt-3 rounded-lg border border-slate-200 bg-white p-4 text-sm">
+              <div className="text-xs font-bold uppercase tracking-wide text-slate-400">
+                Vendor email reply-to
+              </div>
+              <p className="mt-1 text-xs text-slate-500">
+                Used by Statement Reconciliation&apos;s &quot;email the vendor&quot; feature — sets
+                where a vendor&apos;s reply goes.
+              </p>
+              {isAdmin ? (
+                <StatementReplyToForm
+                  currentValue={orgReplyToRow?.statement_reply_to ?? null}
+                  action={saveStatementReplyTo}
+                />
+              ) : (
+                <p className="mt-2 text-xs text-slate-500">
+                  {orgReplyToRow?.statement_reply_to ?? "Not set."}
+                </p>
+              )}
+            </div>
           </section>
 
           {/* Billing & usage — lives on its own page now */}
@@ -1117,91 +1081,6 @@ export default async function SettingsPage({
             </div>
           </section>
 
-          {/* Projects / customers */}
-          <section className="mt-10">
-            <h2 className="text-lg font-semibold">Projects / customers</h2>
-            <p className="mt-1 text-sm text-slate-500">
-              Entered manually for now; the QBO ID field is reserved for when
-              QuickBooks sync lands. Invoices can be assigned to a project in
-              the Bill panel.
-            </p>
-            <form
-              action={createProject.bind(null, org.id)}
-              className="mt-3 flex flex-wrap items-center gap-2"
-            >
-              <input
-                name="name"
-                required
-                placeholder="Project / customer name"
-                className={`${inputCls} min-w-52 flex-1`}
-              />
-              <input
-                name="qbo_id"
-                placeholder="QBO ID (optional)"
-                className={`${inputCls} w-40`}
-              />
-              <SubmitButton className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700">
-                Add
-              </SubmitButton>
-            </form>
-
-            <ul className="mt-4 divide-y divide-slate-100 rounded-lg border border-slate-200 bg-white">
-              {(projects ?? []).map((p) => (
-                <li key={p.id} className="px-4 py-3">
-                  <form
-                    action={updateProject.bind(null, p.id)}
-                    className="flex flex-wrap items-center gap-3"
-                  >
-                    <input
-                      name="name"
-                      defaultValue={p.name}
-                      className={`${inputCls} min-w-40 flex-1`}
-                    />
-                    <input
-                      name="qbo_id"
-                      defaultValue={p.qbo_id ?? ""}
-                      placeholder="QBO ID"
-                      className={`${inputCls} w-36`}
-                    />
-                    <label className="flex items-center gap-1.5 text-xs text-slate-600">
-                      <input
-                        name="active"
-                        type="checkbox"
-                        defaultChecked={p.active}
-                        className="h-4 w-4 rounded border-slate-300"
-                      />
-                      Active
-                    </label>
-                    <span
-                      className={`rounded-full px-2 py-0.5 text-xs font-medium ${
-                        p.source === "qbo"
-                          ? "bg-blue-50 text-blue-600"
-                          : "bg-slate-100 text-slate-500"
-                      }`}
-                    >
-                      {p.source}
-                    </span>
-                    <SubmitButton className="rounded-md bg-slate-800 px-2.5 py-1 text-xs font-medium text-white hover:bg-slate-700">
-                      Save
-                    </SubmitButton>
-                  </form>
-                  <div className="mt-2 flex flex-wrap items-center gap-3">
-                    <span className="flex-1" />
-                    <form action={deleteProject.bind(null, p.id)}>
-                      <SubmitButton className="text-xs text-red-500 hover:underline">
-                        Delete
-                      </SubmitButton>
-                    </form>
-                  </div>
-                </li>
-              ))}
-              {(projects ?? []).length === 0 && (
-                <li className="px-4 py-6 text-center text-sm text-slate-400">
-                  No projects yet — add your first project or customer above.
-                </li>
-              )}
-            </ul>
-          </section>
           </>
           )}
         </div>
