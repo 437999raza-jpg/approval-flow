@@ -4,10 +4,20 @@ import type { DocumentSearchFilters } from "@/components/DocumentSearchModal";
 // Translates a plain-English dashboard search ("show me invoices from Sat
 // Metal that aren't approved yet") into the SAME DocumentSearchFilters
 // shape the "Filters" modal already produces — never raw SQL, never a
-// direct DB query. The model can only ever pick a vendor/project/member
-// that's handed to it below (validated again on the way back), so a bad
-// answer degrades to "no match" or a slightly-wrong filter, never a
-// cross-org leak or an arbitrary query. Authored by Araza.
+// direct DB query.
+//
+// Two-step, not one: the model only ever extracts plain-text HINTS (a
+// name it heard, not an id) — it never sees the org's real vendor/
+// project/member lists. Matching those hints to real records happens
+// here afterward, via a simple case-insensitive substring match. This
+// used to hand the model the full lists inline instead, which was fine
+// for a handful of vendors but blew up the prompt to 20k+ tokens (and
+// ~$0.02/search) for an org with hundreds of projects — and would only
+// get worse as any org's project list grows. The fuzzy-match approach
+// costs a few hundred tokens flat regardless of org size, and is also
+// more forgiving of a partial name ("Sat Metal" matching "Sat Metal
+// Fabricators Inc.") than asking the model to echo back an exact string
+// ever was. Authored by Araza.
 
 export interface SearchLookupContext {
   vendors: string[];
@@ -26,19 +36,18 @@ const STATUS_VALUES = [
 ] as const;
 type StatusValue = (typeof STATUS_VALUES)[number];
 
-function buildSystemPrompt(context: SearchLookupContext): string {
-  return `You translate a user's plain-English invoice search into a JSON filter object. Return ONLY a JSON object (no markdown, no commentary) with exactly this shape — every field optional, omit anything the query doesn't mention:
+const SYSTEM_PROMPT = `You extract search intent from a user's plain-English invoice search. Return ONLY a JSON object (no markdown, no commentary) with exactly this shape — every field optional, omit anything the query doesn't mention:
 {
-  "status": string[],       // from: ${STATUS_VALUES.join(", ")}
-  "holder": string[],       // member ids — who currently has it (waiting on / with X)
-  "requester": string[],    // member ids — who submitted it
-  "approvedBy": string[],   // member ids — who already approved it
-  "supplier": string[],     // EXACT vendor name strings from the list below
-  "customer": string[],     // project ids, from the list below
-  "number": string,         // invoice number substring
+  "status": string[],        // from: ${STATUS_VALUES.join(", ")}
+  "holderHint": string,      // a name mentioned as currently holding/waiting on it
+  "requesterHint": string,   // a name mentioned as who submitted it
+  "approvedByHint": string,  // a name mentioned as who already approved it
+  "supplierHint": string,    // a vendor/supplier name mentioned, verbatim as heard
+  "customerHint": string,    // a project/customer/job name mentioned, verbatim as heard
+  "number": string,          // invoice number substring
   "dateFrom": "YYYY-MM-DD",
   "dateTo": "YYYY-MM-DD",
-  "amountFrom": string,     // plain number
+  "amountFrom": string,      // plain number
   "amountTo": string
 }
 
@@ -48,17 +57,27 @@ approved. "cancelled" and "rejected" = terminal, also not approved. A query
 like "not approved yet" / "still pending" / "waiting" means
 status: ["on_review", "on_approval", "on_hold"].
 
-Only use vendor names, project ids, and member ids that appear in these
-lists — never invent one. If the query names someone/something not in a
-list, omit that field entirely rather than guessing.
-
-Vendors: ${context.vendors.length > 0 ? context.vendors.join(" | ") : "(none)"}
-Projects (id: name): ${context.projects.length > 0 ? context.projects.map((p) => `${p.id}: ${p.name}`).join(" | ") : "(none)"}
-Members (id: name): ${context.members.length > 0 ? context.members.map((m) => `${m.id}: ${m.name}`).join(" | ") : "(none)"}`;
-}
+Every *Hint field is free text exactly as the user said it — you don't know
+the org's real vendor/project/member names, so don't normalize or guess a
+full name, just extract what was said.`;
 
 function isStatusValue(v: unknown): v is StatusValue {
   return typeof v === "string" && (STATUS_VALUES as readonly string[]).includes(v);
+}
+
+// Case-insensitive, either-direction substring match — "Sat Metal" matches
+// "Sat Metal Fabricators Inc.", and vice versa. Returns every candidate
+// that matches, since a DocumentSearchFilters field is an OR-of-values
+// multi-select anyway.
+function fuzzyMatch(hint: unknown, candidates: { id: string; label: string }[]): string[] {
+  if (typeof hint !== "string" || !hint.trim()) return [];
+  const needle = hint.trim().toLowerCase();
+  return candidates
+    .filter((c) => {
+      const label = c.label.toLowerCase();
+      return label.includes(needle) || needle.includes(label);
+    })
+    .map((c) => c.id);
 }
 
 export async function parseNaturalLanguageSearch(
@@ -80,11 +99,11 @@ export async function parseNaturalLanguageSearch(
       },
       body: JSON.stringify({
         model,
-        max_tokens: 512,
+        max_tokens: 300,
         response_format: { type: "json_object" },
         usage: { include: true },
         messages: [
-          { role: "system", content: buildSystemPrompt(context) },
+          { role: "system", content: SYSTEM_PROMPT },
           { role: "user", content: query },
         ],
       }),
@@ -112,25 +131,22 @@ export async function parseNaturalLanguageSearch(
       unknown
     >;
 
-    const validVendors = new Set(context.vendors);
-    const validProjectIds = new Set(context.projects.map((p) => p.id));
-    const validMemberIds = new Set(context.members.map((m) => m.id));
-
-    const strArray = (v: unknown, valid: Set<string>): string[] =>
-      Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && valid.has(x)) : [];
+    const vendorCandidates = context.vendors.map((v) => ({ id: v, label: v }));
+    const projectCandidates = context.projects.map((p) => ({ id: p.id, label: p.name }));
+    const memberCandidates = context.members.map((m) => ({ id: m.id, label: m.name }));
 
     const result: Partial<DocumentSearchFilters> = {};
     const status = Array.isArray(raw.status) ? raw.status.filter(isStatusValue) : [];
     if (status.length > 0) result.status = status;
-    const holder = strArray(raw.holder, validMemberIds);
+    const holder = fuzzyMatch(raw.holderHint, memberCandidates);
     if (holder.length > 0) result.holder = holder;
-    const requester = strArray(raw.requester, validMemberIds);
+    const requester = fuzzyMatch(raw.requesterHint, memberCandidates);
     if (requester.length > 0) result.requester = requester;
-    const approvedBy = strArray(raw.approvedBy, validMemberIds);
+    const approvedBy = fuzzyMatch(raw.approvedByHint, memberCandidates);
     if (approvedBy.length > 0) result.approvedBy = approvedBy;
-    const supplier = strArray(raw.supplier, validVendors);
+    const supplier = fuzzyMatch(raw.supplierHint, vendorCandidates);
     if (supplier.length > 0) result.supplier = supplier;
-    const customer = strArray(raw.customer, validProjectIds);
+    const customer = fuzzyMatch(raw.customerHint, projectCandidates);
     if (customer.length > 0) result.customer = customer;
     if (typeof raw.number === "string" && raw.number.trim()) result.number = raw.number.trim();
     if (typeof raw.dateFrom === "string" && /^\d{4}-\d{2}-\d{2}$/.test(raw.dateFrom))
