@@ -3531,3 +3531,11 @@ create policy "vendor_statement_lines: members can update" on vendor_statement_l
 -- the platform-admin /admin/organizations flow, or one that already
 -- picked a plan before this shipped).
 alter table organizations add column if not exists trial_ends_at timestamptz;
+
+---------------------------------------------------------------------
+-- >>> supabase/migrations/0086_marketing_opt_in.sql
+---------------------------------------------------------------------
+-- 0086: the signup form's "I agree to receive news, insights and
+-- special offers" checkbox needs somewhere real to land, not just a
+-- cosmetic checkbox.
+alter table profiles add column if not exists marketing_opt_in boolean not null default false;

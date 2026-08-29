@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
+import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { completeSelfSignup } from "@/lib/auth-actions";
 
@@ -27,6 +28,7 @@ export default function LoginPage() {
   const [signInMode, setSignInMode] = useState<SignInMode>("password");
   const [fullName, setFullName] = useState("");
   const [companyName, setCompanyName] = useState("");
+  const [marketingOptIn, setMarketingOptIn] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [sent, setSent] = useState(false);
@@ -127,6 +129,7 @@ export default function LoginPage() {
           data: {
             full_name: fullName.trim() || undefined,
             company_name: companyName.trim() || undefined,
+            marketing_opt_in: marketingOptIn,
           },
         },
       });
@@ -411,6 +414,26 @@ export default function LoginPage() {
                         className={inputCls}
                       />
                     </div>
+                    <label className="flex items-start gap-2 text-xs text-brand-muted">
+                      <input
+                        type="checkbox"
+                        checked={marketingOptIn}
+                        onChange={(e) => setMarketingOptIn(e.target.checked)}
+                        className="mt-0.5 h-3.5 w-3.5 flex-none rounded border-brand-line"
+                      />
+                      I agree to receive Flow&apos;s news, insights and special offers
+                    </label>
+                    <p className="text-xs text-brand-muted">
+                      By creating an account, you agree to Flow&apos;s{" "}
+                      <Link href="/terms" target="_blank" className="text-brand-green-dark underline">
+                        Terms of Service
+                      </Link>{" "}
+                      and{" "}
+                      <Link href="/privacy" target="_blank" className="text-brand-green-dark underline">
+                        Privacy Policy
+                      </Link>
+                      .
+                    </p>
                     <button type="submit" disabled={pending} className={primaryBtnCls(signupPending)}>
                       {signupPending && <Spinner />}
                       {signupPending ? "Creating account…" : "Create account"}

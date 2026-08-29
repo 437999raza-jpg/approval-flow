@@ -36,12 +36,16 @@ export async function ensureOrgForNewUser(
     (user.user_metadata?.name as string | undefined) ||
     null;
   const companyName = (user.user_metadata?.company_name as string | undefined)?.trim() || null;
+  const marketingOptIn = user.user_metadata?.marketing_opt_in === true;
   const emailLocal = (user.email ?? "").split("@")[0] || "my";
   const orgName = companyName || (fullName ? `${fullName}'s organization` : `${emailLocal}'s organization`);
 
   await admin
     .from("profiles")
-    .upsert({ id: user.id, full_name: fullName }, { onConflict: "id", ignoreDuplicates: true });
+    .upsert(
+      { id: user.id, full_name: fullName, marketing_opt_in: marketingOptIn },
+      { onConflict: "id", ignoreDuplicates: true }
+    );
 
   const trialEndsAt = new Date(Date.now() + TRIAL_DAYS * 24 * 60 * 60 * 1000).toISOString();
   const result = await bootstrapOrganization(admin, {
