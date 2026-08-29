@@ -22,6 +22,7 @@ export interface SelectableInvoice {
   isDuplicate: boolean;
   holders: string[]; // approver display names for on_approval/on_hold
   selected: boolean; // is this the currently-open invoice?
+  qboBillId: string | null; // set only once actually pushed to QBO (qbo_sync_status === "synced")
 }
 
 export function InvoiceSelectionList({
@@ -331,7 +332,37 @@ export function InvoiceSelectionList({
                       </div>
                     )}
                   </div>
-                  <InvoiceStatusBadge status={inv.status} />
+                  {inv.qboBillId ? (
+                    <span
+                      role="link"
+                      tabIndex={0}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        window.open(
+                          `https://qbo.intuit.com/app/bill?txnId=${inv.qboBillId}`,
+                          "_blank",
+                          "noopener,noreferrer"
+                        );
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key !== "Enter" && e.key !== " ") return;
+                        e.preventDefault();
+                        e.stopPropagation();
+                        window.open(
+                          `https://qbo.intuit.com/app/bill?txnId=${inv.qboBillId}`,
+                          "_blank",
+                          "noopener,noreferrer"
+                        );
+                      }}
+                      title="Open this bill in QuickBooks Online"
+                      className="inline-flex flex-none cursor-pointer items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-medium text-emerald-800 hover:bg-emerald-200"
+                    >
+                      Pushed to QBO ↗
+                    </span>
+                  ) : (
+                    <InvoiceStatusBadge status={inv.status} />
+                  )}
                 </div>
                 {inv.holders.length > 0 && (
                   <div className="mt-1 text-xs text-slate-400">

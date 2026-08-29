@@ -1103,6 +1103,7 @@ export default async function DashboardPage({
     isDuplicate: duplicateInvoiceIds.has(inv.id),
     holders: holderOf(inv).map((id) => memberNameById.get(id) ?? "Team member"),
     selected: selected?.id === inv.id,
+    qboBillId: inv.qbo_sync_status === "synced" ? inv.qbo_bill_id : null,
   }));
 
   return (
