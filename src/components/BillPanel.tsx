@@ -424,6 +424,42 @@ export function BillPanel({
     }
   };
 
+  // Apply one Project or Class to every selected line in one action —
+  // built for the common case of a bill where every line shares the same
+  // project/class and re-picking it per line is pure repetition. Same
+  // saveLineItem action each row's own dropdown already uses, so it's the
+  // real save path, not a shortcut around it — saveLineItem replaces every
+  // field on the row (it has no partial-update mode), so each line's
+  // CURRENT values are carried forward here and only the one field
+  // actually being bulk-set is overridden.
+  const [bulkSetting, setBulkSetting] = useState(false);
+  const handleBulkSetField = async (field: "project_id" | "class", value: string) => {
+    const ids = [...selectedLineIds];
+    if (ids.length === 0) return;
+    setBulkSetting(true);
+    try {
+      await Promise.all(
+        ids.map((id) => {
+          const line = lineItems.find((li) => li.id === id);
+          if (!line) return Promise.resolve();
+          const formData = new FormData();
+          formData.set("category", line.category ?? "");
+          formData.set("description", line.description ?? "");
+          formData.set("tax_rate", line.tax_rate != null ? String(line.tax_rate) : "");
+          formData.set("qbo_tax_code_id", line.qbo_tax_code_id ?? "");
+          formData.set("class", line.class ?? "");
+          formData.set("project_id", line.project_id ?? "");
+          formData.set("amount", line.amount != null ? String(line.amount) : "");
+          if (line.linked) formData.set("linked", "on");
+          formData.set(field, value);
+          return saveLineItem(id, formData);
+        })
+      );
+    } finally {
+      setBulkSetting(false);
+    }
+  };
+
   return (
     <div className="flex h-full w-full flex-col border-r border-slate-200 bg-white">
       <div className="flex flex-none items-center justify-between border-b border-slate-200 px-4 py-2">
@@ -983,11 +1019,41 @@ export function BillPanel({
             Category details
           </div>
           {!readOnly && selectedLineIds.size > 0 && (
-            <div className="mt-2 flex items-center justify-between rounded-md bg-blue-50 px-3 py-1.5 text-xs text-blue-800">
-              <span>
+            <div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-md bg-blue-50 px-3 py-1.5 text-xs text-blue-800">
+              <span className="flex-none">
                 {selectedLineIds.size} line{selectedLineIds.size === 1 ? "" : "s"} selected
               </span>
-              <div className="flex items-center gap-3">
+              <div className="flex flex-1 flex-wrap items-center justify-end gap-2">
+                {!classReadOnly && (
+                  <div className="w-40">
+                    <Combobox
+                      key={`bulk-project-${[...selectedLineIds].sort().join(",")}`}
+                      name="_bulk_project"
+                      formId="_bulk_line_actions"
+                      options={projects.map((p) => ({ label: p.name, value: p.id }))}
+                      defaultValue=""
+                      placeholder="Set project…"
+                      className="rounded-md border border-blue-200 bg-white px-2 py-1 text-xs"
+                      disabled={bulkSetting}
+                      onCommit={(value) => value && handleBulkSetField("project_id", value)}
+                    />
+                  </div>
+                )}
+                {!classReadOnly && qboClasses && qboClasses.length > 0 && (
+                  <div className="w-36">
+                    <Combobox
+                      key={`bulk-class-${[...selectedLineIds].sort().join(",")}`}
+                      name="_bulk_class"
+                      formId="_bulk_line_actions"
+                      options={qboClasses}
+                      defaultValue=""
+                      placeholder="Set class…"
+                      className="rounded-md border border-blue-200 bg-white px-2 py-1 text-xs"
+                      disabled={bulkSetting}
+                      onCommit={(value) => value && handleBulkSetField("class", value)}
+                    />
+                  </div>
+                )}
                 <button
                   type="button"
                   onClick={() => setSelectedLineIds(new Set())}
