@@ -890,38 +890,7 @@ export function BillPanel({
             </div>
           </div>
 
-          {/* Only meaningful once the bill has actually been pushed to
-              QBO — kept current by the nightly cron
-              (/api/cron/qbo-payment-sync) and the "Sync payment status"
-              button in Settings, both sharing runQboPaymentSync in
-              qbo.ts. There's no "paid date" on the bill itself in
-              QuickBooks — it comes from a separately-synced BillPayment
-              record, which is why this can lag a real-world payment
-              until the next sync. */}
-          {invoice.qbo_sync_status === "synced" && (
-            <div className="mt-3">
-              <span className={ghostLabel}>Payment status</span>
-              <div className={ghostField}>
-                {invoice.qbo_payment_status === "paid" ? (
-                  <span className="font-medium text-emerald-700">
-                    Paid
-                    {invoice.qbo_paid_at && (
-                      <>
-                        {" — "}
-                        <LocalTime iso={invoice.qbo_paid_at} withYear />
-                      </>
-                    )}
-                  </span>
-                ) : invoice.qbo_payment_status === "unpaid" ? (
-                  <span className="text-slate-500">Unpaid</span>
-                ) : (
-                  <span className="text-slate-400">Not checked yet</span>
-                )}
-              </div>
-            </div>
-          )}
-
-          <div className="mt-4 grid grid-cols-2 gap-x-6 gap-y-3">
+          <div className="mt-4 grid grid-cols-3 gap-x-6 gap-y-3">
             <label>
               <span className={ghostLabel}>Vendor name</span>
               <Combobox
@@ -971,6 +940,35 @@ export function BillPanel({
                 </a>
               )}
             </label>
+            {/* Only meaningful once the bill has actually been pushed to
+                QBO — kept current by the nightly cron
+                (/api/cron/qbo-payment-sync) and the "Sync payment status"
+                button, both sharing runQboPaymentSync in qbo.ts. There's
+                no "paid date" on the bill itself in QuickBooks — it comes
+                from a separately-synced BillPayment record, which is why
+                this can lag a real-world payment until the next sync. */}
+            {invoice.qbo_sync_status === "synced" && (
+              <div>
+                <span className={ghostLabel}>Payment status</span>
+                <div className={ghostField}>
+                  {invoice.qbo_payment_status === "paid" ? (
+                    <span className="font-medium text-emerald-700">
+                      Paid
+                      {invoice.qbo_paid_at && (
+                        <>
+                          {" — "}
+                          <LocalTime iso={invoice.qbo_paid_at} withYear />
+                        </>
+                      )}
+                    </span>
+                  ) : invoice.qbo_payment_status === "unpaid" ? (
+                    <span className="text-slate-500">Unpaid</span>
+                  ) : (
+                    <span className="text-slate-400">Not checked yet</span>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
