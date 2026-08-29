@@ -425,21 +425,40 @@ export default async function DashboardPage({
     .sort((a, b) => a.localeCompare(b))
     .map((c) => ({ id: c, label: c }));
 
-  // Class lives on line items, not the invoice itself — an invoice matches
-  // a Class filter if ANY of its line items carry that class.
+  // Class and Project/Customer both live on line items, not the invoice
+  // header — an invoice matches a Class or Customer filter if ANY of its
+  // line items carry that value. The header's own invoices.project_id is
+  // often left null (every invoice in at least one real org has it null),
+  // so projectsByInvoice also folds that header value in as a fallback
+  // rather than relying on it alone — see the "Customer" filter below,
+  // which used to check only the header field and so silently matched
+  // nothing for any org where project assignment happens per line item.
   const classesByInvoice = new Map<string, Set<string>>();
+  const projectsByInvoice = new Map<string, Set<string>>();
   const lineItemsByInvoiceForMatching = new Map<
     string,
     { class: string | null; category: string | null; project_id: string | null }[]
   >();
+  for (const inv of invoices ?? []) {
+    if (!inv.project_id) continue;
+    const set = projectsByInvoice.get(inv.id) ?? new Set<string>();
+    set.add(inv.project_id);
+    projectsByInvoice.set(inv.id, set);
+  }
   for (const row of lineItemRows ?? []) {
     const list = lineItemsByInvoiceForMatching.get(row.invoice_id) ?? [];
     list.push({ class: row.class, category: row.category, project_id: row.project_id });
     lineItemsByInvoiceForMatching.set(row.invoice_id, list);
-    if (!row.class) continue;
-    const set = classesByInvoice.get(row.invoice_id) ?? new Set<string>();
-    set.add(row.class);
-    classesByInvoice.set(row.invoice_id, set);
+    if (row.class) {
+      const set = classesByInvoice.get(row.invoice_id) ?? new Set<string>();
+      set.add(row.class);
+      classesByInvoice.set(row.invoice_id, set);
+    }
+    if (row.project_id) {
+      const set = projectsByInvoice.get(row.invoice_id) ?? new Set<string>();
+      set.add(row.project_id);
+      projectsByInvoice.set(row.invoice_id, set);
+    }
   }
 
   const approvedByInvoice = new Map<string, Set<string>>();
@@ -636,9 +655,10 @@ export default async function DashboardPage({
     );
   }
   if (advanced.customer.length > 0) {
-    filtered = filtered.filter(
-      (i) => i.project_id !== null && advanced.customer.includes(i.project_id)
-    );
+    filtered = filtered.filter((i) => {
+      const invoiceProjects = projectsByInvoice.get(i.id);
+      return invoiceProjects != null && advanced.customer.some((c) => invoiceProjects.has(c));
+    });
   }
   if (advanced.class.length > 0) {
     filtered = filtered.filter((i) => {

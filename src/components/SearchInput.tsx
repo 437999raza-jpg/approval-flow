@@ -17,7 +17,11 @@ const NL_CUE_WORDS = new Set([
 
 function looksLikeNaturalLanguage(query: string): boolean {
   const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
-  if (words.length >= 4) return true;
+  // 2+ words covers plain multi-word names too ("Clarington Toyota",
+  // "Sat Metal") — the AI path still resolves those correctly against the
+  // org's real vendor/project list (better than a strict substring match
+  // would), it's just not free/instant like a single-word search stays.
+  if (words.length >= 2) return true;
   return words.some((w) => NL_CUE_WORDS.has(w));
 }
 
