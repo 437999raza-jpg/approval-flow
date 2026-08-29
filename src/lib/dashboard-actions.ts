@@ -13,7 +13,7 @@ import {
 import { selectWorkflowForInvoice } from "@/lib/workflow-routing";
 import { computeLineItemTotals } from "@/lib/invoice-totals";
 import { normalizeForMatching } from "@/lib/matching";
-import { holdbackCategoryFor, getSupplierDefaults, taxCodeIdFor } from "@/lib/invoices";
+import { holdbackCategoryFor, getSupplierDefaults, taxCodeIdFor, buildSimpleLineItem } from "@/lib/invoices";
 import {
   effectiveApproversForStep,
   stepDecisionState,
@@ -2223,7 +2223,37 @@ async function reExtractInvoiceCore(
     .from("invoice_line_items")
     .delete()
     .eq("invoice_id", invoiceId);
-  if (extracted.line_items.length > 0) {
+  const supplierDefaults = await getSupplierDefaults(
+    supabase,
+    invoice.organization_id,
+    invoice.vendor_name
+  );
+  const { data: orgDefault } = await supabase
+    .from("organizations")
+    .select("default_tax_rate, default_tax_code_id, extraction_mode")
+    .eq("id", invoice.organization_id)
+    .single();
+  const orgDefaultTaxRate = orgDefault?.default_tax_rate ?? null;
+  const orgDefaultTaxCodeId = orgDefault?.default_tax_code_id ?? null;
+  if (orgDefault?.extraction_mode === "simple") {
+    // Same one-line-per-invoice rule as initial ingestion (see
+    // buildSimpleLineItem/invoices.ts) — Project/Class are per-line human
+    // calls, preserved from the single line that existed before
+    // re-extraction, same as the detailed path below.
+    const [simpleLine] = buildSimpleLineItem(
+      { subtotal: extracted.subtotal, tax_rate: extracted.tax_rate },
+      supplierDefaults,
+      orgDefaultTaxRate,
+      orgDefaultTaxCodeId,
+      projectByOrder.get(1) ?? null
+    );
+    await supabase.from("invoice_line_items").insert({
+      invoice_id: invoiceId,
+      ...simpleLine,
+      class: classByOrder.get(1) ?? null,
+      line_order: 1,
+    });
+  } else if (extracted.line_items.length > 0) {
     // Class NEVER comes from the document (the org's classes are totally
     // different) — only a per-line human tag (the CON/CO buttons) survives
     // re-extraction, via classByOrder above; an untagged line just stays
@@ -2236,18 +2266,6 @@ async function reExtractInvoiceCore(
     // no "preserve what was already on this line" treatment needed here:
     // the supplier rule already IS that persistent source of truth,
     // consulted fresh every time.
-    const supplierDefaults = await getSupplierDefaults(
-      supabase,
-      invoice.organization_id,
-      invoice.vendor_name
-    );
-    const { data: orgDefault } = await supabase
-      .from("organizations")
-      .select("default_tax_rate, default_tax_code_id")
-      .eq("id", invoice.organization_id)
-      .single();
-    const orgDefaultTaxRate = orgDefault?.default_tax_rate ?? null;
-    const orgDefaultTaxCodeId = orgDefault?.default_tax_code_id ?? null;
     await supabase.from("invoice_line_items").insert(
       extracted.line_items.map((li, i) => {
         const appliedRate =

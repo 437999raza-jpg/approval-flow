@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isPlatformAdmin } from "@/lib/platform-admin";
-import { createOrganizationAction, joinOrganizationAction, extendTrialAction } from "@/lib/admin-actions";
+import { createOrganizationAction, joinOrganizationAction, extendTrialAction, setExtractionModeAction } from "@/lib/admin-actions";
 import { SubmitButton } from "@/components/SubmitButton";
 import { isTrialActive } from "@/lib/plans";
 
@@ -14,6 +14,7 @@ const ERRORS: Record<string, string> = {
   "create-failed": "Could not create the organization.",
   "invite-failed": "Organization created, but the admin account could not be created — invite them manually from that org's Settings page.",
   "bad-extend": "Enter a valid number of days to extend the trial by.",
+  "bad-extraction-mode": "Could not update the extraction mode.",
 };
 
 export default async function AdminOrganizationsPage({
@@ -34,7 +35,7 @@ export default async function AdminOrganizationsPage({
 
   const { data: orgs } = await admin
     .from("organizations")
-    .select("id, name, slug, inbound_email_token, inbound_email_local, trial_ends_at, plan, created_at")
+    .select("id, name, slug, inbound_email_token, inbound_email_local, trial_ends_at, plan, extraction_mode, created_at")
     .order("created_at", { ascending: false });
 
   const { data: memberRows } = await admin
@@ -160,6 +161,7 @@ export default async function AdminOrganizationsPage({
               <th className="py-1.5 pr-3">Members</th>
               <th className="py-1.5 pr-3">Support</th>
               <th className="py-1.5 pr-3">Trial</th>
+              <th className="py-1.5 pr-3">Extraction</th>
               <th className="py-1.5 pr-3">Created</th>
               <th className="py-1.5"></th>
             </tr>
@@ -196,6 +198,25 @@ export default async function AdminOrganizationsPage({
                   ) : (
                     <span className="text-slate-300">—</span>
                   )}
+                </td>
+                <td className="py-1.5 pr-3">
+                  <form action={setExtractionModeAction} className="flex items-center gap-1.5">
+                    <input type="hidden" name="org_id" value={org.id} />
+                    <input
+                      type="hidden"
+                      name="extraction_mode"
+                      value={org.extraction_mode === "simple" ? "detailed" : "simple"}
+                    />
+                    <span className="text-slate-500">
+                      {org.extraction_mode === "simple" ? "Simple" : "Detailed"}
+                    </span>
+                    <button
+                      type="submit"
+                      className="rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
+                    >
+                      Switch to {org.extraction_mode === "simple" ? "Detailed" : "Simple"}
+                    </button>
+                  </form>
                 </td>
                 <td className="py-1.5 pr-3 text-slate-500">
                   {new Date(org.created_at).toLocaleDateString()}

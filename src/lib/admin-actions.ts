@@ -287,3 +287,33 @@ export async function extendTrialAction(formData: FormData) {
   revalidatePath("/admin/organizations");
   redirect("/admin/organizations");
 }
+
+// Platform-admin only: which extraction mode an org's invoices use.
+// 'detailed' (default) is today's full line-by-line extraction; 'simple'
+// builds one line item per invoice from the document's subtotal + the
+// vendor's saved supplier default category (see buildSimpleLineItem in
+// src/lib/invoices.ts). This is a separate axis from `plan` on purpose —
+// it isn't wired into PLANS/pricing, so it can be sold however the
+// business lands on without another code change.
+export async function setExtractionModeAction(formData: FormData) {
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user || !isPlatformAdmin(user.email)) redirect("/login");
+
+  const orgId = String(formData.get("org_id") ?? "");
+  const mode = String(formData.get("extraction_mode") ?? "");
+  if (!orgId || (mode !== "detailed" && mode !== "simple")) {
+    redirect("/admin/organizations?error=bad-extraction-mode");
+  }
+
+  const admin = createAdminClient();
+  await admin
+    .from("organizations")
+    .update({ extraction_mode: mode })
+    .eq("id", orgId);
+
+  revalidatePath("/admin/organizations");
+  redirect("/admin/organizations");
+}

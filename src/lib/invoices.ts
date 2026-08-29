@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database, InvoiceSource } from "@/lib/supabase/types";
-import { extractInvoiceFields } from "@/lib/extract-invoice";
+import { extractInvoiceFields, type ExtractedInvoiceData } from "@/lib/extract-invoice";
 import { selectWorkflowForInvoice } from "@/lib/workflow-routing";
 import { normalizeForMatching, matchProjectFromPoNumber } from "@/lib/matching";
 import { matchSupplier } from "@/lib/qbo";
@@ -115,6 +115,37 @@ export function holdbackCategoryFor(li: {
     : null;
 }
 
+// "Simple" extraction mode (organizations.extraction_mode = 'simple'):
+// Dext-style, one line item per invoice instead of the full line-by-line
+// breakdown. The model still extracts the whole document exactly as it
+// does for "detailed" mode — only which line item(s) get built from that
+// extraction differs. Amount is the document's own printed SUBTOTAL (not
+// the total, which would double-count tax once computeLineItemTotals
+// applies tax_rate); category/class come from the vendor's saved supplier
+// rule, or land blank for the human to set once (which then persists for
+// every future invoice from that vendor, same as detailed mode).
+export function buildSimpleLineItem(
+  extracted: Pick<ExtractedInvoiceData, "subtotal" | "tax_rate">,
+  supplierDefaults: SupplierDefaults | null,
+  orgDefaultTaxRate: number | null,
+  orgDefaultTaxCodeId: string | null,
+  projectId: string | null
+) {
+  const appliedRate =
+    supplierDefaults?.tax_rate ?? orgDefaultTaxRate ?? extracted.tax_rate;
+  return [
+    {
+      description: null,
+      amount: extracted.subtotal,
+      tax_rate: appliedRate,
+      qbo_tax_code_id: taxCodeIdFor(appliedRate, orgDefaultTaxRate, orgDefaultTaxCodeId),
+      category: supplierDefaults?.category ?? null,
+      class: supplierDefaults?.class ?? null,
+      project_id: projectId,
+    },
+  ];
+}
+
 interface CreateInvoiceArgs {
   supabase: SupabaseClient<Database>;
   organizationId: string;
@@ -215,11 +246,12 @@ export async function createInvoiceFromFile({
   // extraction.
   const { data: org } = await supabase
     .from("organizations")
-    .select("default_tax_rate, default_tax_code_id")
+    .select("default_tax_rate, default_tax_code_id, extraction_mode")
     .eq("id", organizationId)
     .single();
   const orgDefaultTaxRate = org?.default_tax_rate ?? null;
   const orgDefaultTaxCodeId = org?.default_tax_code_id ?? null;
+  const isSimpleMode = org?.extraction_mode === "simple";
 
   // Project detection from the PO number: suppliers commonly put their job
   // number on the PO ("2022-589-PO-1234" starts with project code 2022-58).
@@ -249,8 +281,16 @@ export async function createInvoiceFromFile({
   // Supplier rules carry Category, Class, Tax rate, Payment terms, Currency
   // — never Project (a supplier can work on many jobs, so that stays a
   // per-bill choice, detected from the PO number above instead).
-  const hasLineItems = !!extracted && extracted.line_items.length > 0;
-  const finalLineItems = hasLineItems
+  const hasLineItems = isSimpleMode || (!!extracted && extracted.line_items.length > 0);
+  const finalLineItems = isSimpleMode
+    ? buildSimpleLineItem(
+        { subtotal: extracted?.subtotal ?? null, tax_rate: extracted?.tax_rate ?? null },
+        supplierDefaults,
+        orgDefaultTaxRate,
+        orgDefaultTaxCodeId,
+        projectId
+      )
+    : hasLineItems
     ? extracted!.line_items.map((li) => {
         // A holdback read as a positive amount is still a deduction — negate
         // it so the bill math stays right (the category rule matches it).
