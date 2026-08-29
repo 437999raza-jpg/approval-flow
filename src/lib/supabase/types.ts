@@ -49,7 +49,7 @@ export interface Database {
           usage_rate_usd: number;
           usage_rate_updated_at: string | null;
           stripe_customer_id: string | null;
-          plan: "starter" | "growth" | "scale" | null;
+          plan: "starter" | "growth" | "scale" | "detailed" | null;
           plan_selected_at: string | null;
           created_at: string;
         };
@@ -741,7 +741,7 @@ export interface Database {
         Row: {
           id: string;
           organization_id: string;
-          purpose: "extract" | "classify" | "search";
+          purpose: "extract" | "classify" | "search" | "statement";
           model: string;
           prompt_tokens: number | null;
           completion_tokens: number | null;
@@ -812,6 +812,45 @@ export interface Database {
         > & { organization_id: string };
         Update: Partial<
           Database["public"]["Tables"]["support_thread_state"]["Row"]
+        >;
+        Relationships: [];
+      };
+      vendor_statements: {
+        Row: {
+          id: string;
+          organization_id: string;
+          supplier_name: string;
+          file_path: string;
+          file_name: string;
+          uploaded_by: string | null;
+          status: "processing" | "reconciled" | "error";
+          error_message: string | null;
+          created_at: string;
+        };
+        Insert: Partial<
+          Database["public"]["Tables"]["vendor_statements"]["Row"]
+        > & { organization_id: string; supplier_name: string; file_path: string; file_name: string };
+        Update: Partial<
+          Database["public"]["Tables"]["vendor_statements"]["Row"]
+        >;
+        Relationships: [];
+      };
+      vendor_statement_lines: {
+        Row: {
+          id: string;
+          statement_id: string;
+          invoice_number: string;
+          statement_date: string | null;
+          amount: number | null;
+          match_status: "matched" | "missing_in_flow";
+          matched_invoice_id: string | null;
+          created_at: string;
+        };
+        Insert: Partial<
+          Database["public"]["Tables"]["vendor_statement_lines"]["Row"]
+        > & { statement_id: string; invoice_number: string; match_status: "matched" | "missing_in_flow" };
+        Update: Partial<
+          Database["public"]["Tables"]["vendor_statement_lines"]["Row"]
         >;
         Relationships: [];
       };

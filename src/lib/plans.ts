@@ -6,7 +6,7 @@
 // extraction) do separately into one product, priced below buying both.
 // Authored by Araza.
 
-export type PlanId = "starter" | "growth" | "scale";
+export type PlanId = "starter" | "growth" | "scale" | "detailed";
 
 export interface Plan {
   id: PlanId;
@@ -47,10 +47,28 @@ export const PLANS: Record<PlanId, Plan> = {
     // one price" tier yet (considered and deliberately deferred).
     blurb: "High-volume single org — heavy monthly document flow.",
   },
+  detailed: {
+    id: "detailed",
+    name: "Detailed",
+    priceUsd: 299,
+    includedDocs: 700,
+    overageRatePerDoc: 0.2,
+    blurb: "Today's full line-by-line extraction, our most thorough plan — includes Statement Reconciliation.",
+  },
 };
 
-export const PLAN_ORDER: PlanId[] = ["starter", "growth", "scale"];
+export const PLAN_ORDER: PlanId[] = ["starter", "growth", "scale", "detailed"];
 
 export function isPlanId(value: string | null | undefined): value is PlanId {
-  return value === "starter" || value === "growth" || value === "scale";
+  return (
+    value === "starter" || value === "growth" || value === "scale" || value === "detailed"
+  );
+}
+
+// Statement Reconciliation is the first feature gated by plan tier —
+// kept as its own helper (rather than an inline `=== "detailed"` check
+// at each call site) so a future tier that also includes it is a
+// one-line change here, not a hunt across every caller.
+export function hasStatementReconciliation(plan: PlanId | null | undefined): boolean {
+  return plan === "detailed";
 }

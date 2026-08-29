@@ -25,7 +25,8 @@ import { buildQboAttachmentBundle } from "@/lib/qbo-attachments";
 import { pdfPageCount, reorderPdfPages } from "@/lib/merge-documents";
 import { buildMergedInvoicePdf } from "@/lib/invoice-export";
 import { qboTag, INVOICES_TAG } from "@/lib/org-cache";
-import { PLANS, isPlanId } from "@/lib/plans";
+import { PLANS, isPlanId, hasStatementReconciliation } from "@/lib/plans";
+import { extractStatementLines } from "@/lib/extract-statement";
 
 // Server actions for the dashboard (moved out of the page component so
 // the page stays render-only). Authored by Araza.
@@ -3852,5 +3853,216 @@ export async function disconnectQbo() {
     .eq("organization_id", org.id);
 
   revalidatePath("/settings");
+}
+
+// ---------------------------------------------------------------------
+// Statement Reconciliation (Detailed plan only — see src/lib/plans.ts)
+// ---------------------------------------------------------------------
+
+const STATEMENT_BUCKET = "statements";
+
+// Upload a vendor statement, extract its lines (extract-statement.ts),
+// and match each one against this org's existing invoices for the same
+// vendor by invoice number. Admin only, and gated by plan — mirrors the
+// same shape as other plan/role-gated actions (e.g. selectPlan).
+export async function uploadAndReconcileStatement(
+  formData: FormData
+): Promise<{ ok: boolean; error?: string; statementId?: string }> {
+
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
+  const org = await getCurrentOrg(supabase);
+  if (!org || org.role !== "admin") {
+    return { ok: false, error: "Only an admin can upload a statement." };
+  }
+
+  const { data: orgRow } = await supabase
+    .from("organizations")
+    .select("plan")
+    .eq("id", org.id)
+    .single();
+  if (!hasStatementReconciliation(isPlanId(orgRow?.plan) ? orgRow.plan : null)) {
+    return {
+      ok: false,
+      error: "Statement Reconciliation is part of the Detailed plan ($299/mo).",
+    };
+  }
+
+  const supplierName = String(formData.get("supplier_name") ?? "").trim();
+  if (!supplierName) return { ok: false, error: "Choose a vendor first." };
+
+  const file = formData.get("file");
+  if (!(file instanceof File) || file.size === 0) {
+    return { ok: false, error: "Choose a statement file to upload." };
+  }
+  if (file.size > 20 * 1024 * 1024) {
+    return { ok: false, error: "File is too large (20MB max)." };
+  }
+  const allowed = ["application/pdf", "image/png", "image/jpeg", "image/webp"];
+  if (!allowed.includes(file.type)) {
+    return { ok: false, error: "Upload a PDF or image of the statement." };
+  }
+
+  const safeName = file.name.replace(/[^\w.\-]+/g, "_");
+  const filePath = `${org.id}/${crypto.randomUUID()}-${safeName}`;
+  const { error: uploadError } = await supabase.storage
+    .from(STATEMENT_BUCKET)
+    .upload(filePath, file, { contentType: file.type, upsert: false });
+  if (uploadError) {
+    return { ok: false, error: `Upload failed: ${uploadError.message}` };
+  }
+
+  const { data: statement, error: insertError } = await supabase
+    .from("vendor_statements")
+    .insert({
+      organization_id: org.id,
+      supplier_name: supplierName,
+      file_path: filePath,
+      file_name: file.name,
+      uploaded_by: user.id,
+      status: "processing",
+    })
+    .select("id")
+    .single();
+  if (insertError || !statement) {
+    await supabase.storage.from(STATEMENT_BUCKET).remove([filePath]);
+    return { ok: false, error: "Could not record the upload." };
+  }
+
+  const lines = await extractStatementLines(file, org.id);
+  if (!lines) {
+    await supabase
+      .from("vendor_statements")
+      .update({ status: "error", error_message: "Could not read the statement — try a clearer scan." })
+      .eq("id", statement.id);
+    return { ok: true, statementId: statement.id };
+  }
+
+  // Match each statement line against this org's invoices for the same
+  // vendor by invoice number — case/whitespace-insensitive on both sides,
+  // same normalization spirit as normalizeForMatching used elsewhere for
+  // vendor/project fuzzy matching.
+  const { data: candidateInvoices } = await supabase
+    .from("invoices")
+    .select("id, invoice_number, vendor_name")
+    .eq("organization_id", org.id)
+    .ilike("vendor_name", supplierName);
+
+  const byInvoiceNumber = new Map<string, string>(); // normalized number -> invoice id
+  for (const inv of candidateInvoices ?? []) {
+    const num = inv.invoice_number?.trim().toLowerCase();
+    if (num) byInvoiceNumber.set(num, inv.id);
+  }
+
+  const rows = lines.map((line) => {
+    const matchedInvoiceId = byInvoiceNumber.get(line.invoice_number.trim().toLowerCase());
+    return {
+      statement_id: statement.id,
+      invoice_number: line.invoice_number,
+      statement_date: line.date,
+      amount: line.amount,
+      match_status: (matchedInvoiceId ? "matched" : "missing_in_flow") as
+        | "matched"
+        | "missing_in_flow",
+      matched_invoice_id: matchedInvoiceId ?? null,
+    };
+  });
+  if (rows.length > 0) {
+    await supabase.from("vendor_statement_lines").insert(rows);
+  }
+
+  await supabase
+    .from("vendor_statements")
+    .update({ status: "reconciled" })
+    .eq("id", statement.id);
+
+  await supabase.from("audit_log").insert({
+    organization_id: org.id,
+    actor_id: user.id,
+    action: "statement.reconciled",
+    metadata: { statement_id: statement.id, supplier_name: supplierName, line_count: rows.length },
+  });
+
+  revalidatePath("/statements");
+  return { ok: true, statementId: statement.id };
+}
+
+// Send the drafted "missing invoices" email to the vendor — same Resend
+// call/error-handling shape as emailInvoicesAction, minus the PDF merge
+// (a plain email, not a document attachment).
+export async function sendStatementEmail(
+  statementId: string,
+  to: string,
+  subject: string,
+  body: string
+): Promise<{ ok: boolean; error?: string }> {
+
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
+  const org = await getCurrentOrg(supabase);
+  if (!org || org.role !== "admin") return { ok: false, error: "Admin only." };
+
+  const recipient = to.trim();
+  if (!recipient) return { ok: false, error: "Enter a recipient email address." };
+  const trimmedSubject = subject.trim();
+  const trimmedBody = body.trim();
+  if (!trimmedSubject || !trimmedBody) {
+    return { ok: false, error: "Subject and body can't be empty." };
+  }
+
+  const { data: statement } = await supabase
+    .from("vendor_statements")
+    .select("id, organization_id")
+    .eq("id", statementId)
+    .eq("organization_id", org.id)
+    .single();
+  if (!statement) return { ok: false, error: "Statement not found." };
+
+  const apiKey = process.env.RESEND_API_KEY;
+  const from = process.env.RESEND_FROM_EMAIL;
+  if (!apiKey || !from) {
+    return { ok: false, error: "Email is not configured (RESEND_API_KEY / RESEND_FROM_EMAIL missing)." };
+  }
+
+  const html = `<p style="white-space:pre-wrap;">${escapeHtml(trimmedBody)}</p>`;
+
+  try {
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from,
+        to: recipient,
+        subject: trimmedSubject,
+        html,
+      }),
+    });
+    if (!res.ok) {
+      return { ok: false, error: `Email failed (${res.status}) — check the recipient address.` };
+    }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : "Email failed to send." };
+  }
+
+  await supabase.from("audit_log").insert({
+    organization_id: org.id,
+    actor_id: user.id,
+    action: "statement.vendor_emailed",
+    metadata: { statement_id: statementId, to: recipient, subject: trimmedSubject },
+  });
+
+  revalidatePath(`/statements/${statementId}`);
+  return { ok: true };
 }
 
