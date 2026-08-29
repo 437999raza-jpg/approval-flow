@@ -3541,9 +3541,9 @@ alter table organizations add column if not exists trial_ends_at timestamptz;
 alter table profiles add column if not exists marketing_opt_in boolean not null default false;
 
 ---------------------------------------------------------------------
--- >>> supabase/migrations/0087_extraction_mode.sql
+-- >>> supabase/migrations/0088_extraction_mode.sql
 ---------------------------------------------------------------------
--- 0087: per-org extraction mode. 'detailed' (default) is today's full
+-- 0088: per-org extraction mode. 'detailed' (default) is today's full
 -- line-by-line extraction; 'simple' builds one line item per invoice
 -- from the document's subtotal + supplier default category, Dext-style.
 alter table organizations
