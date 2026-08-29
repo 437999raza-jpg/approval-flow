@@ -20,10 +20,16 @@ export function StatementUploadForm({
 }) {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [fileName, setFileName] = useState<string | null>(null);
   const [supplierOverride, setSupplierOverride] = useState("");
   const [comboboxKey, setComboboxKey] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const clearFile = () => {
+    if (fileInputRef.current) fileInputRef.current.value = "";
+    setFileName(null);
+  };
 
   const submit = async () => {
     setError(null);
@@ -45,7 +51,7 @@ export function StatementUploadForm({
       }
     } finally {
       setBusy(false);
-      if (fileInputRef.current) fileInputRef.current.value = "";
+      clearFile();
       setSupplierOverride("");
       setComboboxKey((k) => k + 1);
     }
@@ -58,12 +64,25 @@ export function StatementUploadForm({
           <label className="text-[11px] font-bold uppercase tracking-wide text-brand-muted">
             Statement file
           </label>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="application/pdf,image/png,image/jpeg,image/webp"
-            className="mt-1 block w-full text-sm text-brand-ink file:mr-2 file:rounded-md file:border-0 file:bg-brand-mist file:px-2 file:py-1.5 file:text-xs file:font-medium"
-          />
+          <div className="mt-1 flex items-center gap-2">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="application/pdf,image/png,image/jpeg,image/webp"
+              onChange={(e) => setFileName(e.target.files?.[0]?.name ?? null)}
+              className="block flex-1 text-sm text-brand-ink file:mr-2 file:rounded-md file:border-0 file:bg-brand-mist file:px-2 file:py-1.5 file:text-xs file:font-medium"
+            />
+            {fileName && (
+              <button
+                type="button"
+                onClick={clearFile}
+                title="Clear file"
+                className="flex-none rounded-md border border-brand-line px-2 py-1 text-xs text-brand-muted hover:bg-brand-mist"
+              >
+                ✕
+              </button>
+            )}
+          </div>
         </div>
         <button
           type="button"

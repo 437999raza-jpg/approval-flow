@@ -2,7 +2,8 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentOrg } from "@/lib/current-org";
-import { sendStatementEmail, updateStatementDetails, updateStatementSupplier } from "@/lib/dashboard-actions";
+import { sendStatementEmail, updateStatementDetails, updateStatementSupplier, reconcileStatementAgain } from "@/lib/dashboard-actions";
+import { SubmitButton } from "@/components/SubmitButton";
 import { fetchAllQboSuppliers } from "@/lib/qbo-all";
 import { StatementEmailDraft } from "@/components/StatementEmailDraft";
 import { StatementDetailsForm } from "@/components/StatementDetailsForm";
@@ -243,8 +244,17 @@ export default async function StatementDetailPage({
               </section>
 
               <section className="mt-6">
-                <div className="text-[11px] font-bold uppercase tracking-wide text-brand-muted">
-                  Reconciliation ({(lines ?? []).length})
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-[11px] font-bold uppercase tracking-wide text-brand-muted">
+                    Reconciliation ({(lines ?? []).length})
+                  </div>
+                  {org.role === "admin" && (
+                    <form action={reconcileStatementAgain.bind(null, statement.id)}>
+                      <SubmitButton className="text-xs font-medium text-brand-navy hover:underline">
+                        Reconcile again
+                      </SubmitButton>
+                    </form>
+                  )}
                 </div>
                 <div className="mt-2 overflow-hidden rounded-lg border border-brand-line bg-white">
                   <table className="w-full text-sm">

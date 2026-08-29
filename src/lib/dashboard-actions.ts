@@ -3897,6 +3897,63 @@ export async function disconnectQbo() {
 
 const STATEMENT_BUCKET = "statements";
 
+// Shared by upload, "correct the vendor", and the manual "Reconcile
+// again" button — one place that decides whether a statement line
+// exists in Flow: exact (case-insensitive) vendor_name match plus exact
+// (case/whitespace-insensitive) invoice_number match. Returns invoice id
+// per normalized invoice number for this vendor.
+async function matchInvoicesForVendor(
+  supabase: ReturnType<typeof createClient>,
+  organizationId: string,
+  supplierName: string
+): Promise<Map<string, string>> {
+  const { data: candidateInvoices } = await supabase
+    .from("invoices")
+    .select("id, invoice_number")
+    .eq("organization_id", organizationId)
+    .ilike("vendor_name", supplierName);
+
+  const byInvoiceNumber = new Map<string, string>();
+  for (const inv of candidateInvoices ?? []) {
+    const num = inv.invoice_number?.trim().toLowerCase();
+    if (num) byInvoiceNumber.set(num, inv.id);
+  }
+  return byInvoiceNumber;
+}
+
+// Re-run matching for every existing line of a statement against
+// whatever supplier name it currently has — shared by
+// updateStatementSupplier (vendor corrected) and reconcileStatementAgain
+// (manual re-check, e.g. the missing invoice has since been added).
+async function rematchStatementLines(
+  supabase: ReturnType<typeof createClient>,
+  organizationId: string,
+  statementId: string,
+  supplierName: string
+) {
+  const { data: lines } = await supabase
+    .from("vendor_statement_lines")
+    .select("id, invoice_number")
+    .eq("statement_id", statementId);
+
+  const byInvoiceNumber = await matchInvoicesForVendor(supabase, organizationId, supplierName);
+
+  await Promise.all(
+    (lines ?? []).map((line) => {
+      const matchedInvoiceId = byInvoiceNumber.get(line.invoice_number.trim().toLowerCase());
+      return supabase
+        .from("vendor_statement_lines")
+        .update({
+          match_status: (matchedInvoiceId ? "matched" : "missing_in_flow") as
+            | "matched"
+            | "missing_in_flow",
+          matched_invoice_id: matchedInvoiceId ?? null,
+        })
+        .eq("id", line.id);
+    })
+  );
+}
+
 // Upload a vendor statement, extract its lines (extract-statement.ts),
 // and match each one against this org's existing invoices for the same
 // vendor by invoice number. Admin only, and gated by plan — mirrors the
@@ -4016,17 +4073,7 @@ export async function uploadAndReconcileStatement(
   // vendor by invoice number — case/whitespace-insensitive on both sides,
   // same normalization spirit as normalizeForMatching used elsewhere for
   // vendor/project fuzzy matching.
-  const { data: candidateInvoices } = await supabase
-    .from("invoices")
-    .select("id, invoice_number, vendor_name")
-    .eq("organization_id", org.id)
-    .ilike("vendor_name", supplierName);
-
-  const byInvoiceNumber = new Map<string, string>(); // normalized number -> invoice id
-  for (const inv of candidateInvoices ?? []) {
-    const num = inv.invoice_number?.trim().toLowerCase();
-    if (num) byInvoiceNumber.set(num, inv.id);
-  }
+  const byInvoiceNumber = await matchInvoicesForVendor(supabase, org.id, supplierName);
 
   const rows = lines.map((line) => {
     const matchedInvoiceId = byInvoiceNumber.get(line.invoice_number.trim().toLowerCase());
@@ -4209,41 +4256,40 @@ export async function updateStatementSupplier(statementId: string, formData: For
     .single();
   if (!statement) return;
 
-  const { data: lines } = await supabase
-    .from("vendor_statement_lines")
-    .select("id, invoice_number")
-    .eq("statement_id", statementId);
-
-  const { data: candidateInvoices } = await supabase
-    .from("invoices")
-    .select("id, invoice_number")
-    .eq("organization_id", org.id)
-    .ilike("vendor_name", supplierName);
-  const byInvoiceNumber = new Map<string, string>();
-  for (const inv of candidateInvoices ?? []) {
-    const num = inv.invoice_number?.trim().toLowerCase();
-    if (num) byInvoiceNumber.set(num, inv.id);
-  }
-
-  await Promise.all(
-    (lines ?? []).map((line) => {
-      const matchedInvoiceId = byInvoiceNumber.get(line.invoice_number.trim().toLowerCase());
-      return supabase
-        .from("vendor_statement_lines")
-        .update({
-          match_status: (matchedInvoiceId ? "matched" : "missing_in_flow") as
-            | "matched"
-            | "missing_in_flow",
-          matched_invoice_id: matchedInvoiceId ?? null,
-        })
-        .eq("id", line.id);
-    })
-  );
-
   await supabase
     .from("vendor_statements")
     .update({ supplier_name: supplierName })
     .eq("id", statementId);
+
+  await rematchStatementLines(supabase, org.id, statementId, supplierName);
+
+  revalidatePath(`/statements/${statementId}`);
+}
+
+// Manual "Reconcile again" — re-checks every line against the statement's
+// CURRENT vendor without changing it (e.g. the missing invoice has since
+// been added to Flow, or a prior run was affected by the missing RLS
+// update policy this ships alongside — see migration 0084).
+export async function reconcileStatementAgain(statementId: string) {
+
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
+  const org = await getCurrentOrg(supabase);
+  if (!org || org.role !== "admin") return;
+
+  const { data: statement } = await supabase
+    .from("vendor_statements")
+    .select("id, supplier_name")
+    .eq("id", statementId)
+    .eq("organization_id", org.id)
+    .single();
+  if (!statement) return;
+
+  await rematchStatementLines(supabase, org.id, statementId, statement.supplier_name);
 
   revalidatePath(`/statements/${statementId}`);
 }
