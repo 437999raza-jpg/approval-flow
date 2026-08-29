@@ -578,28 +578,62 @@ export function BillPanel({
                       {/* Status copy sits in normal flow right under the
                           stepper; only the button row is pinned to the
                           bottom so it lines up with Approve. */}
-                      {invoice.status === "approved" && admin.visible && (
-                        <p className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-emerald-700">
-                          <span className="h-1.5 w-1.5 flex-none rounded-full bg-emerald-500" />
-                          Synced to QuickBooks
-                          {invoice.qbo_synced_at && (
-                            <>
-                              {" "}—{" "}
-                              <LocalTime iso={invoice.qbo_synced_at} withYear />
-                            </>
+                      {/* Text + link are for everyone — QBO sync is
+                          general-interest info, not sensitive. qbo_bill_id
+                          alone is enough to build the link: the URL takes
+                          no realm id, and qboConnected/qboRealmId are only
+                          ever non-null for admins anyway (qbo_connections
+                          is RLS'd to admins — see where it's fetched in
+                          page.tsx), which used to hide a perfectly valid
+                          link from every non-admin viewer. Undo sync stays
+                          admin-only, in the button row below. */}
+                      {invoice.status === "approved" && (
+                        <>
+                          <p className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-emerald-700">
+                            <span className="h-1.5 w-1.5 flex-none rounded-full bg-emerald-500" />
+                            Synced to QuickBooks
+                            {invoice.qbo_synced_at && (
+                              <>
+                                {" "}—{" "}
+                                <LocalTime iso={invoice.qbo_synced_at} withYear />
+                              </>
+                            )}
+                            {invoice.qbo_bill_id && (
+                              <a
+                                href={`https://qbo.intuit.com/app/bill?txnId=${invoice.qbo_bill_id}`}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="font-medium text-blue-600 hover:underline"
+                              >
+                                Open in QuickBooks Online ↗
+                              </a>
+                            )}
+                          </p>
+                          {invoice.qbo_error && (
+                            <p className="mt-1 text-sm text-amber-700">
+                              Bill created, but attachments failed:{" "}
+                              {invoice.qbo_error}
+                            </p>
                           )}
-                          {qboConnected && qboRealmId && invoice.qbo_bill_id && (
-                            <a
-                              href={`https://qbo.intuit.com/app/bill?txnId=${invoice.qbo_bill_id}`}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="font-medium text-blue-600 hover:underline"
-                            >
-                              Open in QuickBooks Online ↗
-                            </a>
-                          )}
-                        </p>
+                        </>
                       )}
+                      {/* Sync only ever touches qbo_sync_status/qbo_error,
+                          never invoice.status — so an error here with the
+                          bill no longer qbo_ready means it failed, then got
+                          sent back to review (or otherwise moved on) before
+                          anyone retried. Nothing to retry against anymore,
+                          so this only offers Clear (a real Retry lives in
+                          the qbo_ready branch below instead). Shown to
+                          everyone same as above; only the Clear button
+                          itself is admin-only. */}
+                      {invoice.qbo_sync_status === "error" &&
+                        invoice.status !== "qbo_ready" &&
+                        invoice.status !== "approved" && (
+                          <p className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                            Sync failed
+                            {invoice.qbo_error ? `: ${invoice.qbo_error}` : ""}
+                          </p>
+                        )}
                       {invoice.status === "on_review" && !canReview && (
                         <p className="mt-3 text-sm text-slate-500">
                           Awaiting review — an admin must complete the review
@@ -677,7 +711,12 @@ export function BillPanel({
                         (invoice.status === "qbo_ready" && admin.visible) ||
                         (invoice.status === "approved" &&
                           admin.visible &&
-                          !!admin.clearQboSync)) && (
+                          !!admin.clearQboSync) ||
+                        (invoice.qbo_sync_status === "error" &&
+                          invoice.status !== "qbo_ready" &&
+                          invoice.status !== "approved" &&
+                          admin.visible &&
+                          !!admin.clearQboError)) && (
                         <div className="mt-auto flex gap-2 pt-3">
                           {invoice.status === "on_review" && canReview && (
                             <form action={approval.reviewComplete} className="flex-1">
@@ -741,6 +780,17 @@ export function BillPanel({
                                   className="w-full rounded-md border border-slate-300 px-4 py-2 text-center text-sm font-semibold text-slate-600 hover:bg-slate-50"
                                 >
                                   Undo sync (allow re-sync)
+                                </SubmitButton>
+                              </form>
+                            )}
+                          {invoice.qbo_sync_status === "error" &&
+                            invoice.status !== "qbo_ready" &&
+                            invoice.status !== "approved" &&
+                            admin.visible &&
+                            admin.clearQboError && (
+                              <form action={admin.clearQboError} className="flex-1">
+                                <SubmitButton className="w-full rounded-md border border-slate-300 px-4 py-2 text-center text-sm font-semibold text-slate-600 hover:bg-slate-50">
+                                  Clear error
                                 </SubmitButton>
                               </form>
                             )}
@@ -1078,102 +1128,6 @@ export function BillPanel({
                 reorder={reorderPages}
               />
             )}
-        </div>
-
-        {/* QuickBooks Online sync */}
-        <div className="border-t border-slate-100 px-6 py-3 text-xs">
-          <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">
-            QuickBooks Online
-          </div>
-          <div className="mt-2 space-y-2">
-            {invoice.qbo_sync_status === "synced" ? (
-              <div className="space-y-1.5">
-                <p className="flex flex-wrap items-center gap-2 text-emerald-700">
-                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                  Synced to QuickBooks
-                  {invoice.qbo_synced_at && (
-                    <>
-                      {" "}—{" "}
-                      <LocalTime iso={invoice.qbo_synced_at} withYear />
-                    </>
-                  )}
-                  {qboConnected && qboRealmId && invoice.qbo_bill_id && (
-                    <a
-                      href={`https://qbo.intuit.com/app/bill?txnId=${invoice.qbo_bill_id}`}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="font-medium text-blue-600 hover:underline"
-                    >
-                      Open in QuickBooks Online ↗
-                    </a>
-                  )}
-                </p>
-                {invoice.qbo_error && (
-                  <p className="text-amber-700">
-                    Bill created, but attachments failed: {invoice.qbo_error}
-                  </p>
-                )}
-                {/* Undo sync lives up in Status & Approval now (same row as
-                    Hold/Cancel/Sync) — this is just the status line. */}
-              </div>
-            ) : invoice.qbo_sync_status === "error" && !(invoice.status === "qbo_ready" && admin.visible) ? (
-              // A failed sync only ever touches qbo_sync_status/qbo_error,
-              // never invoice.status — so this is the bill-moved-on case:
-              // it failed while qbo_ready, then got sent back to review (or
-              // otherwise progressed) before anyone retried, leaving a
-              // stale error with nothing to retry against anymore. "Clear"
-              // is the only sensible action here; the qbo_ready case below
-              // gets a real Retry instead.
-              <div className="space-y-2">
-                <p className="text-red-600">
-                  Sync failed
-                  {invoice.qbo_error ? `: ${invoice.qbo_error}` : ""}
-                </p>
-                {admin.visible && admin.clearQboError && (
-                  <form action={admin.clearQboError}>
-                    <SubmitButton className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">
-                      Clear error
-                    </SubmitButton>
-                  </form>
-                )}
-              </div>
-            ) : invoice.status === "qbo_ready" && admin.visible ? (
-              // The actual Sync/Retry button lives up in Status & Approval
-              // now (same spot as Hold/Cancel/Approve) — this is just the
-              // status line plus Clear error, which isn't duplicated there.
-              <div className="space-y-2">
-                {invoice.qbo_sync_status === "error" ? (
-                  <p className="text-red-600">
-                    Sync failed
-                    {invoice.qbo_error ? `: ${invoice.qbo_error}` : ""}
-                  </p>
-                ) : (
-                  <p className="text-sky-700">
-                    Workflow complete — this bill is ready for the final
-                    QuickBooks release.
-                  </p>
-                )}
-                {invoice.qbo_sync_status === "error" && admin.clearQboError && (
-                  <form action={admin.clearQboError}>
-                    <SubmitButton className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">
-                      Clear error
-                    </SubmitButton>
-                  </form>
-                )}
-              </div>
-            ) : (
-              <p className="text-slate-400">
-                {invoice.status === "qbo_ready"
-                  ? "Waiting for an admin to release this bill to QuickBooks."
-                  : "Not synced to QuickBooks yet — completes after the full approval workflow."}
-              </p>
-            )}
-            {!readOnly && (
-              <p className="text-slate-400">
-                Sync to QuickBooks is managed in Settings → Integrations.
-              </p>
-            )}
-          </div>
         </div>
 
         <div className="border-t border-slate-100 px-6 py-3">
