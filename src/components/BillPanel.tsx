@@ -396,12 +396,16 @@ export function BillPanel({
   // value only stages it here; nothing is written until Save is pressed.
   // Reset whenever the selection itself changes, so a value staged for one
   // set of lines can never get applied to a different set picked afterward.
-  const [bulkProjectDraft, setBulkProjectDraft] = useState("");
-  const [bulkClassDraft, setBulkClassDraft] = useState("");
+  // null = nothing staged yet (leave the line's own value alone); "" is a
+  // real staged value meaning "clear it" — they must stay distinguishable,
+  // or an intentional bulk-clear would be indistinguishable from "not
+  // touched" and silently fall back to each line's existing value below.
+  const [bulkProjectDraft, setBulkProjectDraft] = useState<string | null>(null);
+  const [bulkClassDraft, setBulkClassDraft] = useState<string | null>(null);
   const [bulkKey, setBulkKey] = useState(0);
   const resetBulkDrafts = () => {
-    setBulkProjectDraft("");
-    setBulkClassDraft("");
+    setBulkProjectDraft(null);
+    setBulkClassDraft(null);
     setBulkKey((k) => k + 1);
   };
   const allLinesSelected = lineItems.length > 0 && selectedLineIds.size === lineItems.length;
@@ -451,7 +455,7 @@ export function BillPanel({
   const [bulkSetting, setBulkSetting] = useState(false);
   const handleBulkSave = async () => {
     const ids = [...selectedLineIds];
-    if (ids.length === 0 || (!bulkProjectDraft && !bulkClassDraft)) return;
+    if (ids.length === 0 || (bulkProjectDraft === null && bulkClassDraft === null)) return;
     setBulkSetting(true);
     try {
       await Promise.all(
@@ -463,8 +467,8 @@ export function BillPanel({
           formData.set("description", line.description ?? "");
           formData.set("tax_rate", line.tax_rate != null ? String(line.tax_rate) : "");
           formData.set("qbo_tax_code_id", line.qbo_tax_code_id ?? "");
-          formData.set("class", bulkClassDraft || line.class || "");
-          formData.set("project_id", bulkProjectDraft || line.project_id || "");
+          formData.set("class", bulkClassDraft ?? line.class ?? "");
+          formData.set("project_id", bulkProjectDraft ?? line.project_id ?? "");
           formData.set("amount", line.amount != null ? String(line.amount) : "");
           if (line.linked) formData.set("linked", "on");
           return saveLineItem(id, formData);
@@ -1070,7 +1074,7 @@ export function BillPanel({
                     />
                   </div>
                 )}
-                {!classReadOnly && (bulkProjectDraft || bulkClassDraft) && (
+                {!classReadOnly && (bulkProjectDraft !== null || bulkClassDraft !== null) && (
                   <button
                     type="button"
                     disabled={bulkSetting}

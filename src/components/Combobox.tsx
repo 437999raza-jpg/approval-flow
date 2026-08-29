@@ -296,13 +296,29 @@ export function Combobox({
     editingRef.current = false;
     let value = selected;
     // For pairs: if the typed text exactly names an option, submit that
-    // option's value (e.g. typed "H" → 13). Otherwise keep the picked value.
+    // option's value (e.g. typed "H" → 13). Otherwise keep the picked value —
+    // EXCEPT an emptied field, which must be allowed to clear (e.g. removing
+    // a line's Project). Without this, selecting-all-and-deleting the text
+    // then tabbing/clicking away matched nothing, so `value` fell through to
+    // the OLD `selected` and silently un-did the clear — the field looked
+    // empty right up until the next refresh brought the old value back.
     if (hasPairs) {
-      const byLabel = pairForLabel(query);
-      if (byLabel) value = byLabel.value;
-      else {
-        const byValue = pairForValue(query);
-        if (byValue) value = byValue.value;
+      if (query.trim() === "") {
+        value = "";
+      } else {
+        const byLabel = pairForLabel(query);
+        if (byLabel) value = byLabel.value;
+        else {
+          const byValue = pairForValue(query);
+          if (byValue) value = byValue.value;
+          else if (open && filtered.length > 0) {
+            // Typed text with no exact match but a filtered list still open
+            // (e.g. Tab'd via mouse-click-away rather than the Tab key,
+            // which already does this itself) — commit the same top match
+            // Tab/Enter would, rather than silently reverting.
+            value = valueOf(filtered[effectiveActive >= 0 ? effectiveActive : 0]);
+          }
+        }
       }
     } else {
       value = query;
