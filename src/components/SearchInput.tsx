@@ -97,6 +97,15 @@ export function SearchInput({
     router.push(`${pathname}?${params.toString()}`);
   }
 
+  // Used when the AI path comes up empty — a fresh /dashboard?q=... rather
+  // than plainSubmit's merge-with-current-params, since "current params"
+  // at that point is often a PREVIOUS AI search's leftover filters (e.g.
+  // supplier=X from the last query), which shouldn't silently carry over
+  // into an unrelated one that failed to parse.
+  function cleanFallbackSubmit(query: string) {
+    router.push(`/dashboard?q=${encodeURIComponent(query)}`);
+  }
+
   async function aiSubmit(query: string) {
     setPending(true);
     try {
@@ -107,7 +116,7 @@ export function SearchInput({
       });
       const json = (await res.json()) as { filters: Partial<DocumentSearchFilters> | null };
       if (!json.filters) {
-        plainSubmit(query);
+        cleanFallbackSubmit(query);
         return;
       }
       const f = json.filters;
@@ -128,7 +137,7 @@ export function SearchInput({
     } catch {
       // Best-effort — a failed AI call still lets the user's typed text
       // through as a plain literal search rather than dead-ending.
-      plainSubmit(query);
+      cleanFallbackSubmit(query);
     } finally {
       setPending(false);
     }

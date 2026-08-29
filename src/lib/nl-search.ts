@@ -39,11 +39,10 @@ type StatusValue = (typeof STATUS_VALUES)[number];
 const SYSTEM_PROMPT = `You extract search intent from a user's plain-English invoice search. Return ONLY a JSON object (no markdown, no commentary) with exactly this shape — every field optional, omit anything the query doesn't mention:
 {
   "status": string[],        // from: ${STATUS_VALUES.join(", ")}
-  "holderHint": string,      // a name mentioned as currently holding/waiting on it
-  "requesterHint": string,   // a name mentioned as who submitted it
-  "approvedByHint": string,  // a name mentioned as who already approved it
-  "supplierHint": string,    // a vendor/supplier name mentioned, verbatim as heard
-  "customerHint": string,    // a project/customer/job name mentioned, verbatim as heard
+  "holderHint": string,      // a person's name mentioned as currently holding/waiting on it
+  "requesterHint": string,   // a person's name mentioned as who submitted it
+  "approvedByHint": string,  // a person's name mentioned as who already approved it
+  "nameHints": string[],     // every OTHER proper name/phrase mentioned that could be a vendor, supplier, project, customer, or job name — you don't know the org's real lists, so include a name here even with no context word ("from", "project", etc.) telling you which category it is; that gets resolved separately
   "number": string,          // invoice number substring
   "dateFrom": "YYYY-MM-DD",
   "dateTo": "YYYY-MM-DD",
@@ -57,9 +56,12 @@ approved. "cancelled" and "rejected" = terminal, also not approved. A query
 like "not approved yet" / "still pending" / "waiting" means
 status: ["on_review", "on_approval", "on_hold"].
 
-Every *Hint field is free text exactly as the user said it — you don't know
+Every hint field is free text exactly as the user said it — you don't know
 the org's real vendor/project/member names, so don't normalize or guess a
-full name, just extract what was said.`;
+full name, just extract what was said. A bare query with no verb at all
+(e.g. just "Sat Metal", or just "Clarington Toyota") is still a valid
+search — put it in nameHints even though you can't tell what kind of name
+it is.`;
 
 function isStatusValue(v: unknown): v is StatusValue {
   return typeof v === "string" && (STATUS_VALUES as readonly string[]).includes(v);
@@ -144,10 +146,21 @@ export async function parseNaturalLanguageSearch(
     if (requester.length > 0) result.requester = requester;
     const approvedBy = fuzzyMatch(raw.approvedByHint, memberCandidates);
     if (approvedBy.length > 0) result.approvedBy = approvedBy;
-    const supplier = fuzzyMatch(raw.supplierHint, vendorCandidates);
-    if (supplier.length > 0) result.supplier = supplier;
-    const customer = fuzzyMatch(raw.customerHint, projectCandidates);
-    if (customer.length > 0) result.customer = customer;
+
+    // nameHints don't say whether they're a vendor or a project — try both
+    // and keep whichever real list actually has a match. A hint that
+    // matches nothing in either list is just dropped.
+    const nameHints = Array.isArray(raw.nameHints)
+      ? raw.nameHints.filter((h): h is string => typeof h === "string")
+      : [];
+    const supplier = new Set<string>();
+    const customer = new Set<string>();
+    for (const hint of nameHints) {
+      for (const id of fuzzyMatch(hint, vendorCandidates)) supplier.add(id);
+      for (const id of fuzzyMatch(hint, projectCandidates)) customer.add(id);
+    }
+    if (supplier.size > 0) result.supplier = [...supplier];
+    if (customer.size > 0) result.customer = [...customer];
     if (typeof raw.number === "string" && raw.number.trim()) result.number = raw.number.trim();
     if (typeof raw.dateFrom === "string" && /^\d{4}-\d{2}-\d{2}$/.test(raw.dateFrom))
       result.dateFrom = raw.dateFrom;
