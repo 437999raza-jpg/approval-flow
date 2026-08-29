@@ -6,7 +6,7 @@ import { getCurrentOrg } from "@/lib/current-org";
 import { SignOutButton } from "@/components/SignOutButton";
 import { SubmitButton } from "@/components/SubmitButton";
 import { ConfirmSubmitButton } from "@/components/ConfirmSubmitButton";
-import { Combobox } from "@/components/Combobox";
+import { FilterCombobox } from "@/components/FilterCombobox";
 import { runReport, type ReportConfig } from "@/lib/reports";
 import {
   buildInvoiceListReport,
@@ -424,49 +424,45 @@ export default async function ReportsPage({
               </div>
               <div>
                 <span className={labelCls}>Project</span>
-                <Combobox
+                <FilterCombobox
                   name="f_project"
                   formId={FORM_ID}
                   options={projectComboOptions}
                   defaultValue={ef?.project_id ?? ""}
                   placeholder="Search projects…"
-                  onCommit={() => {}}
                   className={`${inputCls} w-full`}
                 />
               </div>
               <div>
                 <span className={labelCls}>Waiting for</span>
-                <Combobox
+                <FilterCombobox
                   name="f_waiting_for"
                   formId={FORM_ID}
                   options={memberComboOptions}
                   defaultValue={ef?.waiting_for_user_id ?? ""}
                   placeholder="Search people…"
-                  onCommit={() => {}}
                   className={`${inputCls} w-full`}
                 />
               </div>
               <div>
                 <span className={labelCls}>Approved by</span>
-                <Combobox
+                <FilterCombobox
                   name="f_approved_by"
                   formId={FORM_ID}
                   options={memberComboOptions}
                   defaultValue={ef?.approved_by_user_id ?? ""}
                   placeholder="Search people…"
-                  onCommit={() => {}}
                   className={`${inputCls} w-full`}
                 />
               </div>
               <div>
                 <span className={labelCls}>Requester</span>
-                <Combobox
+                <FilterCombobox
                   name="f_requester"
                   formId={FORM_ID}
                   options={memberComboOptions}
                   defaultValue={ef?.submitted_by_user_id ?? ""}
                   placeholder="Search people…"
-                  onCommit={() => {}}
                   className={`${inputCls} w-full`}
                 />
               </div>
