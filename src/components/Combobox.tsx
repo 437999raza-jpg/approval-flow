@@ -242,6 +242,13 @@ export function Combobox({
       })
     : [];
   const filtered = ranked;
+  // The list's own top-ranked match, auto-highlighted the moment typing
+  // produces results — without this, Enter/Tab right after typing (without
+  // ever touching an arrow key) fell through to commitCurrent()'s exact-
+  // text-match fallback, which silently committed nothing at all for
+  // anything less than the full label (e.g. typing a project's number
+  // prefix and tabbing straight to the next field never saved the pick).
+  const effectiveActive = active >= 0 ? active : open && filtered.length > 0 ? 0 : -1;
 
   // Keep the hidden value input(s) in sync with the selected value.
   useEffect(() => {
@@ -441,12 +448,21 @@ export function Combobox({
               e.preventDefault();
               setActive((a) => Math.max(a - 1, 0));
             } else if (e.key === "Enter") {
-              if (open && active >= 0 && filtered[active]) {
+              if (open && effectiveActive >= 0 && filtered[effectiveActive]) {
                 e.preventDefault();
-                pick(filtered[active]);
+                pick(filtered[effectiveActive]);
               } else {
                 setOpen(false);
                 commitCurrent();
+              }
+            } else if (e.key === "Tab") {
+              // Tabbing to the next field is the most common way people
+              // leave a combobox after typing — it must commit the
+              // highlighted match exactly like Enter does, not silently
+              // drop it (see effectiveActive above). Deliberately no
+              // preventDefault: focus still moves on to the next field.
+              if (open && effectiveActive >= 0 && filtered[effectiveActive]) {
+                pick(filtered[effectiveActive]);
               }
             } else if (e.key === "Escape") {
               setOpen(false);
@@ -496,7 +512,7 @@ export function Combobox({
                     }}
                     onMouseEnter={() => setActive(i)}
                     className={`block w-full truncate px-2 py-1 text-left text-xs ${
-                      i === active ? "bg-blue-50 text-blue-700" : "text-slate-700"
+                      i === effectiveActive ? "bg-blue-50 text-blue-700" : "text-slate-700"
                     }`}
                   >
                     {labelOf(o)}

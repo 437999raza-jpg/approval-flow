@@ -392,8 +392,21 @@ export function BillPanel({
       return next.size === prev.size ? prev : next;
     });
   }, [lineItems]);
+  // Staged Project/Class values for the bulk-apply bar below — picking a
+  // value only stages it here; nothing is written until Save is pressed.
+  // Reset whenever the selection itself changes, so a value staged for one
+  // set of lines can never get applied to a different set picked afterward.
+  const [bulkProjectDraft, setBulkProjectDraft] = useState("");
+  const [bulkClassDraft, setBulkClassDraft] = useState("");
+  const [bulkKey, setBulkKey] = useState(0);
+  const resetBulkDrafts = () => {
+    setBulkProjectDraft("");
+    setBulkClassDraft("");
+    setBulkKey((k) => k + 1);
+  };
   const allLinesSelected = lineItems.length > 0 && selectedLineIds.size === lineItems.length;
   const toggleLineSelected = (id: string) => {
+    resetBulkDrafts();
     setSelectedLineIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
@@ -402,6 +415,7 @@ export function BillPanel({
     });
   };
   const toggleAllLinesSelected = () => {
+    resetBulkDrafts();
     setSelectedLineIds(allLinesSelected ? new Set() : new Set(lineItems.map((li) => li.id)));
   };
   const [bulkDeleting, setBulkDeleting] = useState(false);
@@ -419,23 +433,25 @@ export function BillPanel({
     try {
       await Promise.all(ids.map((id) => deleteLineItem(id)));
       setSelectedLineIds(new Set());
+      resetBulkDrafts();
     } finally {
       setBulkDeleting(false);
     }
   };
 
-  // Apply one Project or Class to every selected line in one action —
+  // Apply one Project and/or Class to every selected line in one action —
   // built for the common case of a bill where every line shares the same
-  // project/class and re-picking it per line is pure repetition. Same
-  // saveLineItem action each row's own dropdown already uses, so it's the
-  // real save path, not a shortcut around it — saveLineItem replaces every
-  // field on the row (it has no partial-update mode), so each line's
-  // CURRENT values are carried forward here and only the one field
-  // actually being bulk-set is overridden.
+  // project/class and re-picking it per line is pure repetition. Picking a
+  // value only STAGES it (bulkProjectDraft/bulkClassDraft) — it does not
+  // write anything until Save is pressed. Committing on every pick used to
+  // fire a full round trip (and its revalidation) per field the instant it
+  // was picked, which is what made the bar feel like it froze when you
+  // moved on to the next field before that round trip settled; a single
+  // explicit Save now covers both fields in one pass.
   const [bulkSetting, setBulkSetting] = useState(false);
-  const handleBulkSetField = async (field: "project_id" | "class", value: string) => {
+  const handleBulkSave = async () => {
     const ids = [...selectedLineIds];
-    if (ids.length === 0) return;
+    if (ids.length === 0 || (!bulkProjectDraft && !bulkClassDraft)) return;
     setBulkSetting(true);
     try {
       await Promise.all(
@@ -447,14 +463,14 @@ export function BillPanel({
           formData.set("description", line.description ?? "");
           formData.set("tax_rate", line.tax_rate != null ? String(line.tax_rate) : "");
           formData.set("qbo_tax_code_id", line.qbo_tax_code_id ?? "");
-          formData.set("class", line.class ?? "");
-          formData.set("project_id", line.project_id ?? "");
+          formData.set("class", bulkClassDraft || line.class || "");
+          formData.set("project_id", bulkProjectDraft || line.project_id || "");
           formData.set("amount", line.amount != null ? String(line.amount) : "");
           if (line.linked) formData.set("linked", "on");
-          formData.set(field, value);
           return saveLineItem(id, formData);
         })
       );
+      resetBulkDrafts();
     } finally {
       setBulkSetting(false);
     }
@@ -1025,9 +1041,9 @@ export function BillPanel({
               </span>
               <div className="flex flex-1 flex-wrap items-center justify-end gap-2">
                 {!classReadOnly && (
-                  <div className="w-40">
+                  <div className="w-60">
                     <Combobox
-                      key={`bulk-project-${[...selectedLineIds].sort().join(",")}`}
+                      key={`bulk-project-${bulkKey}`}
                       name="_bulk_project"
                       formId="_bulk_line_actions"
                       options={projects.map((p) => ({ label: p.name, value: p.id }))}
@@ -1035,14 +1051,14 @@ export function BillPanel({
                       placeholder="Set project…"
                       className="w-full rounded-md border border-blue-200 bg-white px-2 py-1 text-xs"
                       disabled={bulkSetting}
-                      onCommit={(value) => value && handleBulkSetField("project_id", value)}
+                      onCommit={(value) => setBulkProjectDraft(value)}
                     />
                   </div>
                 )}
                 {!classReadOnly && qboClasses && qboClasses.length > 0 && (
-                  <div className="w-36">
+                  <div className="w-44">
                     <Combobox
-                      key={`bulk-class-${[...selectedLineIds].sort().join(",")}`}
+                      key={`bulk-class-${bulkKey}`}
                       name="_bulk_class"
                       formId="_bulk_line_actions"
                       options={qboClasses}
@@ -1050,13 +1066,26 @@ export function BillPanel({
                       placeholder="Set class…"
                       className="w-full rounded-md border border-blue-200 bg-white px-2 py-1 text-xs"
                       disabled={bulkSetting}
-                      onCommit={(value) => value && handleBulkSetField("class", value)}
+                      onCommit={(value) => setBulkClassDraft(value)}
                     />
                   </div>
                 )}
+                {!classReadOnly && (bulkProjectDraft || bulkClassDraft) && (
+                  <button
+                    type="button"
+                    disabled={bulkSetting}
+                    onClick={handleBulkSave}
+                    className="rounded-md bg-blue-600 px-2.5 py-1 font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+                  >
+                    {bulkSetting ? "Saving…" : "Save"}
+                  </button>
+                )}
                 <button
                   type="button"
-                  onClick={() => setSelectedLineIds(new Set())}
+                  onClick={() => {
+                    setSelectedLineIds(new Set());
+                    resetBulkDrafts();
+                  }}
                   className="font-medium text-blue-700 hover:underline"
                 >
                   Clear
