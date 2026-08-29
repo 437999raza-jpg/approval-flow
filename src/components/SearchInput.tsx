@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter, useSearchParams, usePathname } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { DocumentSearchFilters } from "@/components/DocumentSearchModal";
 
 // A handful of words that signal "this is a sentence, not a literal
@@ -21,6 +21,40 @@ function looksLikeNaturalLanguage(query: string): boolean {
   return words.some((w) => NL_CUE_WORDS.has(w));
 }
 
+// Minimal shape of the browser's built-in Web Speech API — not in TS's
+// default DOM lib. Chrome/Edge only (Safari/Firefox don't implement it);
+// the mic button just doesn't render when it's unavailable. Runs entirely
+// in the browser (Google's free on-device/cloud recognition for Chrome),
+// no API key, no per-use cost — unlike a server-side transcription
+// service, which would bill per audio minute.
+interface SpeechRecognitionResultLike {
+  isFinal: boolean;
+  0: { transcript: string };
+}
+interface SpeechRecognitionEventLike {
+  resultIndex: number;
+  results: ArrayLike<SpeechRecognitionResultLike>;
+}
+interface SpeechRecognitionLike {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  onresult: ((e: SpeechRecognitionEventLike) => void) | null;
+  onend: (() => void) | null;
+  onerror: (() => void) | null;
+  start: () => void;
+  stop: () => void;
+}
+
+function getSpeechRecognitionCtor(): (new () => SpeechRecognitionLike) | null {
+  if (typeof window === "undefined") return null;
+  const w = window as unknown as {
+    SpeechRecognition?: new () => SpeechRecognitionLike;
+    webkitSpeechRecognition?: new () => SpeechRecognitionLike;
+  };
+  return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null;
+}
+
 export function SearchInput({
   defaultValue,
   placeholder = "Search vendor, file, invoice #...",
@@ -33,6 +67,14 @@ export function SearchInput({
   const searchParams = useSearchParams();
   const [value, setValue] = useState(defaultValue);
   const [pending, setPending] = useState(false);
+  const [listening, setListening] = useState(false);
+  const [voiceSupported, setVoiceSupported] = useState(false);
+  const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  const transcriptRef = useRef("");
+
+  useEffect(() => {
+    setVoiceSupported(getSpeechRecognitionCtor() !== null);
+  }, []);
 
   function plainSubmit(next: string) {
     const params = new URLSearchParams(searchParams);
@@ -84,20 +126,67 @@ export function SearchInput({
     else plainSubmit(next);
   }
 
+  function toggleVoice() {
+    if (listening) {
+      recognitionRef.current?.stop();
+      return;
+    }
+    const Ctor = getSpeechRecognitionCtor();
+    if (!Ctor) return;
+    const recognition = new Ctor();
+    recognition.continuous = false;
+    recognition.interimResults = true;
+    recognition.lang = "en-US";
+    transcriptRef.current = "";
+    recognition.onresult = (e) => {
+      let transcript = "";
+      for (let i = 0; i < e.results.length; i++) {
+        transcript += e.results[i][0].transcript;
+      }
+      transcriptRef.current = transcript;
+      setValue(transcript);
+    };
+    recognition.onend = () => {
+      setListening(false);
+      if (transcriptRef.current.trim()) submit(transcriptRef.current);
+    };
+    recognition.onerror = () => setListening(false);
+    recognitionRef.current = recognition;
+    setListening(true);
+    recognition.start();
+  }
+
   return (
     <div className="relative w-full">
       <input
         type="search"
-        placeholder={pending ? "Reading your search…" : placeholder}
+        placeholder={pending ? "Reading your search…" : listening ? "Listening…" : placeholder}
         value={value}
         disabled={pending}
         onChange={(e) => setValue(e.target.value)}
         onKeyDown={(e) => e.key === "Enter" && submit(value)}
         onBlur={() => !pending && submit(value)}
-        className="w-full rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm placeholder:text-slate-400 focus:border-blue-500 focus:outline-none disabled:bg-slate-50"
+        className={`w-full rounded-md border border-slate-300 bg-white py-1.5 pl-3 text-sm placeholder:text-slate-400 focus:border-blue-500 focus:outline-none disabled:bg-slate-50 ${
+          voiceSupported ? "pr-9" : "pr-3"
+        }`}
       />
       {pending && (
         <div className="absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 animate-spin rounded-full border-2 border-slate-300 border-t-blue-600" />
+      )}
+      {!pending && voiceSupported && (
+        <button
+          type="button"
+          onClick={toggleVoice}
+          title={listening ? "Stop listening" : "Search by voice"}
+          className={`absolute right-1.5 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-full ${
+            listening ? "bg-red-100 text-red-600" : "text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+          }`}
+        >
+          <svg viewBox="0 0 24 24" fill="currentColor" className="h-3.5 w-3.5">
+            <path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3z" />
+            <path d="M19 11a1 1 0 1 0-2 0 5 5 0 0 1-10 0 1 1 0 1 0-2 0 7 7 0 0 0 6 6.93V20H9a1 1 0 1 0 0 2h6a1 1 0 1 0 0-2h-2v-2.07A7 7 0 0 0 19 11z" />
+          </svg>
+        </button>
       )}
     </div>
   );

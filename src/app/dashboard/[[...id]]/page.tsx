@@ -1319,7 +1319,7 @@ export default async function DashboardPage({
       <div className="flex min-w-0 flex-1 flex-col">
         {/* Top bar */}
         <header className="flex flex-none items-center gap-3 border-b border-slate-200 bg-white px-4 py-3">
-          <div className="w-80">
+          <div className="w-80 lg:w-[32rem]">
             <SearchInput defaultValue={q} />
           </div>
           <DocumentSearchModal
