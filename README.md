@@ -2086,31 +2086,79 @@ named after one PM, filtered to what's currently sitting with them,
 mirroring ApprovalMax's own named-report convention.
 
 The filter set was picked by comparing against a real ApprovalMax report-
-edit screenshot: added Approved by / Requester / Total tax range since
-they were cheap (data Flow already tracks) and clearly useful; skipped
-Category, Class, Currency, and Decision-date from ApprovalMax's own set —
-not asked for, and each needs more plumbing (line-item matching, or a
-second date source) than the three that shipped. "Waiting for" and
-"Approved by" aren't plain invoice columns: "Waiting for" needs the same
-per-invoice workflow-step resolution as the invoice-list report's own
-column below (`computeWaitingForIds`,
+edit screenshot: added Approved by / Requester since they were cheap
+(data Flow already tracks) and clearly useful. Total tax range was also
+added, then removed after trying it — not everything shown in a
+reference screenshot earns a permanent spot; also skipped Category,
+Class, Currency, and Decision-date from ApprovalMax's own set — each
+needs more plumbing (line-item matching, or a second date source) than
+what shipped. "Waiting for" and "Approved by" aren't plain invoice
+columns: "Waiting for" needs the same per-invoice workflow-step
+resolution as the invoice-list report's own column below
+(`computeWaitingForIds`,
 [`src/lib/workflow-waiting.ts`](src/lib/workflow-waiting.ts)); "Approved
 by" is a plain `invoice_approvals` join (`computeApprovedByIds`, now in
 `reports.ts` itself, shared by `runReport` and `buildInvoiceListReport` —
 the latter used to compute this inline, duplicating the same query).
 
+**Project / Waiting for / Approved by / Requester are searchable
+(`FilterCombobox`), not plain `<select>`s** — a project list can run into
+the hundreds, where a native dropdown's scroll becomes unusable. This is
+the standard going forward for any dropdown with a large option set, not
+specific to Reports. `FilterCombobox`
+([`src/components/FilterCombobox.tsx`](src/components/FilterCombobox.tsx))
+wraps the existing `Combobox` (built for the Bill panel's autosave
+fields, which require an `onCommit` callback) with a no-op — **a Server
+Component can't pass a plain inline function to a Client Component prop**
+(functions aren't serializable across that boundary; React throws
+"Functions cannot be passed directly to Client Components" at render
+time, not caught by `tsc`/`eslint`/`next build`, so this shipped clean
+and only surfaced as a bare-digest 500 in production). `FilterCombobox`
+is itself a client component that defines the no-op one hop closer to
+the browser, so the Reports page (a Server Component) never touches a
+function prop directly. An "Any" pseudo-option in each field's list
+handles clearing back to no filter, since `Combobox` reverts to the last
+real pick on empty text rather than clearing (correct for its own
+always-has-a-value autosave fields, not naturally "clearable").
+
 **Saved reports are a card grid, and actually editable.** Each card
 names its own filters in plain English ("Status is On approval",
 "Waiting for Bianca") via `describeReportConfig()` — mirrors
 ApprovalMax's own "Request reports" screen, which shows the same kind of
-filter-chip summary per report. Click a card to run it. **Edit** loads
-the saved config back into the builder form
+filter-chip summary per report. **The whole card is clickable**, not just
+the title text — its padding lives on the `Link` itself rather than the
+outer card `div`, so there's no dead whitespace around the title that
+looks clickable but isn't; Edit and Delete sit in their own footer row
+below (a shared flex row with matching line-height, so they stay on one
+baseline rather than drifting based on each element's own default box
+model). Clicking the card body runs the report (`/reports?run=<id>`).
+**Edit** loads the saved config back into the builder form
 (`/reports?edit=<id>`) and `saveReport()` updates that row in place
 instead of always inserting a new one — previously the only option was
 Delete, so a mistake or a filter tweak meant rebuilding the report from
 scratch. (`saved_reports` already had a working "members can update" RLS
 policy from migration 0010 — verified before relying on it, given this
 app's history of silent RLS-gap no-ops elsewhere.)
+
+**Visible columns** — a checkbox picker in the builder (`ReportConfig.columns`,
+`REPORT_COLUMNS`/`DEFAULT_REPORT_COLUMNS` in
+[`src/lib/invoice-list-report.ts`](src/lib/invoice-list-report.ts)) controls
+which columns the invoice list (and its CSV) show, beyond Name (always
+shown — it's the link to the invoice). This was in the same ApprovalMax
+reference screenshots as the filters above but wasn't built in the first
+pass; added after the user pointed out a whole feature had been skipped
+despite being clearly visible in what was shared — the lesson being to
+proactively pull every good idea out of a reference screenshot, not just
+the one filter mentioned in the same message. Two new columns beyond the
+original fixed set: **Age** (days since `created_at`) and **Time in
+queue** (days on the current step, via `current_step_entered_at` from
+migration 0073 — only meaningful while `on_approval`/`on_hold`; a
+different status has no one left to be "queued" with, or hasn't entered
+the approval workflow yet). Both computed in `buildInvoiceListReport`
+regardless of which columns are selected. A report saved before this
+feature existed (`config.columns` undefined) falls back to
+`DEFAULT_REPORT_COLUMNS` — the exact set that always showed before, so
+nothing already-saved changes appearance.
 
 **Known gap**: the project filter/grouping still reads the invoice-level
 `project_id` only, not the per-line-item projects from migration 0019 — so
@@ -2130,10 +2178,14 @@ Reject on the invoice itself — not a second, possibly-drifting
 re-derivation of the same matching rules.
 
 **Three downloads**, all scoped to the running report's exact result set
-(same RLS-based visibility as everything else):
+(same RLS-based visibility as everything else) — **only shown once a
+report is actually running**, not as a page-level action; an earlier
+version had a standalone "Download all invoices (CSV)" link at the top of
+`/reports` outside any report, removed since CSV export should only ever
+be a per-report download:
 - **Download CSV** (`GET /api/reports/export`, same query params as the
-  saved-report filters) — a standalone "Download all invoices" link at
-  the top of `/reports` runs this with no filters at all.
+  saved-report filters, plus `cols=` for which columns —
+  `invoiceListToCsv`'s second argument).
 - **Download invoices (PDF)** — reuses the existing
   `/api/invoices/batch-export?ids=...` (`buildMergedInvoicePdf`): every
   matching invoice's original document(s), merged into one PDF.
