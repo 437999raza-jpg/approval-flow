@@ -2,7 +2,9 @@ import Link from "next/link";
 import Image from "next/image";
 
 // Public page — see terms/page.tsx for the same notes (no auth, linked
-// from signup, placeholder copy, matching visual shell).
+// from signup, drafted originally for Flow's actual sub-processors and
+// data flows, not copied from another provider). Working draft, not a
+// substitute for review by counsel.
 export const metadata = { title: "Privacy Policy — Flow" };
 
 export default function PrivacyPage() {
@@ -21,53 +23,97 @@ export default function PrivacyPage() {
           <h1 className="mt-6 font-display text-2xl font-extrabold text-brand-ink">
             Privacy Policy
           </h1>
-          <p className="mt-1 text-sm text-brand-muted">Last updated: [date]</p>
+          <p className="mt-1 text-sm text-brand-muted">Last updated: August 29, 2026</p>
         </div>
 
         <div className="space-y-6 p-8 text-sm leading-relaxed text-slate-700 sm:p-10">
-          <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
-            <strong>Draft placeholder.</strong> This page is a structural stand-in — the sections
-            below are the ones a SaaS privacy policy typically covers, not reviewed legal text.
-            Replace this content (e.g. via a service like Termly/GetTerms, or with a lawyer)
-            before real customers sign up — in particular, confirm the sub-processor list below
-            (Supabase, OpenRouter, Resend, Stripe, QuickBooks/Intuit) is complete and accurate.
-          </div>
+          <p>
+            This Privacy Policy explains how [Company Legal Name] (&quot;Flow&quot;,
+            &quot;we&quot;, &quot;us&quot;) collects, uses, and protects personal data when you
+            or your organization use Flow. It applies alongside our{" "}
+            <Link href="/terms" className="text-brand-green-dark underline">
+              Terms of Service
+            </Link>
+            .
+          </p>
 
-          <Section title="1. What we collect">
-            Account information (name, email, company name), the invoices and documents you
-            upload for processing, and usage data needed to operate the service.
+          <Section title="1. Information we collect">
+            <strong>Account information</strong> — name, email address, and company name when you
+            or your organization&apos;s admin creates an account. <strong>Document content</strong> —
+            the invoices, vendor statements, and related files your organization submits for
+            processing, including any vendor, financial, or contact details they contain.{" "}
+            <strong>Usage data</strong> — log and activity data (such as sign-ins, documents
+            processed, and feature usage) needed to operate and improve the service. If you
+            connect QuickBooks Online, we also access the accounting data you authorize.
           </Section>
-          <Section title="2. How we use it">
-            To provide the invoice approval and extraction service, route work to the right
-            approvers, and communicate with you about your account.
+
+          <Section title="2. How we use this information">
+            To provide the service — routing invoices through your approval workflow, extracting
+            document data, syncing to QuickBooks Online when connected, and billing your
+            organization&apos;s chosen plan; to communicate with you about your account, including
+            service notices and, only if you&apos;ve opted in, product updates and offers; and to
+            monitor, secure, and improve Flow.
           </Section>
-          <Section title="3. Sub-processors">
-            Flow uses third-party services to operate: Supabase (database and file storage),
-            OpenRouter (document extraction), Resend (email delivery), Stripe (payment
-            processing), and QuickBooks Online (accounting sync, when connected).
+
+          <Section title="3. Sub-processors we use">
+            We rely on a small number of third-party service providers to operate Flow, each
+            processing data only as needed for its function: <strong>Supabase</strong> (database
+            and file storage), <strong>OpenRouter</strong> (routes documents to AI models for data
+            extraction), <strong>Resend</strong> (transactional email delivery), <strong>Stripe</strong>{" "}
+            (payment processing), and, where you choose to connect it,{" "}
+            <strong>QuickBooks Online / Intuit</strong> (accounting sync). We may update this list
+            as the service evolves; material changes will be reflected here.
           </Section>
+
           <Section title="4. Data retention">
-            Data is retained for as long as your organization&apos;s account is active, plus any
-            period required by law or for legitimate business purposes after that.
+            We retain your organization&apos;s data for as long as the account is active, plus a
+            reasonable period afterward to allow reactivation, meet legal or accounting
+            obligations, and resolve disputes. You may request deletion of your organization&apos;s
+            data after account closure, subject to any retention we&apos;re required to keep by
+            law.
           </Section>
-          <Section title="5. Data sharing">
-            We do not sell your data. Data is shared with the sub-processors above only as
-            needed to provide the service.
+
+          <Section title="5. Security">
+            We use industry-standard safeguards — including encryption in transit, access
+            controls scoped to your own organization&apos;s data, and restricted internal access —
+            to protect the information you submit. No method of transmission or storage is
+            perfectly secure, and we cannot guarantee absolute security.
           </Section>
-          <Section title="6. Security">
-            We use industry-standard measures (encryption in transit, access controls) to
-            protect your data.
+
+          <Section title="6. International data transfers">
+            Our service providers may process and store data in countries other than your own.
+            Where personal data is transferred internationally, we rely on appropriate safeguards
+            required by applicable law.
           </Section>
+
           <Section title="7. Your rights">
-            Depending on your jurisdiction, you may have rights to access, correct, or delete
-            your personal data — contact us at [support email] to exercise these rights.
+            Depending on your location, you may have the right to access, correct, export, or
+            request deletion of your personal data, or to object to certain processing. To
+            exercise these rights, contact us at [support email]; we&apos;ll respond within the
+            timeframe required by applicable law. If your data was submitted to Flow by your
+            employer or another organization, we may direct your request to that organization,
+            since they control the account.
           </Section>
-          <Section title="8. Changes to this policy">
-            We may update this policy from time to time; material changes will be communicated
-            to organization admins.
+
+          <Section title="8. Cookies">
+            We use a limited set of cookies necessary to keep you signed in and to remember basic
+            preferences. We do not use third-party advertising cookies.
           </Section>
-          <Section title="9. Contact">
-            Questions about this policy can be sent to [support email].
+
+          <Section title="9. Children's privacy">
+            Flow is a business tool not directed at children, and we do not knowingly collect
+            personal data from anyone under 16.
+          </Section>
+
+          <Section title="10. Changes to this policy">
+            We may update this Privacy Policy from time to time. For material changes, we will
+            provide reasonable notice, such as an in-app notice or an email to your
+            organization&apos;s admin, before the change takes effect.
+          </Section>
+
+          <Section title="11. Contact us">
+            Questions about this policy, or requests relating to your personal data, can be sent
+            to [support email].
           </Section>
 
           <Link href="/login" className="inline-block text-sm font-medium text-brand-green-dark hover:underline">
