@@ -392,13 +392,24 @@ export default async function SettingsPage({
   const emailById = new Map(
     (authUsers?.users ?? []).map((u) => [u.id, u.email ?? null])
   );
-  // Real MFA status, not a placeholder — GoTrue returns each user's enrolled
-  // factors on listUsers().
+  // Real MFA status, not a placeholder — but GoTrue's bulk listUsers()
+  // does NOT include each user's enrolled factors (confirmed live: the
+  // field is simply absent from that response, unlike the single-user
+  // endpoint) — every user showed "Disabled" here regardless of actual
+  // status until this was caught. getUserById per member is the one that
+  // actually returns `factors`; org membership lists are small enough
+  // that N individual calls here is a non-issue.
+  const mfaStatuses = await Promise.all(
+    userIds.map((id) => admin.auth.admin.getUserById(id))
+  );
   const mfaEnabledById = new Map(
-    (authUsers?.users ?? []).map((u) => [
-      u.id,
-      Array.isArray(u.factors) && u.factors.some((f) => f.status === "verified"),
-    ])
+    userIds.map((id, i) => {
+      const u = mfaStatuses[i].data.user;
+      return [
+        id,
+        Array.isArray(u?.factors) && u.factors.some((f) => f.status === "verified"),
+      ];
+    })
   );
 
   const q = searchParams.q?.trim().toLowerCase() ?? "";
