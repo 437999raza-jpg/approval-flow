@@ -591,7 +591,36 @@ export function BillPanel({
                           resume working on it.
                         </p>
                       )}
-                      {invoice.status !== "on_review" &&
+                      {/* qbo_ready means every approval step already
+                          passed — current_step_order is just stale from
+                          the last real step, so the generic "waiting on
+                          an approver" / "no approver matches" copy below
+                          (meant for an invoice still IN approval) is
+                          wrong here. This is the actual next action, so
+                          it gets the same prominent spot as Approve/Hold
+                          rather than living only in the QuickBooks Online
+                          section further down the panel. */}
+                      {invoice.status === "qbo_ready" ? (
+                        admin.visible ? (
+                          invoice.qbo_sync_status === "error" ? (
+                            <p className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                              Sync failed
+                              {invoice.qbo_error ? `: ${invoice.qbo_error}` : ""}
+                            </p>
+                          ) : (
+                            <p className="mt-3 text-sm text-sky-700">
+                              Workflow complete — this bill is ready for the
+                              final QuickBooks release.
+                            </p>
+                          )
+                        ) : (
+                          <p className="mt-3 text-sm text-slate-500">
+                            Waiting for an admin to release this bill to
+                            QuickBooks.
+                          </p>
+                        )
+                      ) : (
+                        invoice.status !== "on_review" &&
                         invoice.status !== "on_hold" &&
                         !approval.canDecide &&
                         (approval.currentStepApproverNames.length > 0 ? (
@@ -611,7 +640,8 @@ export function BillPanel({
                               ? " Use Reassign to in the Admin panel, or fix the step's approvers/conditions in Workflows."
                               : " An admin needs to reassign it or fix the step's approvers in Workflows."}
                           </p>
-                        ))}
+                        ))
+                      )}
 
                       {/* Every button is flex-1, so one or several, the row
                           always spans the full column width — matching the
@@ -621,7 +651,8 @@ export function BillPanel({
                       {((invoice.status === "on_review" && canReview) ||
                         approval.canDecide ||
                         approval.canUnhold ||
-                        approval.canCancel) && (
+                        approval.canCancel ||
+                        (invoice.status === "qbo_ready" && admin.visible)) && (
                         <div className="mt-auto flex gap-2 pt-3">
                           {invoice.status === "on_review" && canReview && (
                             <form action={approval.reviewComplete} className="flex-1">
@@ -659,6 +690,20 @@ export function BillPanel({
                             <form action={approval.cancel} className="flex-1">
                               <SubmitButton className="w-full rounded-md border border-slate-300 px-4 py-2 text-center text-sm font-semibold text-slate-600 hover:bg-slate-50">
                                 Cancel
+                              </SubmitButton>
+                            </form>
+                          )}
+                          {invoice.status === "qbo_ready" && admin.visible && (
+                            <form action={admin.syncToQbo} className="flex-1">
+                              <SubmitButton
+                                disabled={!qboConnected}
+                                className="w-full rounded-md border border-transparent bg-blue-600 px-4 py-2 text-center text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+                              >
+                                {qboConnected
+                                  ? invoice.qbo_sync_status === "error"
+                                    ? "Retry sync to QuickBooks"
+                                    : "Sync to QuickBooks (final)"
+                                  : "Connect QuickBooks in Settings first"}
                               </SubmitButton>
                             </form>
                           )}
@@ -1068,6 +1113,9 @@ export function BillPanel({
                 )}
               </div>
             ) : invoice.status === "qbo_ready" && admin.visible ? (
+              // The actual Sync/Retry button lives up in Status & Approval
+              // now (same spot as Hold/Cancel/Approve) — this is just the
+              // status line plus Clear error, which isn't duplicated there.
               <div className="space-y-2">
                 {invoice.qbo_sync_status === "error" ? (
                   <p className="text-red-600">
@@ -1080,27 +1128,13 @@ export function BillPanel({
                     QuickBooks release.
                   </p>
                 )}
-                <div className="flex items-center gap-2">
-                  <form action={admin.syncToQbo}>
-                    <SubmitButton
-                      disabled={!qboConnected}
-                      className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-                    >
-                      {qboConnected
-                        ? invoice.qbo_sync_status === "error"
-                          ? "Retry sync to QuickBooks"
-                          : "Sync to QuickBooks (final)"
-                        : "Connect QuickBooks in Settings first"}
+                {invoice.qbo_sync_status === "error" && admin.clearQboError && (
+                  <form action={admin.clearQboError}>
+                    <SubmitButton className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">
+                      Clear error
                     </SubmitButton>
                   </form>
-                  {invoice.qbo_sync_status === "error" && admin.clearQboError && (
-                    <form action={admin.clearQboError}>
-                      <SubmitButton className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">
-                        Clear error
-                      </SubmitButton>
-                    </form>
-                  )}
-                </div>
+                )}
               </div>
             ) : (
               <p className="text-slate-400">
