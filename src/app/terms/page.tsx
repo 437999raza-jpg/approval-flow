@@ -35,8 +35,8 @@ export default function TermsPage() {
           <p>
             These Terms of Service (&quot;Terms&quot;) govern access to and use of Flow, an
             invoice approval, document extraction, and accounts-payable workflow service
-            (&quot;Flow&quot;, &quot;we&quot;, &quot;us&quot;) operated by [Company Legal Name],
-            [Company Address] (&quot;Company&quot;). By creating an account, connecting an
+            (&quot;Flow&quot;, &quot;we&quot;, &quot;us&quot;) operated by UFIRST LLC, a company registered in
+            Wyoming, USA (&quot;Company&quot;). By creating an account, connecting an
             organization, or otherwise using Flow, you agree to these Terms and to our{" "}
             <Link href="/privacy" className="text-brand-green-dark underline">
               Privacy Policy
@@ -158,12 +158,16 @@ export default function TermsPage() {
           </Section>
 
           <Section title="15. Governing law">
-            These Terms are governed by the laws of [Governing Law Jurisdiction], without regard
+            These Terms are governed by the laws of the State of Wyoming, USA, without regard
             to its conflict-of-laws principles.
           </Section>
 
           <Section title="16. Contact">
-            Questions about these Terms can be sent to [support email].
+            Questions about these Terms can be sent to{" "}
+            <a href="mailto:support@ufirst.co" className="text-brand-green-dark underline">
+              support@ufirst.co
+            </a>
+            .
           </Section>
 
           <Link href="/login" className="inline-block text-sm font-medium text-brand-green-dark hover:underline">

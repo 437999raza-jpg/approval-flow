@@ -28,7 +28,7 @@ export default function PrivacyPage() {
 
         <div className="space-y-6 p-8 text-sm leading-relaxed text-slate-700 sm:p-10">
           <p>
-            This Privacy Policy explains how [Company Legal Name] (&quot;Flow&quot;,
+            This Privacy Policy explains how UFIRST LLC (&quot;Flow&quot;,
             &quot;we&quot;, &quot;us&quot;) collects, uses, and protects personal data when you
             or your organization use Flow. It applies alongside our{" "}
             <Link href="/terms" className="text-brand-green-dark underline">
@@ -89,7 +89,11 @@ export default function PrivacyPage() {
           <Section title="7. Your rights">
             Depending on your location, you may have the right to access, correct, export, or
             request deletion of your personal data, or to object to certain processing. To
-            exercise these rights, contact us at [support email]; we&apos;ll respond within the
+            exercise these rights, contact us at{" "}
+            <a href="mailto:support@ufirst.co" className="text-brand-green-dark underline">
+              support@ufirst.co
+            </a>
+            ; we&apos;ll respond within the
             timeframe required by applicable law. If your data was submitted to Flow by your
             employer or another organization, we may direct your request to that organization,
             since they control the account.
@@ -113,7 +117,11 @@ export default function PrivacyPage() {
 
           <Section title="11. Contact us">
             Questions about this policy, or requests relating to your personal data, can be sent
-            to [support email].
+            to{" "}
+            <a href="mailto:support@ufirst.co" className="text-brand-green-dark underline">
+              support@ufirst.co
+            </a>
+            .
           </Section>
 
           <Link href="/login" className="inline-block text-sm font-medium text-brand-green-dark hover:underline">
