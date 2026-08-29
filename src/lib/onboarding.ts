@@ -1,15 +1,22 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/types";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { bootstrapOrganization } from "@/lib/admin-actions";
 
-// Self-serve signup (email/password, Google OAuth, or a first-time magic
-// link) creates an auth.users row but nothing else — this app is otherwise
-// entirely invite-based (an admin adds you to organization_members).
-// Called from /auth/callback and /auth/confirm right after establishing a
-// session: if the user has no org yet, give them a brand-new one as its
-// admin, same shape as the platform-admin's own createOrganizationAction
-// but self-triggered. Idempotent (checks first) — safe to call on every
-// auth completion, not just the first.
+const TRIAL_DAYS = 14;
+
+// Self-serve signup (email/password, Google/Microsoft/Apple OAuth, or a
+// first-time magic link) creates an auth.users row but nothing else —
+// this app is otherwise entirely invite-based (an admin adds you to
+// organization_members). Called from /auth/callback and /auth/confirm
+// right after establishing a session, and from completeSelfSignup
+// (auth-actions.ts) for the immediate-session signUp path — whichever
+// fires first wins, this is idempotent (checks membership first). Gives
+// the user a brand-new organization as its admin, using
+// bootstrapOrganization (admin-actions.ts) — the SAME default
+// workflow/step/approver bootstrap the platform-admin's own
+// createOrganizationAction uses, so Approve/Reject works from the first
+// invoice — plus a 14-day trial with full product access.
 export async function ensureOrgForNewUser(
   supabase: SupabaseClient<Database>,
   user: { id: string; email?: string | null; user_metadata?: Record<string, unknown> }
@@ -28,40 +35,22 @@ export async function ensureOrgForNewUser(
     (user.user_metadata?.full_name as string | undefined) ||
     (user.user_metadata?.name as string | undefined) ||
     null;
+  const companyName = (user.user_metadata?.company_name as string | undefined)?.trim() || null;
   const emailLocal = (user.email ?? "").split("@")[0] || "my";
-  const orgName = fullName ? `${fullName}'s organization` : `${emailLocal}'s organization`;
-
-  const baseSlug =
-    orgName
-      .toLowerCase()
-      .trim()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "") || "org";
-  let slug = baseSlug;
-  for (let i = 0; i < 20; i++) {
-    const { data: slugTaken } = await admin
-      .from("organizations")
-      .select("id")
-      .eq("slug", slug)
-      .maybeSingle();
-    if (!slugTaken) break;
-    slug = `${baseSlug}-${Math.random().toString(36).slice(2, 6)}`;
-  }
-
-  const { data: org, error } = await admin
-    .from("organizations")
-    .insert({ name: orgName, slug })
-    .select("id")
-    .single();
-  if (error || !org) {
-    console.error("ensureOrgForNewUser: org create failed", error);
-    return;
-  }
+  const orgName = companyName || (fullName ? `${fullName}'s organization` : `${emailLocal}'s organization`);
 
   await admin
     .from("profiles")
     .upsert({ id: user.id, full_name: fullName }, { onConflict: "id", ignoreDuplicates: true });
-  await admin
-    .from("organization_members")
-    .insert({ organization_id: org.id, user_id: user.id, role: "admin" });
+
+  const trialEndsAt = new Date(Date.now() + TRIAL_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  const result = await bootstrapOrganization(admin, {
+    name: orgName,
+    inboundLocal: null,
+    adminUserId: user.id,
+    trialEndsAt,
+  });
+  if ("error" in result) {
+    console.error("ensureOrgForNewUser: bootstrapOrganization failed", result.error);
+  }
 }

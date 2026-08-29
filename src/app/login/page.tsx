@@ -118,7 +118,16 @@ export default function LoginPage() {
         password,
         options: {
           emailRedirectTo: `${window.location.origin}/auth/confirm?next=/dashboard`,
-          data: { full_name: fullName.trim() || undefined },
+          // company_name rides along in user_metadata specifically so
+          // ensureOrgForNewUser (onboarding.ts) can read it later from
+          // /auth/confirm once the emailed link is clicked — that's the
+          // path that actually fires whenever confirmation is required,
+          // which this Supabase project currently has ON (confirmed live:
+          // signUp() here does NOT return an immediate session).
+          data: {
+            full_name: fullName.trim() || undefined,
+            company_name: companyName.trim() || undefined,
+          },
         },
       });
       if (error) {
@@ -126,12 +135,11 @@ export default function LoginPage() {
         return;
       }
       if (data.session) {
-        // Email confirmation is off for this project — signUp already
-        // returned a live session, so there's no email to wait for. That
-        // session is what lets completeSelfSignup identify the caller —
-        // it creates their organization (14-day trial) before landing on
-        // the dashboard, so they see a working (if empty) app instead of
-        // the "no organization yet" wall.
+        // Only reachable if this project's email confirmation is ever
+        // turned off — signUp already returned a live session, so
+        // there's no email to wait for. completeSelfSignup funnels
+        // through the same ensureOrgForNewUser as the confirmation-link
+        // path, so there's only one real implementation either way.
         const result = await completeSelfSignup(companyName);
         if (!result.ok) {
           setError(result.error ?? "Could not finish setting up your account.");
