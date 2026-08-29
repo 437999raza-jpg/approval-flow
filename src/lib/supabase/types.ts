@@ -54,7 +54,6 @@ export interface Database {
           plan_selected_at: string | null;
           statement_reply_to: string | null;
           trial_ends_at: string | null;
-          extraction_mode: "detailed" | "simple";
           created_at: string;
         };
         Insert: Partial<

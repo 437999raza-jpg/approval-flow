@@ -3549,3 +3549,12 @@ alter table profiles add column if not exists marketing_opt_in boolean not null 
 alter table organizations
   add column if not exists extraction_mode text not null default 'detailed'
   check (extraction_mode in ('detailed', 'simple'));
+
+---------------------------------------------------------------------
+-- >>> supabase/migrations/0089_drop_extraction_mode.sql
+---------------------------------------------------------------------
+-- 0089: superseded by deriving extraction mode from plan (see
+-- extractionModeForOrg in src/lib/plans.ts) instead of a separate
+-- per-org switch — one lever (plan) now decides both billing and
+-- extraction depth, so they can't drift.
+alter table organizations drop column if exists extraction_mode;

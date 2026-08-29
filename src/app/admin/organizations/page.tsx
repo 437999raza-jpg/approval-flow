@@ -3,9 +3,9 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isPlatformAdmin } from "@/lib/platform-admin";
-import { createOrganizationAction, joinOrganizationAction, extendTrialAction, setExtractionModeAction } from "@/lib/admin-actions";
+import { createOrganizationAction, joinOrganizationAction, extendTrialAction, setOrgPlanAction } from "@/lib/admin-actions";
 import { SubmitButton } from "@/components/SubmitButton";
-import { isTrialActive } from "@/lib/plans";
+import { isTrialActive, PLAN_ORDER, PLANS } from "@/lib/plans";
 
 const ERRORS: Record<string, string> = {
   "missing-fields": "Organization name and admin email are both required.",
@@ -14,7 +14,7 @@ const ERRORS: Record<string, string> = {
   "create-failed": "Could not create the organization.",
   "invite-failed": "Organization created, but the admin account could not be created — invite them manually from that org's Settings page.",
   "bad-extend": "Enter a valid number of days to extend the trial by.",
-  "bad-extraction-mode": "Could not update the extraction mode.",
+  "bad-plan": "Could not update the plan.",
 };
 
 export default async function AdminOrganizationsPage({
@@ -35,7 +35,7 @@ export default async function AdminOrganizationsPage({
 
   const { data: orgs } = await admin
     .from("organizations")
-    .select("id, name, slug, inbound_email_token, inbound_email_local, trial_ends_at, plan, extraction_mode, created_at")
+    .select("id, name, slug, inbound_email_token, inbound_email_local, trial_ends_at, plan, created_at")
     .order("created_at", { ascending: false });
 
   const { data: memberRows } = await admin
@@ -160,8 +160,8 @@ export default async function AdminOrganizationsPage({
               <th className="py-1.5 pr-3">Invoice address</th>
               <th className="py-1.5 pr-3">Members</th>
               <th className="py-1.5 pr-3">Support</th>
+              <th className="py-1.5 pr-3">Plan</th>
               <th className="py-1.5 pr-3">Trial</th>
-              <th className="py-1.5 pr-3">Extraction</th>
               <th className="py-1.5 pr-3">Created</th>
               <th className="py-1.5"></th>
             </tr>
@@ -185,10 +185,31 @@ export default async function AdminOrganizationsPage({
                     <span className="text-slate-300">—</span>
                   )}
                 </td>
+                <td className="py-1.5 pr-3">
+                  <form action={setOrgPlanAction} className="flex items-center gap-1.5">
+                    <input type="hidden" name="org_id" value={org.id} />
+                    <select
+                      name="plan"
+                      defaultValue={org.plan ?? ""}
+                      className="rounded-md border border-slate-300 bg-white px-1.5 py-1 text-xs text-slate-600"
+                    >
+                      <option value="">No plan</option>
+                      {PLAN_ORDER.map((id) => (
+                        <option key={id} value={id}>
+                          {PLANS[id].name}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="submit"
+                      className="rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
+                    >
+                      Save
+                    </button>
+                  </form>
+                </td>
                 <td className="py-1.5 pr-3 text-slate-500">
-                  {org.plan ? (
-                    <span className="text-slate-300">—</span>
-                  ) : org.trial_ends_at ? (
+                  {org.trial_ends_at ? (
                     <span
                       className={isTrialActive(org.trial_ends_at) ? "text-slate-500" : "text-rose-600"}
                     >
@@ -198,25 +219,6 @@ export default async function AdminOrganizationsPage({
                   ) : (
                     <span className="text-slate-300">—</span>
                   )}
-                </td>
-                <td className="py-1.5 pr-3">
-                  <form action={setExtractionModeAction} className="flex items-center gap-1.5">
-                    <input type="hidden" name="org_id" value={org.id} />
-                    <input
-                      type="hidden"
-                      name="extraction_mode"
-                      value={org.extraction_mode === "simple" ? "detailed" : "simple"}
-                    />
-                    <span className="text-slate-500">
-                      {org.extraction_mode === "simple" ? "Simple" : "Detailed"}
-                    </span>
-                    <button
-                      type="submit"
-                      className="rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
-                    >
-                      Switch to {org.extraction_mode === "simple" ? "Detailed" : "Simple"}
-                    </button>
-                  </form>
                 </td>
                 <td className="py-1.5 pr-3 text-slate-500">
                   {new Date(org.created_at).toLocaleDateString()}

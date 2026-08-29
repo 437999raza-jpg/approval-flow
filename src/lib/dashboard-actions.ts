@@ -25,7 +25,7 @@ import { buildQboAttachmentBundle } from "@/lib/qbo-attachments";
 import { pdfPageCount, reorderPdfPages } from "@/lib/merge-documents";
 import { buildMergedInvoicePdf } from "@/lib/invoice-export";
 import { qboTag, INVOICES_TAG } from "@/lib/org-cache";
-import { PLANS, isPlanId, hasStatementReconciliation, isOrgLocked } from "@/lib/plans";
+import { PLANS, isPlanId, hasStatementReconciliation, isOrgLocked, extractionModeForOrg } from "@/lib/plans";
 import { extractStatementLines } from "@/lib/extract-statement";
 
 // Server actions for the dashboard (moved out of the page component so
@@ -2227,13 +2227,13 @@ async function reExtractInvoiceCore(
     getSupplierDefaults(supabase, invoice.organization_id, invoice.vendor_name),
     supabase
       .from("organizations")
-      .select("default_tax_rate, default_tax_code_id, extraction_mode")
+      .select("default_tax_rate, default_tax_code_id, plan, trial_ends_at")
       .eq("id", invoice.organization_id)
       .single(),
   ]);
   const orgDefaultTaxRate = orgDefault?.default_tax_rate ?? null;
   const orgDefaultTaxCodeId = orgDefault?.default_tax_code_id ?? null;
-  if (orgDefault?.extraction_mode === "simple") {
+  if (extractionModeForOrg(orgDefault?.plan, orgDefault?.trial_ends_at) === "simple") {
     // Same one-line-per-invoice rule as initial ingestion (see
     // buildSimpleLineItem/invoices.ts) — Project/Class are per-line human
     // calls, preserved from the single line that existed before

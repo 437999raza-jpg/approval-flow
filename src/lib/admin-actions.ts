@@ -6,6 +6,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isPlatformAdmin } from "@/lib/platform-admin";
+import { isPlanId } from "@/lib/plans";
 
 const ACTIVE_ORG_COOKIE = "active_org_id";
 
@@ -288,14 +289,16 @@ export async function extendTrialAction(formData: FormData) {
   redirect("/admin/organizations");
 }
 
-// Platform-admin only: which extraction mode an org's invoices use.
-// 'detailed' (default) is today's full line-by-line extraction; 'simple'
-// builds one line item per invoice from the document's subtotal + the
-// vendor's saved supplier default category (see buildSimpleLineItem in
-// src/lib/invoices.ts). This is a separate axis from `plan` on purpose —
-// it isn't wired into PLANS/pricing, so it can be sold however the
-// business lands on without another code change.
-export async function setExtractionModeAction(formData: FormData) {
+// Platform-admin only: set an org's plan directly, from the cross-org
+// admin list — unlike selectPlan (dashboard-actions.ts), which only lets
+// an org's OWN admin change ITS plan from that org's Billing page, this
+// works across orgs without joining each one first. Extraction depth
+// (Simple vs Complex — see extractionModeForOrg in src/lib/plans.ts) is
+// derived from plan, not a separate switch, so changing plan here is the
+// one lever that keeps billing and features in sync: an org gets exactly
+// what its plan promises, never a plan/extraction combination nobody
+// chose.
+export async function setOrgPlanAction(formData: FormData) {
   const supabase = createClient();
   const {
     data: { user },
@@ -303,15 +306,16 @@ export async function setExtractionModeAction(formData: FormData) {
   if (!user || !isPlatformAdmin(user.email)) redirect("/login");
 
   const orgId = String(formData.get("org_id") ?? "");
-  const mode = String(formData.get("extraction_mode") ?? "");
-  if (!orgId || (mode !== "detailed" && mode !== "simple")) {
-    redirect("/admin/organizations?error=bad-extraction-mode");
+  const planRaw = String(formData.get("plan") ?? "");
+  const plan = planRaw === "" ? null : planRaw;
+  if (!orgId || (plan !== null && !isPlanId(plan))) {
+    redirect("/admin/organizations?error=bad-plan");
   }
 
   const admin = createAdminClient();
   await admin
     .from("organizations")
-    .update({ extraction_mode: mode })
+    .update({ plan, plan_selected_at: plan ? new Date().toISOString() : null })
     .eq("id", orgId);
 
   revalidatePath("/admin/organizations");

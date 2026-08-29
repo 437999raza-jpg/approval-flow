@@ -6,6 +6,7 @@ import { normalizeForMatching, matchProjectFromPoNumber } from "@/lib/matching";
 import { matchSupplier } from "@/lib/qbo";
 import { fetchAllQboSuppliers } from "@/lib/qbo-all";
 import { computeLineItemTotals } from "@/lib/invoice-totals";
+import { extractionModeForOrg } from "@/lib/plans";
 
 const INVOICE_BUCKET = "invoices";
 const MAX_FILE_BYTES = 20 * 1024 * 1024; // 20MB
@@ -115,11 +116,12 @@ export function holdbackCategoryFor(li: {
     : null;
 }
 
-// "Simple" extraction mode (organizations.extraction_mode = 'simple'):
-// Dext-style, one line item per invoice instead of the full line-by-line
-// breakdown. The model still extracts the whole document exactly as it
-// does for "detailed" mode — only which line item(s) get built from that
-// extraction differs. Amount is the document's own printed SUBTOTAL (not
+// "Simple" extraction mode (see extractionModeForOrg in src/lib/plans.ts —
+// derived from the org's plan, "complex" only for the Detailed plan or an
+// active trial): Dext-style, one line item per invoice instead of the full
+// line-by-line breakdown. The model still extracts the whole document
+// exactly as it does for "complex" mode — only which line item(s) get
+// built from that extraction differs. Amount is the document's own printed SUBTOTAL (not
 // the total, which would double-count tax once computeLineItemTotals
 // applies tax_rate); category/class come from the vendor's saved supplier
 // rule, or land blank for the human to set once (which then persists for
@@ -250,12 +252,12 @@ export async function createInvoiceFromFile({
   // extraction.
   const { data: org } = await supabase
     .from("organizations")
-    .select("default_tax_rate, default_tax_code_id, extraction_mode")
+    .select("default_tax_rate, default_tax_code_id, plan, trial_ends_at")
     .eq("id", organizationId)
     .single();
   const orgDefaultTaxRate = org?.default_tax_rate ?? null;
   const orgDefaultTaxCodeId = org?.default_tax_code_id ?? null;
-  const isSimpleMode = org?.extraction_mode === "simple";
+  const isSimpleMode = extractionModeForOrg(org?.plan, org?.trial_ends_at) === "simple";
 
   // Project detection from the PO number: suppliers commonly put their job
   // number on the PO ("2022-589-PO-1234" starts with project code 2022-58).

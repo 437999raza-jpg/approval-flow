@@ -97,3 +97,20 @@ export function hasStatementReconciliation(
 ): boolean {
   return plan === "detailed" || isTrialActive(trialEndsAt);
 }
+
+export type ExtractionMode = "simple" | "complex";
+
+// Extraction depth is derived from plan, never a separate switch — an org
+// gets billed for a tier and gets exactly the extraction that tier
+// promises, with no way for the two to drift apart. The Detailed plan's
+// own blurb already promises "full line-by-line extraction," so it's the
+// one plan that gets it; Starter/Growth/Scale (and any org with no plan
+// at all) get the simpler one-line-per-invoice mode. An active trial gets
+// "complex" too, same as every other trial-time feature — full access is
+// the point of the trial.
+export function extractionModeForOrg(
+  plan: PlanId | null | undefined,
+  trialEndsAt?: string | null
+): ExtractionMode {
+  return plan === "detailed" || isTrialActive(trialEndsAt) ? "complex" : "simple";
+}
