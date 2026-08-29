@@ -1074,7 +1074,29 @@ export default async function DashboardPage({
       (a) => a.approver_id === user.id && a.decision === "approved"
     );
   const lockedForPlainUser = org.role === "user" && hasCurrentUserApprovedSelected;
-  const classReadOnly = isAuditor || lockedForPlainUser;
+  // The invoice's LAST step, whatever an org calls it ("Accounting
+  // Approval" here, but workflows are per-org configurable) — computed
+  // from step_order, never matched by name. A plain user holding this
+  // step can still Approve (the workflow has to be able to finish), but
+  // shouldn't be editing Class or attaching a note at the same time —
+  // that's the whole point of every earlier step's notes existing.
+  const maxStepOrderForSelected =
+    stepsForSelected.length > 0
+      ? Math.max(...stepsForSelected.map((s) => s.step_order))
+      : null;
+  const isFinalStepForSelected =
+    selected != null &&
+    maxStepOrderForSelected != null &&
+    selected.current_step_order === maxStepOrderForSelected;
+  // Beyond "already approved," a plain user's Class/notes access also
+  // disappears whenever it simply isn't their turn to decide right now
+  // (previously anyone could add a freestanding note at any point — see
+  // InstructionsBox.tsx, which doubles as the Approve button), and locks
+  // outright at the final step even while it IS their turn.
+  const classReadOnly =
+    isAuditor ||
+    lockedForPlainUser ||
+    (org.role === "user" && (!canDecide || isFinalStepForSelected));
   // Discussion stays open for a plain user even once everything else locks
   // — auditors are the only role that never gets to comment.
   const canComment = !isAuditor;
