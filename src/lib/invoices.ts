@@ -125,7 +125,7 @@ export function holdbackCategoryFor(li: {
 // rule, or land blank for the human to set once (which then persists for
 // every future invoice from that vendor, same as detailed mode).
 export function buildSimpleLineItem(
-  extracted: Pick<ExtractedInvoiceData, "subtotal" | "tax_rate">,
+  extracted: Pick<ExtractedInvoiceData, "subtotal" | "tax_rate" | "total_amount">,
   supplierDefaults: SupplierDefaults | null,
   orgDefaultTaxRate: number | null,
   orgDefaultTaxCodeId: string | null,
@@ -136,7 +136,11 @@ export function buildSimpleLineItem(
   return [
     {
       description: null,
-      amount: extracted.subtotal,
+      // The model doesn't always separate subtotal from the printed total
+      // (some documents only show one number) — fall back to the total
+      // rather than silently storing a $0 line, same as the detailed
+      // mode's own no-line-items fallback just below.
+      amount: extracted.subtotal ?? extracted.total_amount,
       tax_rate: appliedRate,
       qbo_tax_code_id: taxCodeIdFor(appliedRate, orgDefaultTaxRate, orgDefaultTaxCodeId),
       category: supplierDefaults?.category ?? null,
@@ -284,7 +288,11 @@ export async function createInvoiceFromFile({
   const hasLineItems = isSimpleMode || (!!extracted && extracted.line_items.length > 0);
   const finalLineItems = isSimpleMode
     ? buildSimpleLineItem(
-        { subtotal: extracted?.subtotal ?? null, tax_rate: extracted?.tax_rate ?? null },
+        {
+          subtotal: extracted?.subtotal ?? null,
+          tax_rate: extracted?.tax_rate ?? null,
+          total_amount: extracted?.total_amount ?? null,
+        },
         supplierDefaults,
         orgDefaultTaxRate,
         orgDefaultTaxCodeId,

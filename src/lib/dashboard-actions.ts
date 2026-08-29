@@ -2223,16 +2223,14 @@ async function reExtractInvoiceCore(
     .from("invoice_line_items")
     .delete()
     .eq("invoice_id", invoiceId);
-  const supplierDefaults = await getSupplierDefaults(
-    supabase,
-    invoice.organization_id,
-    invoice.vendor_name
-  );
-  const { data: orgDefault } = await supabase
-    .from("organizations")
-    .select("default_tax_rate, default_tax_code_id, extraction_mode")
-    .eq("id", invoice.organization_id)
-    .single();
+  const [supplierDefaults, { data: orgDefault }] = await Promise.all([
+    getSupplierDefaults(supabase, invoice.organization_id, invoice.vendor_name),
+    supabase
+      .from("organizations")
+      .select("default_tax_rate, default_tax_code_id, extraction_mode")
+      .eq("id", invoice.organization_id)
+      .single(),
+  ]);
   const orgDefaultTaxRate = orgDefault?.default_tax_rate ?? null;
   const orgDefaultTaxCodeId = orgDefault?.default_tax_code_id ?? null;
   if (orgDefault?.extraction_mode === "simple") {
@@ -2241,7 +2239,7 @@ async function reExtractInvoiceCore(
     // calls, preserved from the single line that existed before
     // re-extraction, same as the detailed path below.
     const [simpleLine] = buildSimpleLineItem(
-      { subtotal: extracted.subtotal, tax_rate: extracted.tax_rate },
+      { subtotal: extracted.subtotal, tax_rate: extracted.tax_rate, total_amount: extracted.total_amount },
       supplierDefaults,
       orgDefaultTaxRate,
       orgDefaultTaxCodeId,
