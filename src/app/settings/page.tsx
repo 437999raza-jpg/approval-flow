@@ -8,6 +8,7 @@ import { SignOutButton } from "@/components/SignOutButton";
 import { CollapsibleSection } from "@/components/CollapsibleSection";
 import { disconnectQbo, refreshQboData, saveDefaultTaxRate, saveInboundEmailLocal, saveStatementReplyTo, syncQboTaxes, syncQboClasses, syncQboCategories, syncQboSuppliers, syncQboProjects, syncQboPaymentStatus } from "@/lib/dashboard-actions";
 import { StatementReplyToForm } from "@/components/StatementReplyToForm";
+import { SecurityMfaSection } from "@/components/SecurityMfaSection";
 import { qboEnv } from "@/lib/qbo";
 import { Avatar } from "@/components/Avatar";
 import { AvatarUploadForm } from "@/components/AvatarUploadForm";
@@ -472,6 +473,17 @@ export default async function SettingsPage({
                 </div>
               </div>
             </div>
+          </section>
+
+          {/* Security — per-user opt-in, set up under your own login (not
+              admin-assignable; an admin can only see the status below in
+              the Members table and remind someone directly). */}
+          <section className="mt-8">
+            <h2 className="text-lg font-semibold">Security</h2>
+            <p className="mt-1 text-sm text-slate-500">
+              Two-factor authentication for your own account.
+            </p>
+            <SecurityMfaSection initialEnabled={mfaEnabledById.get(user.id) ?? false} />
           </section>
 
           {showOrgSettings && (
