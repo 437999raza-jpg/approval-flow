@@ -21,6 +21,15 @@ const NL_CUE_WORDS = new Set([
 // filters", etc. (typed or spoken).
 const CLEAR_INTENT = /^(clear|reset|remove)( the| all)*( filters?| search)+$/i;
 
+// Chrome's speech recognition auto-appends a period (sometimes a comma or
+// "?") to what it decides is a finished sentence — "clear filter" comes
+// back as "clear filter.", which fails an exact match against CLEAR_INTENT
+// or looks like an extra word to anything else checking word boundaries.
+// Stripped once, up front, so voice and typed input behave identically.
+function stripTrailingPunctuation(query: string): string {
+  return query.trim().replace(/[.,!?]+$/, "").trim();
+}
+
 function isClearIntent(query: string): boolean {
   return CLEAR_INTENT.test(query.trim());
 }
@@ -144,14 +153,14 @@ export function SearchInput({
   }
 
   function submit(next: string) {
-    const trimmed = next.trim();
+    const trimmed = stripTrailingPunctuation(next);
     if (trimmed && isClearIntent(trimmed)) {
       setValue("");
       router.push(pathname);
       return;
     }
     if (trimmed && looksLikeNaturalLanguage(trimmed)) aiSubmit(trimmed);
-    else plainSubmit(next);
+    else plainSubmit(trimmed);
   }
 
   function toggleVoice() {
