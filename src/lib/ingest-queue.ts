@@ -232,26 +232,33 @@ export async function runNextIngestJob(
       .eq("id", job.id);
     // Keep the staging file on terminal failure so the Queue's Reprocess
     // button can re-run the job (90-day cleanup removes stale files).
-    // Reflect the failure in the display tables.
-    if (job.upload_log_id) {
-      await supabase
-        .from("upload_log")
-        .update({
-          status: "error",
-          error: message,
-          processed_at: new Date().toISOString(),
-        })
-        .eq("id", job.upload_log_id);
-    }
-    if (job.inbound_email_log_id) {
-      const stillActive = await otherActiveJobsExist(supabase, job.inbound_email_log_id, job.id);
-      await supabase
-        .from("inbound_email_log")
-        .update({
-          processing: stillActive,
-          error: message,
-        })
-        .eq("id", job.inbound_email_log_id);
+    // Only reflect the failure in the display tables once it's TERMINAL —
+    // a retryable attempt (this one will auto-retry, ingest_jobs.status
+    // stays "queued") must not flash the Queue to "Failed" for something
+    // that's about to succeed on its own; that was confusingly showing up
+    // as a false "failed" during a transient extraction/insert hiccup that
+    // the next attempt (seconds later) recovered from cleanly.
+    if (terminal) {
+      if (job.upload_log_id) {
+        await supabase
+          .from("upload_log")
+          .update({
+            status: "error",
+            error: message,
+            processed_at: new Date().toISOString(),
+          })
+          .eq("id", job.upload_log_id);
+      }
+      if (job.inbound_email_log_id) {
+        const stillActive = await otherActiveJobsExist(supabase, job.inbound_email_log_id, job.id);
+        await supabase
+          .from("inbound_email_log")
+          .update({
+            processing: stillActive,
+            error: message,
+          })
+          .eq("id", job.inbound_email_log_id);
+      }
     }
   };
 
@@ -301,6 +308,7 @@ export async function runNextIngestJob(
             status: "split",
             pending_split_id: result.pendingSplitId,
             processed_at: processedAt,
+            error: null,
           })
           .eq("id", job.upload_log_id);
       } else {
@@ -310,6 +318,7 @@ export async function runNextIngestJob(
             status: "done",
             invoice_id: result.invoice.id,
             processed_at: processedAt,
+            error: null,
           })
           .eq("id", job.upload_log_id);
       }
