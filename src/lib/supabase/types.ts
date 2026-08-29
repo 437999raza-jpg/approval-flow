@@ -739,7 +739,7 @@ export interface Database {
         Row: {
           id: string;
           organization_id: string;
-          purpose: "extract" | "classify";
+          purpose: "extract" | "classify" | "search";
           model: string;
           prompt_tokens: number | null;
           completion_tokens: number | null;

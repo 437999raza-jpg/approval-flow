@@ -14,7 +14,7 @@ export interface OpenRouterUsage {
 
 export async function recordLlmUsage(
   organizationId: string,
-  purpose: "extract" | "classify",
+  purpose: "extract" | "classify" | "search",
   model: string,
   usage: OpenRouterUsage | undefined
 ): Promise<void> {

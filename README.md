@@ -1657,6 +1657,25 @@ shows a banner linking to the others, noting a differing amount as a
 likely price-corrected resubmission rather than a true duplicate. Purely
 informational — nothing is auto-blocked or auto-linked.
 
+**Natural-language search (migration 0078)**: the same quick-search box
+([`SearchInput.tsx`](src/components/SearchInput.tsx)) doubles as an AI
+search — typing a full sentence ("show me invoices from Sat Metal that
+aren't approved yet") gets translated into the exact filter fields above,
+not a raw database query. A small heuristic (4+ words, or a cue word like
+"from"/"not"/"waiting"/"approved") decides whether a submitted search is a
+sentence or a literal vendor/file/invoice# lookup — most typed searches
+never touch the AI path and stay instant and free, exactly as before.
+[`src/lib/nl-search.ts`](src/lib/nl-search.ts) sends the org's real
+vendor/project/member names to a cheap model (`anthropic/claude-haiku-4.5`
+by default, `OPENROUTER_SEARCH_MODEL` to override) and only accepts values
+back that actually exist in those lists — a bad or hallucinated answer
+degrades to "no match" or a slightly-wrong filter, never a cross-org leak
+or an arbitrary query. Cost is logged the same way as extraction (see
+[Ufirst Ops](#ufirst-ops-separate-internal-app)), with
+`purpose = 'search'`. On any failure (no `OPENROUTER_API_KEY`, a bad
+response, an empty result) it falls back silently to the plain literal
+search on the typed text.
+
 ---
 
 ## Admin overrides

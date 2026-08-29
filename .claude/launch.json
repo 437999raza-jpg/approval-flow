@@ -7,6 +7,13 @@
       "runtimeArgs": ["run", "dev", "--", "-p", "3210"],
       "port": 3210,
       "autoPort": false
+    },
+    {
+      "name": "flow-ops",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "/Users/araza/Documents/Deepseek_Harness/flow-ops", "run", "dev"],
+      "port": 3211,
+      "autoPort": false
     }
   ]
 }
