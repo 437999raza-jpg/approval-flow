@@ -23,6 +23,7 @@ type QueueRow = {
   id: string;
   kind: "email" | "upload";
   createdAt: string;
+  processedAt: string | null;
   title: string;
   detail: string;
   status: "processing" | "processed" | "split" | "unmatched" | "no_invoice" | "failed" | "received";
@@ -71,7 +72,7 @@ export default async function QueuePage({
         .limit(100),
       supabase
         .from("ingest_jobs")
-        .select("id, upload_log_id, inbound_email_log_id, status")
+        .select("id, upload_log_id, inbound_email_log_id, status, processed_at")
         .eq("organization_id", org.id)
         .limit(200),
     ]);
@@ -88,12 +89,25 @@ export default async function QueuePage({
       .map((j) => [j.inbound_email_log_id, j.id])
   );
 
+  // An email can carry several attachments (several ingest_jobs) — "when
+  // it finished processing" is whichever of those completed LAST. Only
+  // job rows that have actually finished (processed_at set) count.
+  const processedAtByEmailLog = new Map<string, string>();
+  for (const j of jobs ?? []) {
+    if (!j.inbound_email_log_id || !j.processed_at) continue;
+    const existing = processedAtByEmailLog.get(j.inbound_email_log_id);
+    if (!existing || j.processed_at > existing) {
+      processedAtByEmailLog.set(j.inbound_email_log_id, j.processed_at);
+    }
+  }
+
   // Merge both sources into one newest-first list.
   const rows: QueueRow[] = [
     ...(emails ?? []).map((e) => ({
       id: e.id,
       kind: "email" as const,
       createdAt: e.created_at,
+      processedAt: processedAtByEmailLog.get(e.id) ?? null,
       title: e.subject || "(no subject)",
       detail: e.from_address
         ? `From: ${e.from_address}`
@@ -108,6 +122,7 @@ export default async function QueuePage({
       id: u.id,
       kind: "upload" as const,
       createdAt: u.created_at,
+      processedAt: u.processed_at ?? null,
       title: u.filename,
       detail: "Manual upload",
       status: uploadStatus(u),
@@ -213,10 +228,9 @@ export default async function QueuePage({
           {filtered.map((r) => (
             <li key={`${r.kind}-${r.id}`} className="px-4 py-3">
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                <LocalTime
-                  iso={r.createdAt}
-                  className="text-xs text-slate-400"
-                />
+                <span className="text-xs text-slate-400">
+                  Received <LocalTime iso={r.createdAt} />
+                </span>
                 <span
                   className={clsx(
                     "rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
@@ -252,6 +266,11 @@ export default async function QueuePage({
                 <span className="truncate" title={r.detail}>
                   {r.detail}
                 </span>
+                {r.processedAt && (
+                  <span className="text-slate-400">
+                    Processed <LocalTime iso={r.processedAt} />
+                  </span>
+                )}
               </div>
               {r.status === "processed" && r.invoiceIds.length > 0 && (
                 <div className="mt-1.5 flex flex-wrap gap-2">
