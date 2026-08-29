@@ -735,6 +735,84 @@ export interface Database {
         >;
         Relationships: [];
       };
+      llm_usage_events: {
+        Row: {
+          id: string;
+          organization_id: string;
+          purpose: "extract" | "classify";
+          model: string;
+          prompt_tokens: number | null;
+          completion_tokens: number | null;
+          total_tokens: number | null;
+          cost_usd: number | null;
+          created_at: string;
+        };
+        Insert: Partial<
+          Database["public"]["Tables"]["llm_usage_events"]["Row"]
+        > & { organization_id: string; purpose: string; model: string };
+        Update: Partial<
+          Database["public"]["Tables"]["llm_usage_events"]["Row"]
+        >;
+        Relationships: [];
+      };
+      feature_flags: {
+        Row: {
+          key: string;
+          description: string | null;
+          global_enabled: boolean;
+          updated_at: string;
+        };
+        Insert: Partial<
+          Database["public"]["Tables"]["feature_flags"]["Row"]
+        > & { key: string };
+        Update: Partial<
+          Database["public"]["Tables"]["feature_flags"]["Row"]
+        >;
+        Relationships: [];
+      };
+      feature_flag_overrides: {
+        Row: {
+          id: string;
+          flag_key: string;
+          organization_id: string;
+          enabled: boolean;
+          updated_at: string;
+        };
+        Insert: Partial<
+          Database["public"]["Tables"]["feature_flag_overrides"]["Row"]
+        > & { flag_key: string; organization_id: string; enabled: boolean };
+        Update: Partial<
+          Database["public"]["Tables"]["feature_flag_overrides"]["Row"]
+        >;
+        Relationships: [];
+      };
+      platform_config: {
+        Row: {
+          id: boolean;
+          config_version: number;
+          updated_at: string;
+        };
+        Insert: Partial<
+          Database["public"]["Tables"]["platform_config"]["Row"]
+        >;
+        Update: Partial<
+          Database["public"]["Tables"]["platform_config"]["Row"]
+        >;
+        Relationships: [];
+      };
+      support_thread_state: {
+        Row: {
+          organization_id: string;
+          last_read_at: string | null;
+        };
+        Insert: Partial<
+          Database["public"]["Tables"]["support_thread_state"]["Row"]
+        > & { organization_id: string };
+        Update: Partial<
+          Database["public"]["Tables"]["support_thread_state"]["Row"]
+        >;
+        Relationships: [];
+      };
     };
   };
 }

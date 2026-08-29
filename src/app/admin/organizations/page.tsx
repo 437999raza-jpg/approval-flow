@@ -28,6 +28,7 @@ export default async function AdminOrganizationsPage({
 
   const admin = createAdminClient();
   const domain = process.env.INBOUND_EMAIL_DOMAIN ?? "invoices.example.com";
+  const opsAppUrl = process.env.OPS_APP_URL;
 
   const { data: orgs } = await admin
     .from("organizations")
@@ -193,16 +194,15 @@ export default async function AdminOrganizationsPage({
                         {myOrgIds.has(org.id) ? "View" : "Join as support"}
                       </button>
                     </form>
-                    <form action={joinOrganizationAction}>
-                      <input type="hidden" name="org_id" value={org.id} />
-                      <input type="hidden" name="redirect_to" value="/dashboard?openSupport=1" />
-                      <button
-                        type="submit"
+                    {opsAppUrl && (
+                      <Link
+                        href={`${opsAppUrl}/support/${org.id}`}
+                        target="_blank"
                         className="rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
                       >
                         Support chat
-                      </button>
-                    </form>
+                      </Link>
+                    )}
                   </div>
                 </td>
               </tr>

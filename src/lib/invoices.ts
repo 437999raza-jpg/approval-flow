@@ -155,7 +155,7 @@ export async function createInvoiceFromFile({
     supabase.storage
       .from(INVOICE_BUCKET)
       .upload(filePath, file, { contentType: file.type, upsert: false }),
-    extractInvoiceFields(file, extraContext),
+    extractInvoiceFields(file, extraContext, organizationId),
   ]);
 
   if (uploadError) {

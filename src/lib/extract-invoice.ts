@@ -18,6 +18,7 @@
 
 import * as mupdf from "mupdf";
 import { computeLineItemTotals } from "@/lib/invoice-totals";
+import { recordLlmUsage } from "@/lib/llm-usage";
 
 export interface ExtractedLineItem {
   description: string | null;
@@ -92,7 +93,8 @@ type ContentPart =
 
 export async function extractInvoiceFields(
   file: File,
-  extraContext?: string
+  extraContext?: string,
+  organizationId?: string
 ): Promise<ExtractedInvoiceData | null> {
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) return null;
@@ -171,6 +173,7 @@ export async function extractInvoiceFields(
           model,
           max_tokens: 2048,
           response_format: { type: "json_object" },
+          usage: { include: true },
           messages: [
             { role: "system", content: SYSTEM_PROMPT },
             { role: "user", content },
@@ -192,7 +195,16 @@ export async function extractInvoiceFields(
 
     const body = (await response.json()) as {
       choices?: { message?: { content?: string } }[];
+      usage?: {
+        prompt_tokens?: number;
+        completion_tokens?: number;
+        total_tokens?: number;
+        cost?: number;
+      };
     };
+    if (organizationId) {
+      await recordLlmUsage(organizationId, "extract", model, body.usage);
+    }
     const contentText = body.choices?.[0]?.message?.content;
     if (!contentText) {
       console.error("extractInvoiceFields: OpenRouter returned no content");

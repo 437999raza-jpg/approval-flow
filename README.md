@@ -1061,6 +1061,7 @@ Copy `.env.example` → `.env.local` and fill in:
 | `PLATFORM_ADMIN_EMAILS` | No | Comma-separated emails allowed to create new organizations at `/admin/organizations` (see [Multi-tenant onboarding tool](#multi-tenant-onboarding-tool-adminorganizations)). Leave unset to hide that page entirely. |
 | `CRON_SECRET` | Recommended | Any random string you choose; Vercel sends it as `Authorization: Bearer $CRON_SECRET` on cron-triggered requests to `/api/cron/reminders` (see [Deadlines, reminders & escalation](#deadlines-reminders--escalation-migration-0073)). Unset = the route runs unauthenticated. |
 | `STRIPE_SECRET_KEY` | For billing | dashboard.stripe.com → Developers → API keys. Powers `/billing`'s "Pay now" and "Manage billing" (see [Billing & usage](#billing--usage)). No publishable key needed — the app only redirects to Stripe-hosted pages, never loads Stripe.js client-side. |
+| `OPS_APP_URL` | No | Base URL of the separate "Ufirst Ops" internal app (see [Ufirst Ops](#ufirst-ops-separate-internal-app)). Only used to link out to it from `/admin/organizations`'s "Support chat" button. Leave unset to hide that button. |
 
 Supabase renamed its API keys at some point — you may see either
 **"Publishable and secret API keys"** or **"Legacy anon, service_role API
@@ -2042,15 +2043,78 @@ author's email via the admin API) get a small green "Support" badge so a
 customer can tell the vendor's reply from their own teammates' messages
 in the same thread.
 
-Platform admins reach a given org's thread the exact same way regular
-members do — by actually being an `organization_members` row on that
-org, not a separate cross-org bypass. `/admin/organizations` shows a
-message count + last-message date per org and a "Support chat" button
-(reuses `joinOrganizationAction`'s existing join-and-switch-active-org
-flow, redirecting to `/dashboard?openSupport=1` — a `redirect_to` field
-on that same action — instead of a bare `/dashboard`) so checking in on
-every tenant's support activity doesn't require switching into each one
-by hand first, then hunting for the chat bubble.
+**Update:** platform admins no longer reach a customer's thread by joining
+their org. `/admin/organizations` still shows a message count +
+last-message date per org (read via the service-role client, no
+membership needed for that), but its "Support chat" button now links out
+to the separate Ufirst Ops app's `/support/{orgId}` page instead of
+running `joinOrganizationAction` — see
+[Ufirst Ops](#ufirst-ops-separate-internal-app) below for why, and only
+appears when `OPS_APP_URL` is set. The "View"/"Join as support" button
+(full workspace access for troubleshooting) still works the old way —
+this change only affects support chat.
+
+---
+
+## Ufirst Ops (separate internal app)
+
+A second, genuinely separate Next.js app (its own repo/deployment, not
+yet created) for Ufirst's own internal use — connects to this **same**
+Supabase project via the service-role key. Not built for customers to see
+or use. Three things drove it:
+
+1. Answering a customer's support message used to require the platform
+   admin to actually join that customer's org as a member first. Nobody
+   wants to be a member/admin on every client's org just to reply to a
+   chat message.
+2. Zero visibility into what each customer costs to run — OpenRouter is
+   called on every document with no token/cost tracking.
+3. A place to roll a feature out to one customer at a time (or kill it
+   globally), with every open browser tab finding out it should refresh.
+
+This repo only owns the schema those needs share (migration 0077,
+`0077_ops_dashboard.sql`) and a few small hooks in the main app; the Ops
+app's own pages (support inbox, customer/cost dashboards, flag CRUD) live
+in that separate codebase once it exists.
+
+**Schema (migration 0077):**
+- `llm_usage_events` — one row per OpenRouter call (`extract` or
+  `classify`), with `prompt_tokens`/`completion_tokens`/`total_tokens`
+  and `cost_usd` (populated because both call sites now send
+  `"usage": {"include": true}` in the OpenRouter request body — without
+  it you only get token counts, no dollar figure). Recorded best-effort
+  by [`recordLlmUsage`](src/lib/llm-usage.ts) via the service-role
+  client from [`extractInvoiceFields`](src/lib/extract-invoice.ts) and
+  [`classifyMultiPageInvoice`](src/lib/invoice-split.ts). No RLS select
+  policy for the authenticated role — this is Ufirst's own COGS data,
+  not customer-facing, and no historical backfill is possible (tracking
+  starts from when this shipped).
+- `feature_flags` (`key`, `global_enabled`) + `feature_flag_overrides`
+  (`flag_key`, `organization_id`, `enabled`) — a global default per flag
+  with optional per-org overrides. [`isFeatureEnabled`](src/lib/feature-flags.ts)
+  checks the org override first, falls back to the global default,
+  defaults `false` for an unknown key. Nothing in the main app checks a
+  flag yet — this just makes the mechanism available for the next
+  feature that needs staged rollout.
+- `platform_config` — single-row `config_version` counter, bumped by a
+  trigger on `feature_flags`/`feature_flag_overrides` any time either
+  changes. [`GET /api/platform-config`](src/app/api/platform-config/route.ts)
+  exposes it; [`UpdateAvailableBanner`](src/components/UpdateAvailableBanner.tsx)
+  (mounted in the dashboard layout) polls it every 60s the same way
+  `SupportChatWidget` polls its messages endpoint, and shows a "Refresh"
+  bar the moment the version it loaded with no longer matches — this is
+  the "notify the browser to refresh" mechanism, and it fires for any
+  flag change, not just a specific feature.
+- `support_thread_state` (`organization_id`, `last_read_at`) — lets the
+  Ops inbox mark which customers have unread messages since Ufirst last
+  opened their thread. Written only by Ops.
+
+**Not built yet:** the Ops app itself (new repo, new Vercel project,
+sign-in gated by the same `PLATFORM_ADMIN_EMAILS` check as
+`/admin/organizations`, pages for the support inbox / customer &
+revenue table / OpenRouter cost breakdown / flag management). Creating
+that new repo and deployment is a deliberate next step, not done
+silently alongside the schema work above.
 
 ---
 

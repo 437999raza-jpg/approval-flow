@@ -93,7 +93,7 @@ export async function ingestInvoiceFile(args: IngestArgs): Promise<IngestResult>
       }
     }
 
-    const groups = bytes ? await classifyMultiPageInvoice(bytes) : null;
+    const groups = bytes ? await classifyMultiPageInvoice(bytes, organizationId) : null;
 
     if (groups && groups.length > 1 && bytes) {
       const safeName = file.name.replace(/[^\w.\-]+/g, "_");

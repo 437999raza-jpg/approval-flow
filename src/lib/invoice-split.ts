@@ -8,6 +8,7 @@
 // Authored by Araza.
 
 import * as mupdf from "mupdf";
+import { recordLlmUsage } from "@/lib/llm-usage";
 
 const MAX_CLASSIFY_PAGES = 20; // whole-document boundary detection, not
 // the single-invoice extraction's tighter MAX_PDF_PAGES cap.
@@ -57,7 +58,8 @@ export function renderPdfPagesToPngDataUrls(
 // — the caller should treat null as "assume single invoice" so a
 // classification hiccup never blocks an upload outright.
 export async function classifyMultiPageInvoice(
-  bytes: Uint8Array
+  bytes: Uint8Array,
+  organizationId?: string
 ): Promise<PageGroup[] | null> {
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) return null;
@@ -77,6 +79,7 @@ export async function classifyMultiPageInvoice(
         model,
         max_tokens: 1024,
         response_format: { type: "json_object" },
+        usage: { include: true },
         messages: [
           { role: "system", content: CLASSIFY_SYSTEM_PROMPT },
           {
@@ -91,7 +94,18 @@ export async function classifyMultiPageInvoice(
     });
     if (!response.ok) return null;
 
-    const body = (await response.json()) as { choices?: { message?: { content?: string } }[] };
+    const body = (await response.json()) as {
+      choices?: { message?: { content?: string } }[];
+      usage?: {
+        prompt_tokens?: number;
+        completion_tokens?: number;
+        total_tokens?: number;
+        cost?: number;
+      };
+    };
+    if (organizationId) {
+      await recordLlmUsage(organizationId, "classify", model, body.usage);
+    }
     const text = body.choices?.[0]?.message?.content;
     if (!text) return null;
 

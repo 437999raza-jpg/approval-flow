@@ -2176,7 +2176,7 @@ async function reExtractInvoiceCore(
             : "application/octet-stream";
   const file = new File([blob], invoice.file_name, { type: mime });
 
-  const extracted = await extractInvoiceFields(file);
+  const extracted = await extractInvoiceFields(file, undefined, invoice.organization_id);
   if (!extracted) return false;
 
   await supabase

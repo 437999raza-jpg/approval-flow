@@ -30,6 +30,7 @@ import { ExtractionPoller } from "@/components/ExtractionPoller";
 import { SupportChatProvider } from "@/components/SupportChatContext";
 import { SupportChatWidget } from "@/components/SupportChatWidget";
 import { SupportChatNavButton } from "@/components/SupportChatNavButton";
+import { UpdateAvailableBanner } from "@/components/UpdateAvailableBanner";
 import { LocalTime } from "@/components/LocalTime";
 import { DocumentSearchModal, type DocumentSearchFilters } from "@/components/DocumentSearchModal";
 import type { SupplierDefaultsValues } from "@/components/SupplierRulesModal";
@@ -1090,6 +1091,7 @@ export default async function DashboardPage({
     <SupportChatProvider initialOpen={searchParams.openSupport === "1"}>
     <ExtractionPoller />
     <SupportChatWidget />
+    <UpdateAvailableBanner />
     <div className="flex h-screen bg-slate-50 text-slate-900">
       {/* Sidebar (collapsible via hamburger) */}
       <Sidebar>
