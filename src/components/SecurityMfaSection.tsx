@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
 // Self-service TOTP enrollment via Supabase Auth's own auth.mfa API — no
@@ -12,6 +13,7 @@ import { createClient } from "@/lib/supabase/client";
 type Step = "idle" | "enrolling" | "verifying";
 
 export function SecurityMfaSection({ initialEnabled }: { initialEnabled: boolean }) {
+  const router = useRouter();
   const [enabled, setEnabled] = useState(initialEnabled);
   const [step, setStep] = useState<Step>("idle");
   const [factorId, setFactorId] = useState<string | null>(null);
@@ -61,6 +63,10 @@ export function SecurityMfaSection({ initialEnabled }: { initialEnabled: boolean
       setCode("");
       setQrCode(null);
       setSecret(null);
+      // The server-rendered initialEnabled prop (and the Members table's
+      // own "2FA" status) would otherwise stay stale until some unrelated
+      // navigation happened to re-fetch it — this makes it immediate.
+      router.refresh();
     } finally {
       setBusy(false);
     }
@@ -91,6 +97,7 @@ export function SecurityMfaSection({ initialEnabled }: { initialEnabled: boolean
       const verified = data?.totp.find((f) => f.status === "verified");
       if (!verified) {
         setEnabled(false);
+        router.refresh();
         return;
       }
       const { error: unenrollError } = await supabase.auth.mfa.unenroll({
@@ -101,6 +108,7 @@ export function SecurityMfaSection({ initialEnabled }: { initialEnabled: boolean
         return;
       }
       setEnabled(false);
+      router.refresh();
     } finally {
       setBusy(false);
     }
