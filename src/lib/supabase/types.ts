@@ -825,6 +825,9 @@ export interface Database {
           uploaded_by: string | null;
           status: "processing" | "reconciled" | "error";
           error_message: string | null;
+          statement_date: string | null;
+          statement_balance: number | null;
+          note: string | null;
           created_at: string;
         };
         Insert: Partial<

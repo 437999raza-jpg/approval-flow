@@ -20,18 +20,28 @@ export interface ExtractedStatementLine {
   amount: number | null;
 }
 
+export interface ExtractedStatement {
+  statement_date: string | null; // YYYY-MM-DD, the date printed on the statement itself
+  closing_balance: number | null; // the statement's own printed outstanding/total-due balance
+  lines: ExtractedStatementLine[];
+}
+
 const DEFAULT_MODEL = "anthropic/claude-sonnet-4.5";
 const MAX_PDF_PAGES = 6; // statements run longer than a single invoice
 
-const SYSTEM_PROMPT = `You are a vendor statement data extraction engine. A statement lists the invoices a vendor has billed a customer for, usually one per row with an invoice number, a date, and an amount. Extract every row and return ONLY a JSON object (no markdown, no commentary) with exactly this shape:
+const SYSTEM_PROMPT = `You are a vendor statement data extraction engine. A statement lists the invoices a vendor has billed a customer for, usually one per row with an invoice number, a date, and an amount, plus a statement date and an outstanding balance printed near the top. Return ONLY a JSON object (no markdown, no commentary) with exactly this shape:
 {
+  "statement_date": "YYYY-MM-DD" | null,
+  "closing_balance": number | null,
   "lines": [ { "invoice_number": string, "date": "YYYY-MM-DD" | null, "amount": number | null } ]
 }
 Rules:
+- statement_date is the single date the statement itself was issued (often near "Statement Date" or the account/page header) — not any individual invoice's date.
+- closing_balance is the total outstanding balance the statement says is owed (often labeled "Balance Due", "Total Due", "Amount Due", or similar) — a single number, not a per-line amount.
 - One entry per invoice line on the statement — skip subtotal/balance/total rows, they are not invoices.
-- invoice_number is required — skip a row if you cannot find one.
+- invoice_number is required on a line — skip a row if you cannot find one.
 - Dates are YYYY-MM-DD. Amounts are plain numbers, no currency symbols.
-- Use null for a date or amount you cannot find — never invent values.`;
+- Use null for anything you cannot find — never invent values.`;
 
 type ContentPart =
   | { type: "image_url"; image_url: { url: string } }
@@ -40,7 +50,7 @@ type ContentPart =
 export async function extractStatementLines(
   file: File,
   organizationId?: string
-): Promise<ExtractedStatementLine[] | null> {
+): Promise<ExtractedStatement | null> {
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) return null;
   if (file.type !== "application/pdf" && !file.type.startsWith("image/")) {
@@ -153,7 +163,7 @@ export async function extractStatementLines(
   }
 }
 
-function parseExtraction(content: string): ExtractedStatementLine[] | null {
+function parseExtraction(content: string): ExtractedStatement | null {
   let raw: unknown;
   try {
     const start = content.indexOf("{");
@@ -183,7 +193,7 @@ function parseExtraction(content: string): ExtractedStatementLine[] | null {
   };
 
   const linesRaw = Array.isArray(o.lines) ? o.lines : [];
-  return linesRaw
+  const lines = linesRaw
     .map((l) => {
       if (typeof l !== "object" || l === null) return null;
       const r = l as Record<string, unknown>;
@@ -196,4 +206,10 @@ function parseExtraction(content: string): ExtractedStatementLine[] | null {
       };
     })
     .filter((l): l is ExtractedStatementLine => l !== null);
+
+  return {
+    statement_date: date(o.statement_date),
+    closing_balance: num(o.closing_balance),
+    lines,
+  };
 }

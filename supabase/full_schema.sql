@@ -3483,3 +3483,15 @@ create policy "statement files: members can upload"
     bucket_id = 'statements'
     and is_org_member((storage.foldername(name))[1]::uuid)
   );
+
+---------------------------------------------------------------------
+-- >>> supabase/migrations/0082_statement_balance.sql
+---------------------------------------------------------------------
+-- 0082: statement-level fields for the reworked detail page — the
+-- statement's own printed date/balance (extracted, editable) and a
+-- free-text note. Run via `supabase db push` or paste into the
+-- Supabase SQL editor.
+
+alter table vendor_statements add column if not exists statement_date date;
+alter table vendor_statements add column if not exists statement_balance numeric(14, 2);
+alter table vendor_statements add column if not exists note text;

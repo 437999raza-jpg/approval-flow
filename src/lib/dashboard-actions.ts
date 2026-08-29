@@ -3933,14 +3933,15 @@ export async function uploadAndReconcileStatement(
     return { ok: false, error: "Could not record the upload." };
   }
 
-  const lines = await extractStatementLines(file, org.id);
-  if (!lines) {
+  const extraction = await extractStatementLines(file, org.id);
+  if (!extraction) {
     await supabase
       .from("vendor_statements")
       .update({ status: "error", error_message: "Could not read the statement — try a clearer scan." })
       .eq("id", statement.id);
     return { ok: true, statementId: statement.id };
   }
+  const { lines, statement_date: statementDate, closing_balance: closingBalance } = extraction;
 
   // Match each statement line against this org's invoices for the same
   // vendor by invoice number — case/whitespace-insensitive on both sides,
@@ -3977,7 +3978,11 @@ export async function uploadAndReconcileStatement(
 
   await supabase
     .from("vendor_statements")
-    .update({ status: "reconciled" })
+    .update({
+      status: "reconciled",
+      statement_date: statementDate,
+      statement_balance: closingBalance,
+    })
     .eq("id", statement.id);
 
   await supabase.from("audit_log").insert({
@@ -4064,5 +4069,38 @@ export async function sendStatementEmail(
 
   revalidatePath(`/statements/${statementId}`);
   return { ok: true };
+}
+
+// Edit the statement's own date/outstanding-balance/note — all three are
+// extracted best-effort at upload, but a misread scan or a manual
+// correction (the vendor's own balance vs. what Flow computed) needs to
+// be fixable without re-uploading. Admin only, org-scoped.
+export async function updateStatementDetails(statementId: string, formData: FormData) {
+
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
+  const org = await getCurrentOrg(supabase);
+  if (!org || org.role !== "admin") return;
+
+  const statementDate = String(formData.get("statement_date") ?? "").trim() || null;
+  const balanceRaw = String(formData.get("statement_balance") ?? "").replace(/[, ]/g, "").trim();
+  const statementBalance = balanceRaw ? Number(balanceRaw) : null;
+  const note = String(formData.get("note") ?? "").trim() || null;
+
+  await supabase
+    .from("vendor_statements")
+    .update({
+      statement_date: statementDate,
+      statement_balance: Number.isFinite(statementBalance) ? statementBalance : null,
+      note,
+    })
+    .eq("id", statementId)
+    .eq("organization_id", org.id);
+
+  revalidatePath(`/statements/${statementId}`);
 }
 
