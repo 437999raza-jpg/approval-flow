@@ -572,13 +572,34 @@ export function BillPanel({
                     />
                   </div>
                 )}
-                {invoice.status !== "approved" &&
-                  invoice.status !== "rejected" &&
+                {invoice.status !== "rejected" &&
                   invoice.status !== "cancelled" && (
                     <>
                       {/* Status copy sits in normal flow right under the
                           stepper; only the button row is pinned to the
                           bottom so it lines up with Approve. */}
+                      {invoice.status === "approved" && admin.visible && (
+                        <p className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-emerald-700">
+                          <span className="h-1.5 w-1.5 flex-none rounded-full bg-emerald-500" />
+                          Synced to QuickBooks
+                          {invoice.qbo_synced_at && (
+                            <>
+                              {" "}—{" "}
+                              <LocalTime iso={invoice.qbo_synced_at} withYear />
+                            </>
+                          )}
+                          {qboConnected && qboRealmId && invoice.qbo_bill_id && (
+                            <a
+                              href={`https://qbo.intuit.com/app/bill?txnId=${invoice.qbo_bill_id}`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="font-medium text-blue-600 hover:underline"
+                            >
+                              Open in QuickBooks Online ↗
+                            </a>
+                          )}
+                        </p>
+                      )}
                       {invoice.status === "on_review" && !canReview && (
                         <p className="mt-3 text-sm text-slate-500">
                           Awaiting review — an admin must complete the review
@@ -620,6 +641,7 @@ export function BillPanel({
                           </p>
                         )
                       ) : (
+                        invoice.status !== "approved" &&
                         invoice.status !== "on_review" &&
                         invoice.status !== "on_hold" &&
                         !approval.canDecide &&
@@ -652,7 +674,10 @@ export function BillPanel({
                         approval.canDecide ||
                         approval.canUnhold ||
                         approval.canCancel ||
-                        (invoice.status === "qbo_ready" && admin.visible)) && (
+                        (invoice.status === "qbo_ready" && admin.visible) ||
+                        (invoice.status === "approved" &&
+                          admin.visible &&
+                          !!admin.clearQboSync)) && (
                         <div className="mt-auto flex gap-2 pt-3">
                           {invoice.status === "on_review" && canReview && (
                             <form action={approval.reviewComplete} className="flex-1">
@@ -707,6 +732,18 @@ export function BillPanel({
                               </SubmitButton>
                             </form>
                           )}
+                          {invoice.status === "approved" &&
+                            admin.visible &&
+                            admin.clearQboSync && (
+                              <form action={admin.clearQboSync} className="flex-1">
+                                <SubmitButton
+                                  title="Only clears Flow's own record — the Bill already in QuickBooks is untouched."
+                                  className="w-full rounded-md border border-slate-300 px-4 py-2 text-center text-sm font-semibold text-slate-600 hover:bg-slate-50"
+                                >
+                                  Undo sync (allow re-sync)
+                                </SubmitButton>
+                              </form>
+                            )}
                         </div>
                       )}
                     </>
@@ -1076,20 +1113,8 @@ export function BillPanel({
                     Bill created, but attachments failed: {invoice.qbo_error}
                   </p>
                 )}
-                {admin.visible && admin.clearQboSync && (
-                  <div>
-                    <form action={admin.clearQboSync}>
-                      <SubmitButton className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">
-                        Undo sync (allow re-sync)
-                      </SubmitButton>
-                    </form>
-                    <p className="mt-1 text-[11px] text-slate-400">
-                      Only clears Flow&apos;s own record — the Bill already
-                      in QuickBooks is untouched. Void or delete it there
-                      yourself first if you don&apos;t want a duplicate.
-                    </p>
-                  </div>
-                )}
+                {/* Undo sync lives up in Status & Approval now (same row as
+                    Hold/Cancel/Sync) — this is just the status line. */}
               </div>
             ) : invoice.qbo_sync_status === "error" && !(invoice.status === "qbo_ready" && admin.visible) ? (
               // A failed sync only ever touches qbo_sync_status/qbo_error,
