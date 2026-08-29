@@ -1,6 +1,12 @@
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentOrg } from "@/lib/current-org";
-import { buildInvoiceListReport, invoiceListToCsv } from "@/lib/invoice-list-report";
+import {
+  buildInvoiceListReport,
+  invoiceListToCsv,
+  REPORT_COLUMNS,
+  DEFAULT_REPORT_COLUMNS,
+  type ReportColumnId,
+} from "@/lib/invoice-list-report";
 import type { ReportFilters } from "@/lib/reports";
 
 // Download the invoice-list report as CSV (GET /api/reports/export?...
@@ -33,8 +39,6 @@ export async function GET(request: Request) {
     project_id: text("f_project"),
     amount_over: num("f_amount_over"),
     amount_under: num("f_amount_under"),
-    tax_over: num("f_tax_over"),
-    tax_under: num("f_tax_under"),
     from: text("f_from"),
     to: text("f_to"),
     waiting_for_user_id: text("f_waiting_for"),
@@ -42,8 +46,15 @@ export async function GET(request: Request) {
     submitted_by_user_id: text("f_requester"),
   };
 
+  const knownIds = new Set(REPORT_COLUMNS.map((c) => c.id));
+  const requestedCols = (url.searchParams.get("cols") ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter((id): id is ReportColumnId => knownIds.has(id as ReportColumnId));
+  const columns = requestedCols.length > 0 ? requestedCols : DEFAULT_REPORT_COLUMNS;
+
   const rows = await buildInvoiceListReport(supabase, org.id, filters);
-  const csv = invoiceListToCsv(rows);
+  const csv = invoiceListToCsv(rows, columns);
 
   return new Response(csv, {
     headers: {

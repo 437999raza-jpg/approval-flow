@@ -12,8 +12,6 @@ export interface ReportFilters {
   project_id?: string;
   amount_over?: number;
   amount_under?: number;
-  tax_over?: number;
-  tax_under?: number;
   from?: string; // YYYY-MM-DD
   to?: string; // YYYY-MM-DD
   // "Waiting for" / "Approved by" aren't plain invoice columns — matching
@@ -31,6 +29,12 @@ export interface ReportConfig {
   metric: "count" | "amount" | "tax";
   groupBy: "none" | "month" | "vendor" | "status" | "project";
   filters: ReportFilters;
+  // Which optional columns the invoice-list report/CSV shows, by id (see
+  // REPORT_COLUMNS in invoice-list-report.ts — not imported here to avoid
+  // a circular import, since that module already imports ReportFilters
+  // from this one). Undefined (a report saved before this feature
+  // existed) means "use DEFAULT_REPORT_COLUMNS", not "show nothing".
+  columns?: string[];
 }
 
 export interface ReportRow {
@@ -76,8 +80,6 @@ export function filterInvoicesForReport<
     if (f.project_id && i.project_id !== f.project_id) return false;
     if (f.amount_over != null && (i.amount ?? 0) < f.amount_over) return false;
     if (f.amount_under != null && (i.amount ?? 0) > f.amount_under) return false;
-    if (f.tax_over != null && (i.tax_amount ?? 0) < f.tax_over) return false;
-    if (f.tax_under != null && (i.tax_amount ?? 0) > f.tax_under) return false;
     if (f.submitted_by_user_id && i.submitted_by !== f.submitted_by_user_id) return false;
     const created = new Date(i.created_at).getTime();
     if (fromMs != null && created < fromMs) return false;
