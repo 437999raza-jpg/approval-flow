@@ -310,9 +310,11 @@ export default async function StatementDetailPage({
                                 {l.matched_invoice_id && (
                                   <Link
                                     href={`/dashboard/${l.matched_invoice_id}`}
+                                    target="_blank"
+                                    rel="noreferrer"
                                     className="text-xs text-brand-navy hover:underline"
                                   >
-                                    Open →
+                                    Open ↗
                                   </Link>
                                 )}
                               </td>
