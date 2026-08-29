@@ -88,11 +88,11 @@ type View = (typeof VIEWS)[number];
 const STATUS_OPTIONS: MultiSelectOption[] = [
   { id: "on_review", label: "On review" },
   { id: "on_approval", label: "On approval" },
-  { id: "qbo_ready", label: "QBO Ready" },
   { id: "approved", label: "Approved" },
-  { id: "cancelled", label: "Cancelled" },
-  { id: "rejected", label: "Rejected" },
+  { id: "qbo_ready", label: "QBO Ready" },
   { id: "on_hold", label: "On hold" },
+  { id: "rejected", label: "Rejected" },
+  { id: "cancelled", label: "Cancelled" },
 ];
 
 function csvParam(value: string | undefined): string[] {
