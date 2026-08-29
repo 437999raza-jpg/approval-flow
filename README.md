@@ -1723,13 +1723,13 @@ doesn't delete the row.
 
 ## Deadlines, reminders & escalation (migration 0073)
 
-> **Status (2026-08-28): code is deployed, migration not yet run.**
-> Supabase has an active platform-wide incident (status.supabase.com —
-> "Increased response times for requests," API Gateway degraded) blocking
-> running 0073's SQL. Until it's applied, `deadline_days` doesn't exist
-> as a column yet, so the digest/escalation cron will no-op safely (no
-> step has a deadline it can read) rather than error. `CRON_SECRET` also
-> still needs to be set in Vercel. Remove this note once both are done.
+> **Status (2026-08-28): migration applied, code deployed.** The earlier
+> note here flagged 0073 as not-yet-run due to a Supabase incident; the
+> migration has since been applied (verified: `deadline_days`,
+> `current_step_entered_at`, `escalated_at` all exist in the live DB).
+> `CRON_SECRET` should still be set in Vercel (and `.env.local`) so the
+> daily digest/escalation cron can't be hit by outsiders; until it is, the
+> route runs unauthenticated.
 
 Another gap found comparing a real ApprovalMax export: their steps carry
 a **Deadline** (e.g. "4 days"), and — separately reported — some
