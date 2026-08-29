@@ -1033,7 +1033,7 @@ export function BillPanel({
                       options={projects.map((p) => ({ label: p.name, value: p.id }))}
                       defaultValue=""
                       placeholder="Set project…"
-                      className="rounded-md border border-blue-200 bg-white px-2 py-1 text-xs"
+                      className="w-full rounded-md border border-blue-200 bg-white px-2 py-1 text-xs"
                       disabled={bulkSetting}
                       onCommit={(value) => value && handleBulkSetField("project_id", value)}
                     />
@@ -1048,7 +1048,7 @@ export function BillPanel({
                       options={qboClasses}
                       defaultValue=""
                       placeholder="Set class…"
-                      className="rounded-md border border-blue-200 bg-white px-2 py-1 text-xs"
+                      className="w-full rounded-md border border-blue-200 bg-white px-2 py-1 text-xs"
                       disabled={bulkSetting}
                       onCommit={(value) => value && handleBulkSetField("class", value)}
                     />
