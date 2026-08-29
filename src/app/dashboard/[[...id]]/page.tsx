@@ -20,7 +20,6 @@ import {
 import { InvoiceStatusBadge } from "@/components/InvoiceStatusBadge";
 import { SearchInput } from "@/components/SearchInput";
 import { SignOutButton } from "@/components/SignOutButton";
-import { SubmitButton } from "@/components/SubmitButton";
 import { CollapsiblePane } from "@/components/CollapsiblePane";
 import { InvoiceSelectionList, type SelectableInvoice } from "@/components/InvoiceSelectionList";
 import { DetailSplit, type DocumentRef } from "@/components/DetailSplit";
@@ -79,7 +78,6 @@ import {
   syncToQbo,
   clearQboError,
   clearQboSync,
-  syncQboPaymentStatus,
 } from "@/lib/dashboard-actions";
 
 type Invoice = Database["public"]["Tables"]["invoices"]["Row"];
@@ -1395,16 +1393,6 @@ export default async function DashboardPage({
                 </svg>
               </Link>
             </div>
-          )}
-          {canReviewNow && (
-            <form action={syncQboPaymentStatus}>
-              <SubmitButton
-                title="Pull Paid/Unpaid status from QuickBooks for every synced bill — also runs automatically every night at 2am"
-                className="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"
-              >
-                Sync payment status
-              </SubmitButton>
-            </form>
           )}
           {canReviewNow && (
             <Link

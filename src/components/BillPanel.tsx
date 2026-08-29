@@ -890,8 +890,8 @@ export function BillPanel({
             </div>
           </div>
 
-          <div className="mt-4 grid grid-cols-3 gap-x-6 gap-y-3">
-            <label>
+          <div className="mt-4 grid grid-cols-4 gap-x-6 gap-y-3">
+            <label className="col-span-2">
               <span className={ghostLabel}>Vendor name</span>
               <Combobox
                 key={`vendor-name-${invoice.id}`}
@@ -950,21 +950,24 @@ export function BillPanel({
             {invoice.qbo_sync_status === "synced" && (
               <div>
                 <span className={ghostLabel}>Payment status</span>
-                <div className={ghostField}>
+                <div className={`${ghostField} flex flex-wrap items-center gap-1.5`}>
                   {invoice.qbo_payment_status === "paid" ? (
-                    <span className="font-medium text-emerald-700">
-                      Paid
+                    <>
+                      <span className="inline-flex items-center rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-medium text-emerald-800">
+                        Paid
+                      </span>
                       {invoice.qbo_paid_at && (
-                        <>
-                          {" — "}
+                        <span className="text-xs text-slate-500">
                           <LocalTime iso={invoice.qbo_paid_at} withYear />
-                        </>
+                        </span>
                       )}
-                    </span>
+                    </>
                   ) : invoice.qbo_payment_status === "unpaid" ? (
-                    <span className="text-slate-500">Unpaid</span>
+                    <span className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-600">
+                      Unpaid
+                    </span>
                   ) : (
-                    <span className="text-slate-400">Not checked yet</span>
+                    <span className="text-xs text-slate-400">Not checked yet</span>
                   )}
                 </div>
               </div>

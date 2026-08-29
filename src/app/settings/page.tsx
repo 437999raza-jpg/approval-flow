@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentOrg } from "@/lib/current-org";
 import { SignOutButton } from "@/components/SignOutButton";
+import { CollapsibleSection } from "@/components/CollapsibleSection";
 import { disconnectQbo, refreshQboData, saveDefaultTaxRate, saveInboundEmailLocal, syncQboTaxes, syncQboClasses, syncQboCategories, syncQboSuppliers, syncQboProjects, syncQboPaymentStatus } from "@/lib/dashboard-actions";
 import { qboEnv } from "@/lib/qbo";
 import { Avatar } from "@/components/Avatar";
@@ -688,12 +689,18 @@ export default async function SettingsPage({
                   QuickBooks from Flow.
                 </p>
 
-                {/* Tax codes (what the bill's Tax field offers) */}
-                <div className="mt-3">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-sm font-semibold text-slate-800">
-                      Tax
-                    </span>
+                {/* Each mirror collapses by default — six of these stacked
+                    open at once (plus Suppliers/Projects routinely running
+                    into the thousands) made this page enormous. The sync
+                    button lives inside now, alongside the count/status —
+                    expand a section to check or re-sync it. */}
+                <div className="mt-2 divide-y divide-slate-100 rounded-md border border-slate-200">
+                  {/* Tax codes (what the bill's Tax field offers) */}
+                  <CollapsibleSection
+                    title="Tax"
+                    badge={qboTaxCodes?.length ?? undefined}
+                    defaultOpen={false}
+                  >
                     {isAdmin && (
                       <ScrollPreserveForm action={syncQboTaxes}>
                         <SubmitButton className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">
@@ -701,53 +708,51 @@ export default async function SettingsPage({
                         </SubmitButton>
                       </ScrollPreserveForm>
                     )}
-                  </div>
-                  <p className="mt-1 text-xs text-slate-500">
-                    These are the codes the bill&apos;s Tax field offers —
-                    type &quot;h&quot; for HST, like Dext. Only active QBO
-                    codes appear.
-                  </p>
-                  {qboTaxCodes && qboTaxCodes.length > 0 ? (
-                    <ul className="mt-2 space-y-0.5">
-                      {(qboTaxCodes ?? []).map((c) => (
-                        <li key={c.qbo_tax_code_id} className="text-sm text-slate-700">
-                          {c.name} ({c.rate_value}%)
-                        </li>
-                      ))}
-                    </ul>
-                  ) : (
-                    <p className="mt-1 text-sm text-slate-400">
-                      No tax data synced yet.
+                    <p className="mt-2 text-xs text-slate-500">
+                      These are the codes the bill&apos;s Tax field offers —
+                      type &quot;h&quot; for HST, like Dext. Only active QBO
+                      codes appear.
                     </p>
-                  )}
-                </div>
+                    {qboTaxCodes && qboTaxCodes.length > 0 ? (
+                      <ul className="mt-2 space-y-0.5">
+                        {(qboTaxCodes ?? []).map((c) => (
+                          <li key={c.qbo_tax_code_id} className="text-sm text-slate-700">
+                            {c.name} ({c.rate_value}%)
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="mt-1 text-sm text-slate-400">
+                        No tax data synced yet.
+                      </p>
+                    )}
 
-                {/* Default tax rate for new invoices */}
-                {isAdmin && qboTaxCodes && qboTaxCodes.length > 0 && (
-                  <div className="mt-3 border-t border-slate-100 pt-3">
-                    <div className="text-xs font-bold uppercase tracking-wide text-slate-400">
-                      Default tax rate for new invoices
-                    </div>
-                    <p className="mt-1 text-xs text-slate-500">
-                      Applied to every incoming invoice when the supplier has
-                      no rule of their own. Choose one of the synced tax
-                      codes (e.g. H 13%).
-                    </p>
-                    <DefaultTaxRateForm
-                      currentCodeId={org.default_tax_code_id}
-                      currentRate={org.default_tax_rate}
-                      codes={defaultTaxCodes}
-                      action={saveDefaultTaxRate}
-                    />
-                  </div>
-                )}
+                    {isAdmin && qboTaxCodes && qboTaxCodes.length > 0 && (
+                      <div className="mt-3 border-t border-slate-100 pt-3">
+                        <div className="text-xs font-bold uppercase tracking-wide text-slate-400">
+                          Default tax rate for new invoices
+                        </div>
+                        <p className="mt-1 text-xs text-slate-500">
+                          Applied to every incoming invoice when the supplier
+                          has no rule of their own. Choose one of the synced
+                          tax codes (e.g. H 13%).
+                        </p>
+                        <DefaultTaxRateForm
+                          currentCodeId={org.default_tax_code_id}
+                          currentRate={org.default_tax_rate}
+                          codes={defaultTaxCodes}
+                          action={saveDefaultTaxRate}
+                        />
+                      </div>
+                    )}
+                  </CollapsibleSection>
 
-                {/* Classes */}
-                <div className="mt-3 border-t border-slate-100 pt-3">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-sm font-semibold text-slate-800">
-                      Classes
-                    </span>
+                  {/* Classes */}
+                  <CollapsibleSection
+                    title="Classes"
+                    badge={classesCount ?? undefined}
+                    defaultOpen={false}
+                  >
                     {isAdmin && (
                       <ScrollPreserveForm action={syncQboClasses}>
                         <SubmitButton className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">
@@ -755,43 +760,39 @@ export default async function SettingsPage({
                         </SubmitButton>
                       </ScrollPreserveForm>
                     )}
-                  </div>
-                  <p className="mt-1 text-xs text-slate-500">
-                    New classes added in QuickBooks show up here after a
-                    sync.
-                  </p>
-                  <div className="mt-1 text-xs text-slate-400">
-                    {classesCount != null
-                      ? `${classesCount} class${classesCount === 1 ? "" : "es"} on File. `
-                      : ""}
-                    {classesLastSync ? (
-                      <>Last synced on <LocalTime iso={classesLastSync} withYear />.</>
-                    ) : (
-                      <>Not synced yet.</>
-                    )}
-                  </div>
-                  {newClasses.length > 0 && (
-                    <div className="mt-1">
-                      <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">
-                        Newly synced
-                      </div>
-                      <ul className="mt-0.5 flex max-h-48 flex-wrap gap-x-4 gap-y-0.5 overflow-y-auto">
-                        {newClasses.map((c) => (
-                          <li key={c.id} className="w-40 text-sm text-slate-700">
-                            {c.name}
-                          </li>
-                        ))}
-                      </ul>
+                    <p className="mt-2 text-xs text-slate-500">
+                      New classes added in QuickBooks show up here after a
+                      sync.
+                    </p>
+                    <div className="mt-1 text-xs text-slate-400">
+                      {classesLastSync ? (
+                        <>Last synced on <LocalTime iso={classesLastSync} withYear />.</>
+                      ) : (
+                        <>Not synced yet.</>
+                      )}
                     </div>
-                  )}
-                </div>
+                    {newClasses.length > 0 && (
+                      <div className="mt-1">
+                        <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                          Newly synced
+                        </div>
+                        <ul className="mt-0.5 flex max-h-48 flex-wrap gap-x-4 gap-y-0.5 overflow-y-auto">
+                          {newClasses.map((c) => (
+                            <li key={c.id} className="w-40 text-sm text-slate-700">
+                              {c.name}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </CollapsibleSection>
 
-                {/* Projects */}
-                <div className="mt-3 border-t border-slate-100 pt-3">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-sm font-semibold text-slate-800">
-                      Projects
-                    </span>
+                  {/* Projects */}
+                  <CollapsibleSection
+                    title="Projects"
+                    badge={projectsCount ?? undefined}
+                    defaultOpen={false}
+                  >
                     {isAdmin && (
                       <ScrollPreserveForm action={syncQboProjects}>
                         <SubmitButton className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">
@@ -799,98 +800,92 @@ export default async function SettingsPage({
                         </SubmitButton>
                       </ScrollPreserveForm>
                     )}
-                  </div>
-                  <p className="mt-1 text-xs text-slate-500">
-                    Read-only from QuickBooks — these are the QBO projects
-                    (customers with IsProject=true). Regular customers are
-                    not imported.
-                  </p>
-                  <div className="mt-1 text-xs text-slate-400">
-                    {projectsCount != null
-                      ? `${projectsCount} project${projectsCount === 1 ? "" : "s"} on File. `
-                      : ""}
-                    {projectsLastSync ? (
-                      <>Last synced on <LocalTime iso={projectsLastSync} withYear />.</>
-                    ) : (
-                      <>Not synced yet.</>
-                    )}
-                  </div>
-                  {newProjects.length > 0 && (
-                    <div className="mt-1">
-                      <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">
-                        Newly synced
-                      </div>
-                      <ul className="mt-0.5 flex max-h-48 flex-wrap gap-x-4 gap-y-0.5 overflow-y-auto">
-                        {newProjects.map((p) => (
-                          <li key={p.id} className="w-72 truncate text-sm text-slate-700">
-                            {p.name}
-                          </li>
-                        ))}
-                      </ul>
+                    <p className="mt-2 text-xs text-slate-500">
+                      Read-only from QuickBooks — these are the QBO projects
+                      (customers with IsProject=true). Regular customers are
+                      not imported.
+                    </p>
+                    <div className="mt-1 text-xs text-slate-400">
+                      {projectsLastSync ? (
+                        <>Last synced on <LocalTime iso={projectsLastSync} withYear />.</>
+                      ) : (
+                        <>Not synced yet.</>
+                      )}
                     </div>
-                  )}
-                </div>
-
-                {/* Suppliers */}
-                <div className="mt-3 border-t border-slate-100 pt-3">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-sm font-semibold text-slate-800">
-                      Suppliers
-                    </span>
-                    {isAdmin && (
-                      <ScrollPreserveForm action={syncQboSuppliers}>
-                        <SubmitButton className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">
-                          Sync suppliers from QuickBooks
-                        </SubmitButton>
-                      </ScrollPreserveForm>
-                    )}
-                    <span className="flex-1" />
-                    <Link
-                      href="/settings/suppliers"
-                      className="text-xs font-medium text-blue-600 hover:underline"
-                    >
-                      Manage suppliers →
-                    </Link>
-                  </div>
-                  <p className="mt-1 text-xs text-slate-500">
-                    Read-only from QuickBooks — Flow never creates suppliers.
-                    OCR vendor names are matched against this list. Set
-                    category/class/tax/currency/payment-term defaults per
-                    supplier on the Manage suppliers page.
-                  </p>
-                  <div className="mt-1 text-xs text-slate-400">
-                    {suppliersCount != null
-                      ? `${suppliersCount} supplier${suppliersCount === 1 ? "" : "s"} on File. `
-                      : ""}
-                    {suppliersLastSync ? (
-                      <>Last synced on <LocalTime iso={suppliersLastSync} withYear />.</>
-                    ) : (
-                      <>Not synced yet.</>
-                    )}
-                  </div>
-                  {newSuppliers.length > 0 && (
-                    <div className="mt-1">
-                      <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">
-                        Newly synced
+                    {newProjects.length > 0 && (
+                      <div className="mt-1">
+                        <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                          Newly synced
+                        </div>
+                        <ul className="mt-0.5 flex max-h-48 flex-wrap gap-x-4 gap-y-0.5 overflow-y-auto">
+                          {newProjects.map((p) => (
+                            <li key={p.id} className="w-72 truncate text-sm text-slate-700">
+                              {p.name}
+                            </li>
+                          ))}
+                        </ul>
                       </div>
-                      <ul className="mt-0.5 flex max-h-48 flex-wrap gap-x-4 gap-y-0.5 overflow-y-auto">
-                        {newSuppliers.map((s) => (
-                          <li key={s.id} className="w-64 truncate text-sm text-slate-700">
-                            {s.name}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                </div>
+                    )}
+                  </CollapsibleSection>
 
-                {/* Categories (Chart of Accounts) — one list, account
-                    numbers starting with 2, 5, or 6 */}
-                <div className="mt-3 border-t border-slate-100 pt-3">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-sm font-semibold text-slate-800">
-                      Categories
-                    </span>
+                  {/* Suppliers */}
+                  <CollapsibleSection
+                    title="Suppliers"
+                    badge={suppliersCount ?? undefined}
+                    defaultOpen={false}
+                  >
+                    <div className="flex flex-wrap items-center gap-2">
+                      {isAdmin && (
+                        <ScrollPreserveForm action={syncQboSuppliers}>
+                          <SubmitButton className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">
+                            Sync suppliers from QuickBooks
+                          </SubmitButton>
+                        </ScrollPreserveForm>
+                      )}
+                      <span className="flex-1" />
+                      <Link
+                        href="/settings/suppliers"
+                        className="text-xs font-medium text-blue-600 hover:underline"
+                      >
+                        Manage suppliers →
+                      </Link>
+                    </div>
+                    <p className="mt-2 text-xs text-slate-500">
+                      Read-only from QuickBooks — Flow never creates suppliers.
+                      OCR vendor names are matched against this list. Set
+                      category/class/tax/currency/payment-term defaults per
+                      supplier on the Manage suppliers page.
+                    </p>
+                    <div className="mt-1 text-xs text-slate-400">
+                      {suppliersLastSync ? (
+                        <>Last synced on <LocalTime iso={suppliersLastSync} withYear />.</>
+                      ) : (
+                        <>Not synced yet.</>
+                      )}
+                    </div>
+                    {newSuppliers.length > 0 && (
+                      <div className="mt-1">
+                        <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                          Newly synced
+                        </div>
+                        <ul className="mt-0.5 flex max-h-48 flex-wrap gap-x-4 gap-y-0.5 overflow-y-auto">
+                          {newSuppliers.map((s) => (
+                            <li key={s.id} className="w-64 truncate text-sm text-slate-700">
+                              {s.name}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </CollapsibleSection>
+
+                  {/* Categories (Chart of Accounts) — one list, account
+                      numbers starting with 2, 5, or 6 */}
+                  <CollapsibleSection
+                    title="Categories"
+                    badge={categoriesCount ?? undefined}
+                    defaultOpen={false}
+                  >
                     {isAdmin && (
                       <ScrollPreserveForm action={syncQboCategories}>
                         <SubmitButton className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">
@@ -898,55 +893,47 @@ export default async function SettingsPage({
                         </SubmitButton>
                       </ScrollPreserveForm>
                     )}
-                  </div>
-                  <p className="mt-1 text-xs text-slate-500">
-                    One list from QuickBooks — every account whose number
-                    starts with 2, 5, or 6.
-                  </p>
-                  <div className="mt-1 text-xs text-slate-400">
-                    {categoriesCount != null
-                      ? `${categoriesCount} categor${categoriesCount === 1 ? "y" : "ies"} on File. `
-                      : ""}
-                    {categoriesLastSync ? (
-                      <>Last synced on <LocalTime iso={categoriesLastSync} withYear />.</>
-                    ) : (
-                      <>Not synced yet.</>
-                    )}
-                  </div>
-                  {newCategories.length > 0 && (
-                    <div className="mt-1">
-                      <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">
-                        Newly synced
-                      </div>
-                      <ul className="mt-0.5 max-h-48 divide-y divide-slate-100 overflow-y-auto">
-                        {newCategories.map((c) => (
-                          <li
-                            key={c.id}
-                            className="flex flex-wrap items-center gap-2 py-1.5 text-sm"
-                          >
-                            <span className="min-w-0 flex-1 truncate font-medium text-slate-800">
-                              {c.acct_num ? `${c.acct_num} - ${c.name}` : c.name}
-                            </span>
-                            <span className="text-xs text-slate-400">
-                              {c.account_type ?? "—"}
-                              {c.account_sub_type ? ` · ${c.account_sub_type}` : ""}
-                            </span>
-                          </li>
-                        ))}
-                      </ul>
+                    <p className="mt-2 text-xs text-slate-500">
+                      One list from QuickBooks — every account whose number
+                      starts with 2, 5, or 6.
+                    </p>
+                    <div className="mt-1 text-xs text-slate-400">
+                      {categoriesLastSync ? (
+                        <>Last synced on <LocalTime iso={categoriesLastSync} withYear />.</>
+                      ) : (
+                        <>Not synced yet.</>
+                      )}
                     </div>
-                  )}
-                </div>
+                    {newCategories.length > 0 && (
+                      <div className="mt-1">
+                        <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                          Newly synced
+                        </div>
+                        <ul className="mt-0.5 max-h-48 divide-y divide-slate-100 overflow-y-auto">
+                          {newCategories.map((c) => (
+                            <li
+                              key={c.id}
+                              className="flex flex-wrap items-center gap-2 py-1.5 text-sm"
+                            >
+                              <span className="min-w-0 flex-1 truncate font-medium text-slate-800">
+                                {c.acct_num ? `${c.acct_num} - ${c.name}` : c.name}
+                              </span>
+                              <span className="text-xs text-slate-400">
+                                {c.account_type ?? "—"}
+                                {c.account_sub_type ? ` · ${c.account_sub_type}` : ""}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </CollapsibleSection>
 
-                {/* Payment status — pulls Paid/Unpaid + date paid from QBO
-                    for every bill this org has already synced there. Same
-                    thing runs nightly at 2am (vercel.json cron); this is
-                    just the on-demand version. */}
-                <div className="mt-3 border-t border-slate-100 pt-3">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-sm font-semibold text-slate-800">
-                      Payment status
-                    </span>
+                  {/* Payment status — pulls Paid/Unpaid + date paid from QBO
+                      for every bill this org has already synced there. Same
+                      thing runs nightly at 2am (vercel.json cron); this is
+                      just the on-demand version. */}
+                  <CollapsibleSection title="Payment status" defaultOpen={false}>
                     {isAdmin && (
                       <ScrollPreserveForm action={syncQboPaymentStatus}>
                         <SubmitButton className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">
@@ -954,21 +941,21 @@ export default async function SettingsPage({
                         </SubmitButton>
                       </ScrollPreserveForm>
                     )}
-                  </div>
-                  <p className="mt-1 text-xs text-slate-500">
-                    Read-only from QuickBooks — checks every bill Flow has
-                    already pushed there and marks it Paid/Unpaid (with the
-                    date paid) on the bill itself. Runs automatically every
-                    night at 2am; this button runs it right now instead of
-                    waiting.
-                  </p>
-                  <div className="mt-1 text-xs text-slate-400">
-                    {paymentStatusLastSync ? (
-                      <>Last synced on <LocalTime iso={paymentStatusLastSync} withYear />.</>
-                    ) : (
-                      <>Not synced yet.</>
-                    )}
-                  </div>
+                    <p className="mt-2 text-xs text-slate-500">
+                      Read-only from QuickBooks — checks every bill Flow has
+                      already pushed there and marks it Paid/Unpaid (with the
+                      date paid) on the bill itself. Runs automatically every
+                      night at 2am; this button runs it right now instead of
+                      waiting.
+                    </p>
+                    <div className="mt-1 text-xs text-slate-400">
+                      {paymentStatusLastSync ? (
+                        <>Last synced on <LocalTime iso={paymentStatusLastSync} withYear />.</>
+                      ) : (
+                        <>Not synced yet.</>
+                      )}
+                    </div>
+                  </CollapsibleSection>
                 </div>
               </div>
             </div>
