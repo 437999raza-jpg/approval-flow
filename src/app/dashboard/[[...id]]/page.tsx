@@ -364,11 +364,24 @@ export default async function DashboardPage({
     .map((id) => ({ id, label: memberNameById.get(id) ?? "Team member" }))
     .sort((a, b) => a.label.localeCompare(b.label));
 
-  const vendorOptions: MultiSelectOption[] = [
-    ...new Set((invoices ?? []).map((i) => i.vendor_name).filter((v): v is string => !!v)),
-  ]
-    .sort((a, b) => a.localeCompare(b))
-    .map((v) => ({ id: v, label: v }));
+  // Deduped by normalized name (same function as supplier_defaults/
+  // duplicate detection) — previously deduped on the raw string, so two
+  // spellings of the same vendor ("Onyx-Fire Protection Services Inc."
+  // vs "Onyx-Fire Protection Services") showed as two separate filter
+  // chips instead of one. id is the normalized key (what gets matched
+  // against and persisted in the URL); label keeps the first-seen raw
+  // spelling so the chip still reads naturally.
+  const vendorLabelByNormalized = new Map<string, string>();
+  for (const i of invoices ?? []) {
+    if (!i.vendor_name) continue;
+    const key = normalizeForMatching(i.vendor_name);
+    if (!vendorLabelByNormalized.has(key)) {
+      vendorLabelByNormalized.set(key, i.vendor_name);
+    }
+  }
+  const vendorOptions: MultiSelectOption[] = [...vendorLabelByNormalized.entries()]
+    .sort((a, b) => a[1].localeCompare(b[1]))
+    .map(([id, label]) => ({ id, label }));
 
   const projectOptions: MultiSelectOption[] = (projects ?? []).map((p) => ({
     id: p.id,
@@ -672,7 +685,9 @@ export default async function DashboardPage({
   }
   if (advanced.supplier.length > 0) {
     filtered = filtered.filter(
-      (i) => i.vendor_name !== null && advanced.supplier.includes(i.vendor_name)
+      (i) =>
+        i.vendor_name !== null &&
+        advanced.supplier.includes(normalizeForMatching(i.vendor_name))
     );
   }
   if (advanced.customer.length > 0) {
@@ -764,19 +779,20 @@ export default async function DashboardPage({
   // stale if invoice_number/vendor_name get edited later in the Bill panel.
   // Amount differing is flagged as a likely price-corrected resubmission,
   // not treated as a stronger/weaker signal — a human still decides either
-  // way.
-  const possibleDuplicates: Invoice[] =
-    selected?.invoice_number && selected?.vendor_name
-      ? (invoices ?? []).filter(
-          (i) =>
-            i.id !== selected.id &&
-            i.status !== "cancelled" &&
-            i.status !== "rejected" &&
-            i.invoice_number === selected.invoice_number &&
-            i.vendor_name?.trim().toLowerCase() ===
-              selected.vendor_name!.trim().toLowerCase()
-        )
-      : [];
+  // way. Derived from the SAME duplicateGroups computed above (not a
+  // second, separately-normalized comparison) — the two used to disagree:
+  // this banner compared raw trim+lowercase text while the list-pane
+  // grouping above correctly used normalizeForMatching, so a
+  // punctuation-only vendor-name difference (the exact "ONYX-FIRE" case
+  // migration 0031's comment describes) could pin a duplicate pair in the
+  // list without ever showing this banner when either one was opened.
+  const possibleDuplicates: Invoice[] = selected
+    ? (() => {
+        const key = duplicateGroupKey(selected);
+        if (!key) return [];
+        return (duplicateGroups.get(key) ?? []).filter((i) => i.id !== selected.id);
+      })()
+    : [];
 
   const detailQuery = new URLSearchParams();
   if (view !== "all") detailQuery.set("view", view);
