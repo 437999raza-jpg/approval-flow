@@ -17,6 +17,7 @@ import { SearchInput } from "@/components/SearchInput";
 import { InlineSelectSave } from "@/components/InlineSelectSave";
 import { InlineTextSave } from "@/components/InlineTextSave";
 import { SubmitButton } from "@/components/SubmitButton";
+import { ConfirmSubmitButton } from "@/components/ConfirmSubmitButton";
 import { DefaultTaxRateForm } from "@/components/DefaultTaxRateForm";
 import { InboundEmailForm } from "@/components/InboundEmailForm";
 import { ScrollPreserveForm } from "@/components/ScrollPreserveForm";
@@ -204,6 +205,53 @@ async function removeMember(membershipId: string) {
   if (member.organization_id) {
     revalidateTag(membersTag(member.organization_id));
   }
+  revalidatePath("/settings");
+}
+
+// Admin-facing recovery for a teammate who lost their authenticator
+// device AND their saved recovery codes — the one remaining gap after
+// self-service recovery codes (see mfa-recovery.ts): before this,
+// nothing in the app could help someone in that state. Turning off
+// someone else's 2FA needs the ADMIN client (auth.admin.mfa.*), which
+// bypasses RLS entirely, so — unlike updateMemberRole/removeMember
+// above, which lean on RLS to enforce "caller must be admin" — this
+// explicitly re-verifies both that the caller is an admin of the
+// target's org AND that the target is actually a member of that same
+// org, before touching anything. Combined with the existing "Join as
+// support" flow (which already grants a platform admin `role: 'admin'`
+// on any org — admin-actions.ts), this also covers the case where an
+// entire org, including its only admin, is locked out.
+async function resetMemberMfa(membershipId: string) {
+  "use server";
+
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
+  const org = await getCurrentOrg(supabase);
+  if (!org || org.role !== "admin") return;
+
+  const { data: member } = await supabase
+    .from("organization_members")
+    .select("user_id, organization_id")
+    .eq("id", membershipId)
+    .eq("organization_id", org.id)
+    .single();
+  if (!member) return;
+
+  const admin = createAdminClient();
+  const { data: factorData } = await admin.auth.admin.mfa.listFactors({
+    userId: member.user_id,
+  });
+  const verified = factorData?.factors?.find(
+    (f) => f.factor_type === "totp" && f.status === "verified"
+  );
+  if (verified) {
+    await admin.auth.admin.mfa.deleteFactor({ id: verified.id, userId: member.user_id });
+  }
+
   revalidatePath("/settings");
 }
 
@@ -1078,7 +1126,18 @@ export default async function SettingsPage({
                         </span>
                       </td>
                       <td className="px-4 py-3 text-slate-500">
-                        {mfaEnabledById.get(m.user_id) ? "Enabled" : "Disabled"}
+                        <span className="inline-flex items-center gap-2">
+                          {mfaEnabledById.get(m.user_id) ? "Enabled" : "Disabled"}
+                          {isAdmin && mfaEnabledById.get(m.user_id) && m.user_id !== user.id && (
+                            <ConfirmSubmitButton
+                              action={resetMemberMfa.bind(null, m.id)}
+                              confirmMessage="Reset this person's two-factor authentication? They'll be signed in without it and can set it up again."
+                              className="text-xs text-slate-400 hover:text-red-500 hover:underline"
+                            >
+                              Reset
+                            </ConfirmSubmitButton>
+                          )}
+                        </span>
                       </td>
                       <td className="px-4 py-3 text-slate-400">—</td>
                       <td className="px-4 py-3 text-slate-400">—</td>
