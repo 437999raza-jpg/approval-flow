@@ -79,7 +79,7 @@ lifecycle](#invoice-lifecycle--statuses)).
 ## Data model
 
 Full schema: [`supabase/migrations/`](supabase/migrations/) — numbered
-through `0089` as of 2026-08-30 (a few numbers were added then reverted for
+through `0090` as of 2026-08-30 (a few numbers were added then reverted for
 a shipped-then-reverted feature, e.g. 0043/0044, 0087/0088→0089 — see the
 table below and each session log for why). [`supabase/full_schema.sql`](supabase/full_schema.sql)
 is every migration concatenated in order into one file — the fast path for
@@ -210,14 +210,16 @@ written to be idempotent (safe to re-run). Roughly:
 | 0055 | `ingest_jobs` — async ingestion queue (staging file, status, 3-try retry); `upload_log` gains `queued`/`processing` statuses; `inbound_email_log.processing` for in-flight display. |
 | 0056 | Storage UPDATE policy on the `invoices` bucket — fixes "new row violates row-level security policy" when Reorder pages replaces the stored PDF in place. |
 
-**0057 onward** (`0057`–`0089`) aren't re-listed row by row here — each is
+**0057 onward** (`0057`–`0090`) aren't re-listed row by row here — each is
 documented in the session log or feature section it belongs to: QBO
 payment status (0079), deadlines/reminders (0073), the ops dashboard
 (0077), self-serve signup + trial (0085/0086, [session log —
 2026-08-29 to 2026-08-30](#session-log--2026-08-29-to-2026-08-30)), Statement
-Reconciliation (0081–0084), and the plan-derived extraction mode saga
-(0088 added a column, 0089 dropped it again — same session log). Check
-`supabase/migrations/` directly for the exhaustive list.
+Reconciliation (0081–0084), the plan-derived extraction mode saga
+(0088 added a column, 0089 dropped it again — same session log), and MFA
+recovery codes (0090, [Two-factor authentication
+(TOTP)](#two-factor-authentication-totp)). Check `supabase/migrations/`
+directly for the exhaustive list.
 
 ---
 
@@ -1139,6 +1141,9 @@ Copy `.env.example` → `.env.local` and fill in:
 | `CRON_SECRET` | Recommended | Any random string you choose; Vercel sends it as `Authorization: Bearer $CRON_SECRET` on cron-triggered requests to `/api/cron/reminders` (see [Deadlines, reminders & escalation](#deadlines-reminders--escalation-migration-0073)). Unset = the route runs unauthenticated. |
 | `STRIPE_SECRET_KEY` | For billing | dashboard.stripe.com → Developers → API keys. Powers `/billing`'s "Pay now" and "Manage billing" (see [Billing & usage](#billing--usage)). No publishable key needed — the app only redirects to Stripe-hosted pages, never loads Stripe.js client-side. |
 | `OPS_APP_URL` | No | Base URL of the separate "Ufirst Ops" internal app (see [Ufirst Ops](#ufirst-ops-separate-internal-app)). Only used to link out to it from `/admin/organizations`'s "Support chat" button. Leave unset to hide that button. |
+| `NEXT_PUBLIC_SENTRY_DSN` | No | sentry.io → your project → Client Keys (DSN). Leave unset and error monitoring is a complete no-op — `Sentry.init` is never called, zero behavior change. |
+| `SENTRY_AUTH_TOKEN` / `SENTRY_ORG` / `SENTRY_PROJECT` | No | Only needed for source-map upload at build time (readable stack traces in Sentry) — the build succeeds without them, just skips that step. |
+| `NEXT_PUBLIC_TURNSTILE_SITE_KEY` | No | dash.cloudflare.com → Turnstile → your site's site key. Leave unset and the CAPTCHA widget just doesn't render on the signup form. **Also requires** pasting the matching secret key into Supabase Dashboard → Authentication → Settings → CAPTCHA protection → Turnstile — that's where the actual verification happens. |
 
 Supabase renamed its API keys at some point — you may see either
 **"Publishable and secret API keys"** or **"Legacy anon, service_role API
@@ -1362,6 +1367,61 @@ user at all, confirmed by diffing its raw response against the
 single-user `admin.auth.admin.getUserById()` endpoint, which does.
 `settings/page.tsx` now fetches each member's status individually via
 `getUserById` instead.
+
+**Recovery codes (migration 0090)** — the real gap this closed: once
+enrolled, there was genuinely no way back in for someone who lost their
+authenticator device, not even for the org's own admin (and if the
+*only* admin lost theirs, nobody in the app could help at all). Supabase's
+`auth.mfa` API has no native backup-code concept, so this is built
+entirely at the app layer
+([`src/lib/mfa-recovery.ts`](src/lib/mfa-recovery.ts)): right after
+enrollment (and again via "Regenerate recovery codes" any time after),
+8 one-time codes are generated, hashed, and shown to the user exactly
+once. Using a valid code at `/login/mfa`'s "Use a recovery code instead"
+consumes it and removes the user's TOTP factor via the **admin client**
+— deliberately not the user's own session, since some Supabase MFA
+management calls may require an already-aal2 session, which a
+locked-out user by definition doesn't have — then routes to Settings
+with a prompt to re-enroll. A code is a one-time "prove it's you, then
+start over" token, not an ongoing alternate MFA factor, same as how
+GitHub/Google backup codes work.
+
+**Deliberately not built (by explicit choice, not an oversight)**: an
+admin-facing "reset a teammate's 2FA" button, and a platform-admin
+last-resort reset for when someone loses both their device and their
+codes. Recovery codes alone already solve the case that matters most.
+
+### Error monitoring and signup abuse protection
+
+Both fully coded, both currently **no-ops** — neither has ever run in
+production because the external accounts they depend on don't exist yet:
+
+- **Sentry** (`sentry.client.config.ts` / `sentry.server.config.ts` /
+  `sentry.edge.config.ts`, loaded via [`src/instrumentation.ts`](src/instrumentation.ts))
+  — standard `@sentry/nextjs` App Router setup, client/server/edge error
+  capture plus source-map upload wired into `next.config.js`. Each
+  config only calls `Sentry.init` `if (process.env.NEXT_PUBLIC_SENTRY_DSN)`
+  — unset, this is a genuine no-op, not degraded functionality.
+  [`src/app/global-error.tsx`](src/app/global-error.tsx) is new too — there
+  was no global error boundary at all before this, so an error escaping
+  every route's own boundary just showed Next's generic crash page with
+  nothing reported anywhere. `GET /api/health` (unauthenticated, checks
+  the DB connection) exists for whichever external uptime pinger gets
+  set up — no uptime monitor is actually running yet.
+- **Cloudflare Turnstile** ([`src/components/TurnstileWidget.tsx`](src/components/TurnstileWidget.tsx))
+  — a minimal hand-rolled widget (no extra dependency for one script) on
+  the signup form only, forwarding its token as `signUp()`'s
+  `captchaToken` option. The actual verification happens inside
+  Supabase's own Auth server (Authentication → Settings → CAPTCHA
+  protection), not in this app's code — this app only renders the
+  widget and passes the token through. Without `NEXT_PUBLIC_TURNSTILE_SITE_KEY`
+  set, the widget doesn't render and signup works exactly as it did
+  before this existed.
+
+Both were built in response to a real gap: the public signup form had
+zero abuse protection (nothing stopped scripted spam-creation of junk
+organizations), and there was no way to find out about a production
+error except a customer reporting it.
 
 ---
 
@@ -2561,8 +2621,6 @@ This is groundwork, not a finished product. In priority-ish order:
   it needs a refresh) and no typing indicators.
 - **Visual polish** — functional Tailwind, not a designed product, outside
   the Bill panel's document-style pass.
-- **Rejection detail** — a rejected invoice records the decision but
-  there's no UI prompt to capture *why* at reject time.
 - **Auto-sync on approval** — bills reach QBO Ready automatically; the
   final push to QBO is still a manual admin button per bill (no queue /
   scheduled auto-sync yet). This is also a deliberate hard rule, not just a
@@ -2583,6 +2641,20 @@ This is groundwork, not a finished product. In priority-ish order:
   `/api/cron/qbo-payment-sync`, both in `vercel.json`) — adding a third
   that calls `runNextIngestJob` (`src/lib/ingest-queue.ts`) for every org
   every few minutes is the straightforward fix, not yet built.
+- **MFA account recovery is one layer deep, not three.** Recovery codes
+  exist (see [Two-factor authentication (TOTP)](#two-factor-authentication-totp))
+  and solve the case that matters most — even a lone admin can get back
+  in without anyone else's help. Not built, by explicit choice so far:
+  an admin-facing "reset a teammate's 2FA" button in Settings → Members,
+  and a platform-admin last-resort reset on `/admin/organizations` for
+  the case where someone loses both their device AND their codes.
+- **Error/uptime monitoring and signup CAPTCHA are wired but inactive.**
+  Sentry (`sentry.*.config.ts`, `src/instrumentation.ts`) and Cloudflare
+  Turnstile (`TurnstileWidget.tsx`) are both fully coded as no-ops until
+  external accounts are created and their keys are set —
+  `NEXT_PUBLIC_SENTRY_DSN` and `NEXT_PUBLIC_TURNSTILE_SITE_KEY`
+  respectively (see [Environment variables](#environment-variables)).
+  Neither needs more code, just those two accounts.
 
 ---
 
