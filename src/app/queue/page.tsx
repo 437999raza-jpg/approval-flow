@@ -13,6 +13,7 @@ import { ReprocessQueueButton } from "@/components/ReprocessQueueButton";
 import { ExtractionPoller } from "@/components/ExtractionPoller";
 import { LocalTime } from "@/components/LocalTime";
 import { TrialBanner } from "@/components/TrialBanner";
+import { BackToDashboardButton } from "@/components/BackToDashboardButton";
 import { clsx } from "clsx";
 
 // The queue — ONE place showing everything that has come into the app:
@@ -184,12 +185,15 @@ export default async function QueuePage({
     <main className="mx-auto max-w-4xl p-8">
       <TrialBanner plan={trialOrgRow?.plan ?? null} trialEndsAt={trialOrgRow?.trial_ends_at ?? null} />
       <ExtractionPoller />
-      <Link
-        href="/dashboard"
-        className="text-sm text-slate-500 hover:underline"
-      >
-        ← Back to dashboard
-      </Link>
+      <div className="flex items-center justify-between">
+        <BackToDashboardButton />
+        <Link
+          href="/invoices/new"
+          className="rounded-md bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-800"
+        >
+          + Add invoice
+        </Link>
+      </div>
       <h1 className="mt-2 text-xl font-semibold">Queue</h1>
       <p className="mt-1 text-sm text-slate-500">
         Everything that has come into the app — manual uploads and inbound

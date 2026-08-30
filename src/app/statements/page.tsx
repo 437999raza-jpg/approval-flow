@@ -7,6 +7,7 @@ import { fetchAllQboSuppliers } from "@/lib/qbo-all";
 import { isPlanId, hasStatementReconciliation } from "@/lib/plans";
 import { StatementUploadForm } from "@/components/StatementUploadForm";
 import { LocalTime } from "@/components/LocalTime";
+import { BackToDashboardButton } from "@/components/BackToDashboardButton";
 
 // Statement Reconciliation — Detailed-plan-only. Upload a vendor's
 // statement, extract its lines, and match them against this org's own
@@ -37,12 +38,7 @@ export default async function StatementsPage() {
 
   const header = (
     <>
-      <Link
-        href="/dashboard"
-        className="text-sm text-brand-muted hover:text-brand-navy hover:underline"
-      >
-        ← Back to dashboard
-      </Link>
+      <BackToDashboardButton />
       <div className="mt-3">
         <p className="text-[11px] font-bold uppercase tracking-wide text-brand-green-dark">
           {org.name}

@@ -34,4 +34,33 @@
     transform: scale(0.97);
     filter: brightness(0.92);
   }
+
+  /* One consistent keyboard-focus ring app-wide, in brand green instead of
+     browser-default blue. :focus-visible already suppresses this for mouse
+     clicks in every modern browser, so this is purely additive — no
+     existing :focus/:active styling is touched. */
+  :focus-visible {
+    outline: 2px solid theme("colors.brand-green");
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+}
+
+@layer components {
+  /* Small set of reusable typographic + surface tokens so pages can adopt
+     a consistent scale by swapping a className, instead of every screen
+     hand-rolling its own heading/card treatment. Additive: nothing existing
+     references these yet, so introducing them can't change any layout. */
+  .heading-page {
+    @apply font-display text-xl font-bold tracking-tight text-brand-ink;
+  }
+  .heading-section {
+    @apply text-sm font-semibold tracking-tight text-brand-ink;
+  }
+  .eyebrow {
+    @apply text-[11px] font-semibold uppercase tracking-wider text-brand-muted;
+  }
+  .card-surface {
+    @apply rounded-xl border border-brand-line bg-white shadow-elevation-1;
+  }
 }

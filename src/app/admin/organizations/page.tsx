@@ -6,6 +6,7 @@ import { isPlatformAdmin } from "@/lib/platform-admin";
 import { createOrganizationAction, joinOrganizationAction, extendTrialAction, setOrgPlanAction } from "@/lib/admin-actions";
 import { SubmitButton } from "@/components/SubmitButton";
 import { isTrialActive, PLAN_ORDER, PLANS } from "@/lib/plans";
+import { BackToDashboardButton } from "@/components/BackToDashboardButton";
 
 const ERRORS: Record<string, string> = {
   "missing-fields": "Organization name and admin email are both required.",
@@ -69,9 +70,7 @@ export default async function AdminOrganizationsPage({
   return (
     <div className="mx-auto max-w-3xl space-y-8 p-8">
       <div>
-        <Link href="/dashboard" className="text-sm text-blue-600 hover:underline">
-          ← Back to dashboard
-        </Link>
+        <BackToDashboardButton />
         <h1 className="mt-2 text-xl font-semibold text-slate-800">Organizations (platform admin)</h1>
         <p className="mt-1 text-sm text-slate-500">
           Create a new tenant. This inserts the organization, generates its inbound invoice

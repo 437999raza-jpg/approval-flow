@@ -10,6 +10,7 @@ import { WorkflowRuleRow } from "@/components/WorkflowRuleRow";
 import { StepApproversManager } from "@/components/StepApproversManager";
 import { CollapsibleWorkflowSection } from "@/components/CollapsibleWorkflowSection";
 import { SubmitButton } from "@/components/SubmitButton";
+import { BackToDashboardButton } from "@/components/BackToDashboardButton";
 import type { RowCondition as StepApproverCondition } from "@/components/StepApproverMatrixRow";
 import {
   RULE_TYPE_VALUES,
@@ -662,12 +663,7 @@ export default async function WorkflowsPage() {
           </div>
         </div>
         <nav className="flex-1 space-y-0.5 p-2">
-          <Link
-            href="/dashboard"
-            className="block rounded-md px-3 py-2 text-sm text-slate-600 hover:bg-slate-100"
-          >
-            ← Back to dashboard
-          </Link>
+          <BackToDashboardButton className="w-full justify-center" />
           <Link
             href="/settings"
             className="block rounded-md px-3 py-2 text-sm text-slate-600 hover:bg-slate-100"

@@ -7,6 +7,7 @@ import { SignOutButton } from "@/components/SignOutButton";
 import { SubmitButton } from "@/components/SubmitButton";
 import { ConfirmSubmitButton } from "@/components/ConfirmSubmitButton";
 import { FilterCombobox } from "@/components/FilterCombobox";
+import { BackToDashboardButton } from "@/components/BackToDashboardButton";
 import { runReport, type ReportConfig } from "@/lib/reports";
 import {
   buildInvoiceListReport,
@@ -319,12 +320,7 @@ export default async function ReportsPage({
           <div className="mt-0.5 truncate text-xs text-slate-400">Reports</div>
         </div>
         <nav className="flex-1 space-y-0.5 p-2">
-          <Link
-            href="/dashboard"
-            className="block rounded-md px-3 py-2 text-sm text-slate-600 hover:bg-slate-100"
-          >
-            ← Back to dashboard
-          </Link>
+          <BackToDashboardButton className="w-full justify-center" />
           <Link
             href="/workflows"
             className="block rounded-md px-3 py-2 text-sm text-slate-600 hover:bg-slate-100"
