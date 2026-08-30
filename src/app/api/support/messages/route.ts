@@ -30,16 +30,24 @@ export async function GET() {
   const authorIds = [
     ...new Set((messages ?? []).map((m) => m.author_id).filter((id): id is string => !!id)),
   ];
-  const [{ data: profiles }, { data: authUsers }] = await Promise.all([
+  // Per-author lookups, not a bulk listUsers({ perPage: 1000 }) — this
+  // endpoint is polled every 4s while the widget is open (plus once right
+  // after every send), and a thread only ever has a handful of distinct
+  // authors, so fetching up to 1000 users platform-wide on every poll was
+  // pure waste (and a real source of the multi-second send-to-visible
+  // delay reported live). Same fix already applied to the Members table's
+  // 2FA status for the identical reason.
+  const admin = createAdminClient();
+  const [{ data: profiles }, authUserResults] = await Promise.all([
     authorIds.length > 0
       ? supabase.from("profiles").select("id, full_name").in("id", authorIds)
       : Promise.resolve({ data: [] }),
-    authorIds.length > 0
-      ? createAdminClient().auth.admin.listUsers({ page: 1, perPage: 1000 })
-      : Promise.resolve({ data: { users: [] } }),
+    Promise.all(authorIds.map((id) => admin.auth.admin.getUserById(id))),
   ]);
   const nameById = new Map((profiles ?? []).map((p) => [p.id, p.full_name ?? "Team member"]));
-  const emailById = new Map((authUsers?.users ?? []).map((u) => [u.id, u.email ?? null]));
+  const emailById = new Map(
+    authorIds.map((id, i) => [id, authUserResults[i].data.user?.email ?? null])
+  );
 
   const out = (messages ?? []).map((m) => ({
     id: m.id,
