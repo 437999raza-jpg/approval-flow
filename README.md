@@ -79,7 +79,7 @@ lifecycle](#invoice-lifecycle--statuses)).
 ## Data model
 
 Full schema: [`supabase/migrations/`](supabase/migrations/) — numbered
-through `0090` as of 2026-08-30 (a few numbers were added then reverted for
+through `0091` as of 2026-08-30 (a few numbers were added then reverted for
 a shipped-then-reverted feature, e.g. 0043/0044, 0087/0088→0089 — see the
 table below and each session log for why). [`supabase/full_schema.sql`](supabase/full_schema.sql)
 is every migration concatenated in order into one file — the fast path for
@@ -210,16 +210,17 @@ written to be idempotent (safe to re-run). Roughly:
 | 0055 | `ingest_jobs` — async ingestion queue (staging file, status, 3-try retry); `upload_log` gains `queued`/`processing` statuses; `inbound_email_log.processing` for in-flight display. |
 | 0056 | Storage UPDATE policy on the `invoices` bucket — fixes "new row violates row-level security policy" when Reorder pages replaces the stored PDF in place. |
 
-**0057 onward** (`0057`–`0090`) aren't re-listed row by row here — each is
+**0057 onward** (`0057`–`0091`) aren't re-listed row by row here — each is
 documented in the session log or feature section it belongs to: QBO
 payment status (0079), deadlines/reminders (0073), the ops dashboard
 (0077), self-serve signup + trial (0085/0086, [session log —
 2026-08-29 to 2026-08-30](#session-log--2026-08-29-to-2026-08-30)), Statement
 Reconciliation (0081–0084), the plan-derived extraction mode saga
-(0088 added a column, 0089 dropped it again — same session log), and MFA
+(0088 added a column, 0089 dropped it again — same session log), MFA
 recovery codes (0090, [Two-factor authentication
-(TOTP)](#two-factor-authentication-totp)). Check `supabase/migrations/`
-directly for the exhaustive list.
+(TOTP)](#two-factor-authentication-totp)), and real-time Discussion
+updates (0091, same session log). Check `supabase/migrations/` directly
+for the exhaustive list.
 
 ---
 
@@ -1117,6 +1118,111 @@ a dedicated section of their own.
   should have access, check this first** before assuming a code/RLS
   issue.
 
+### Four more confirmed gaps closed
+
+Following a Dext/ApprovalMax competitive gap analysis (see the separate
+roadmap artifact — not part of this repo), four items were researched
+and built in one pass:
+
+- **A real cron job now drives invoice ingestion**
+  ([`/api/cron/ingest-process`](src/app/api/cron/ingest-process/route.ts),
+  every 2 minutes in `vercel.json`) — closes the gap described above:
+  `runNextIngestJob` ([`src/lib/ingest-queue.ts`](src/lib/ingest-queue.ts))
+  used to only ever run via the browser polling `/api/ingest/process`.
+  The cron finds orgs with actual `queued`/`processing` jobs and
+  processes **one job per org per tick** — deliberately not a
+  backlog-draining loop, since a single extraction can take 20-60s and
+  `maxDuration` is 60s total; frequent scheduling drains a backlog, a
+  bigger per-tick batch doesn't. Safe with the admin client: ingestion
+  has no `auth.uid()` dependency, only `organizationId`.
+- **Two vendor-matching inconsistencies fixed** — found while scoping a
+  "real Supplier entity" feature (deferred as its own future migration;
+  ~24 files touch normalized-text vendor matching today, too large to
+  fold into this pass). The per-invoice "Possible duplicate" banner
+  compared raw `trim().toLowerCase()` text while the list-pane duplicate
+  grouping a few lines above correctly used `normalizeForMatching` — a
+  punctuation-only vendor-name difference could pin a duplicate pair in
+  the list without ever showing the banner on either invoice. The
+  Document Search Supplier filter had the same gap (raw-string option
+  list and matching, so two spellings of one vendor showed as two
+  chips). Both now go through `normalizeForMatching` consistently.
+- **Reports' project filter/grouping now sees per-line-item project
+  splits** — `runReport`'s project filter and "group by project" used to
+  read only the single `invoices.project_id` column, invisible to a bill
+  split across multiple projects via `invoice_line_items` (migration
+  0019). `invoice-list-report.ts` already solved this correctly for its
+  own "Customers" column; `runReport` just never adopted the same
+  approach. `filterInvoicesForReport` no longer checks `project_id`
+  itself (it doesn't have per-invoice line-item data) — both callers now
+  apply it as an explicit post-filter using a real per-invoice project
+  set (`computeProjectIdsByInvoice`, `src/lib/reports.ts`), and grouping
+  fans out: an invoice touching multiple projects contributes to every
+  matching bucket, but still counts once toward the report's totals.
+- **Real-time Discussion thread** (migration 0091: `alter publication
+  supabase_realtime add table invoice_comments;`) — posting a comment
+  used to only update the tab that posted it (`addComment`'s
+  `revalidatePath`/`revalidateTag` is Next.js server-cache invalidation,
+  not a push to other clients). `invoice_comments`'s existing SELECT RLS
+  policy (`can_see_invoice`, migration 0008) already gates Postgres
+  Changes subscriptions automatically, so no new policy was needed.
+  `BillPanel.tsx` subscribes scoped to the open invoice and appends new
+  comments to local state directly — the posting tab's own comment is
+  skipped in the handler since it's already rendered via the existing
+  server-action path.
+
+### Support chat: a silent-failure bug, then a real performance bug
+
+Reported live, two separate issues in the same feature:
+
+- **A failed send looked identical to a successful one.**
+  `SupportChatWidget.tsx`'s `send()` cleared the input before the POST
+  request even resolved and never checked `res.ok` — if anything failed
+  server-side (auth hiccup, no organization found, a DB error), the box
+  went empty, nothing was ever saved, and nothing told the user it
+  failed. Now waits for confirmation and shows the server's error inline
+  before clearing the draft.
+- **Sends took 3-5 seconds** — `GET /api/support/messages` (polled every
+  4s while the widget is open, plus once right after every send) was
+  calling `admin.auth.admin.listUsers({ perPage: 1000 })` on every
+  request — a full platform-wide user fetch — just to check a
+  message's author against `isPlatformAdmin`. Replaced with per-author
+  `getUserById()` lookups scoped to the handful of people actually in
+  that thread.
+
+**The same `listUsers({ perPage: 1000 })` pattern was then found and
+fixed in three more hot, user-facing paths** once the first instance
+turned up: `addComment`'s @mention notification email (`dashboard-actions.ts`
+— the case actually reported: posting a comment with an @mention took
+3-5 seconds), `notifyNewApprovers`'s "it's your turn" email (fires on
+every approve/reassign/stage-change), the rejection-email lookup, and
+`/workflows`' own page load (resolved every org member's email for the
+approver picker the same wasteful way, on every render). **If you ever
+see `admin.auth.admin.listUsers({ perPage: 1000 })` show up again
+anywhere in this codebase, it's almost certainly wrong** — resolve only
+the specific person/people actually needed via `getUserById()`
+(parallelized with `Promise.all` when there's more than one), not a
+bulk fetch of the entire platform's users.
+
+### Email links pointing to localhost in production
+
+Reported live: clicking a link in an email (a mention, an "it's your
+turn" assignment, a rejection, the daily reminder digest) opened
+`localhost:3210` instead of the real site. Root cause: `NEXT_PUBLIC_APP_URL`
+had the exact same gap as `PLATFORM_ADMIN_EMAILS` above — never actually
+set in Vercel production, only documented in `.env.example`. Every one
+of these email-building call sites had its own copy of
+`process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3210"` — a
+hardcoded localhost fallback with nothing smarter behind it. New shared
+[`getAppUrl()`](src/lib/app-url.ts) consolidates all 7 scattered copies
+into one: prefer `NEXT_PUBLIC_APP_URL`, fall back to Vercel's own
+auto-populated `VERCEL_URL` (correct, if not prettily-branded, for any
+deployment) rather than localhost — this was already the pattern used
+for Stripe's checkout redirect (`dashboard-actions.ts`), just never
+applied anywhere else. Setting `NEXT_PUBLIC_APP_URL` to the real
+production domain is still the fix for pretty, branded links; the
+fallback itself just can no longer point somewhere that can't possibly
+work.
+
 ---
 
 ## Environment variables
@@ -1137,6 +1243,7 @@ Copy `.env.example` → `.env.local` and fill in:
 | `QBO_REDIRECT_URI` | For QBO sync | Must match the app's registered Redirect URI exactly, e.g. `http://localhost:3210/api/qbo/callback` |
 | `RESEND_API_KEY` | Yes (for email ingestion + mentions) | resend.com — required for inbound attachments and for @mention notification emails; without it, inbound ingestion can't fetch attachments and mentions still create the in-app `notifications` row, just no email |
 | `RESEND_FROM_EMAIL` | No (required if `RESEND_API_KEY` is set) | Must be a verified sender/domain in your Resend account |
+| `NEXT_PUBLIC_APP_URL` | Recommended | The site's real public URL (e.g. `https://flow.ufirst.co`), used by [`getAppUrl()`](src/lib/app-url.ts) to build absolute links in every email (mentions, assignments, rejections, the reminder digest) and the Stripe checkout redirect. **Must be set separately in Vercel** — same gotcha as `PLATFORM_ADMIN_EMAILS` below, confirmed live: left unset, every email link pointed at `localhost:3210` in production. Unset now falls back to Vercel's own `VERCEL_URL` (still correct, just an ugly `*.vercel.app` link) rather than localhost. |
 | `PLATFORM_ADMIN_EMAILS` | No | Comma-separated emails allowed to create/manage organizations at `/admin/organizations` (see [Multi-tenant onboarding tool](#multi-tenant-onboarding-tool-adminorganizations)). Leave unset to hide that page entirely. **Must be set separately in each environment** — a value in `.env.local` has no effect on Vercel; set it there too (Project Settings → Environment Variables → Production) and trigger a fresh deploy, or the page/nav-link stays invisible in production even for the right email. |
 | `CRON_SECRET` | Recommended | Any random string you choose; Vercel sends it as `Authorization: Bearer $CRON_SECRET` on cron-triggered requests to `/api/cron/reminders` (see [Deadlines, reminders & escalation](#deadlines-reminders--escalation-migration-0073)). Unset = the route runs unauthenticated. |
 | `STRIPE_SECRET_KEY` | For billing | dashboard.stripe.com → Developers → API keys. Powers `/billing`'s "Pay now" and "Manage billing" (see [Billing & usage](#billing--usage)). No publishable key needed — the app only redirects to Stripe-hosted pages, never loads Stripe.js client-side. |
@@ -2556,11 +2663,6 @@ feature existed (`config.columns` undefined) falls back to
 `DEFAULT_REPORT_COLUMNS` — the exact set that always showed before, so
 nothing already-saved changes appearance.
 
-**Known gap**: the project filter/grouping still reads the invoice-level
-`project_id` only, not the per-line-item projects from migration 0019 — so
-it under-reports invoices whose lines split across multiple projects. Not
-yet rebuilt against line items.
-
 **Invoice list report** ([`src/lib/invoice-list-report.ts`](src/lib/invoice-list-report.ts)):
 modeled on ApprovalMax's "Request reports" — one row per invoice (Name,
 Amount, Supplier, Status, Approved by, Waiting for, Created, Customers),
@@ -2611,36 +2713,22 @@ This is groundwork, not a finished product. In priority-ish order:
 
 - **Real Supplier entity** — supplier defaults, duplicate detection, and
   the Document Search Supplier filter all match on normalized vendor-name
-  text rather than a proper linked entity. Works, but fragile if the same
-  supplier's name comes through spelled differently across invoices.
-- **Reports vs. per-line-item projects** — see the gap noted in
-  [Reports](#reports).
-- **Real-time chat** — @mention notifications exist (migration 0026), but
-  the comment thread itself is still a simple list: no live updates
-  (Supabase Realtime — posting a comment doesn't push to other open tabs,
-  it needs a refresh) and no typing indicators.
+  text rather than a proper linked entity with a stable id. Scoped during
+  research and found to touch ~24 files — too large for a single pass, so
+  it's deferred as its own future migration. Two real consistency bugs
+  that surfaced during that scoping (the duplicate banner and the
+  Document Search filter each skipping the normalization everything else
+  uses) were fixed as a stopgap — see the session log above.
+- **No typing indicators** in the Discussion thread — new comments now
+  push to every open tab in real time (migration 0091 — see [session log
+  — 2026-08-29 to 2026-08-30](#session-log--2026-08-29-to-2026-08-30)),
+  but there's no "someone is typing…" signal.
 - **Visual polish** — functional Tailwind, not a designed product, outside
   the Bill panel's document-style pass.
 - **Auto-sync on approval** — bills reach QBO Ready automatically; the
   final push to QBO is still a manual admin button per bill (no queue /
   scheduled auto-sync yet). This is also a deliberate hard rule, not just a
   gap: nothing reaches QBO until an admin presses the final button.
-- **Ingestion has no true background worker.** Async extraction itself IS
-  built (migration 0055, [session log — 2026-08-24](#session-log--2026-08-24-handoff-notes))
-  — uploads/emails return instantly and a queued job does the real
-  OpenRouter work. But nothing drives that queue except the browser's own
-  poller (`/api/ingest/process`, called while the dashboard/Queue page is
-  open) — there's no Vercel Cron (or similar) picking up queued jobs on a
-  schedule. Confirmed live on 2026-08-30: several jobs sat `queued` for
-  **up to ~19 hours** overnight, simply because nobody had the app open,
-  before finally processing in a burst once someone did. Nothing is lost
-  or duplicated while waiting (the queue itself is durable — see 0066/0070
-  below), but "how fast does an invoice get processed" currently depends
-  on someone having Flow open, not on when it arrived. The app already
-  runs two other real Vercel Cron jobs (`/api/cron/reminders`,
-  `/api/cron/qbo-payment-sync`, both in `vercel.json`) — adding a third
-  that calls `runNextIngestJob` (`src/lib/ingest-queue.ts`) for every org
-  every few minutes is the straightforward fix, not yet built.
 - **MFA account recovery is one layer deep, not three.** Recovery codes
   exist (see [Two-factor authentication (TOTP)](#two-factor-authentication-totp))
   and solve the case that matters most — even a lone admin can get back
