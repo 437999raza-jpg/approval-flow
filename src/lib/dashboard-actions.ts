@@ -224,11 +224,16 @@ async function notifyNewApprovers(
     }`;
     const invoiceUrl = `${getAppUrl()}/dashboard/${params.invoiceId}`;
 
-    const { data: authUsers } = await createAdminClient().auth.admin.listUsers({
-      page: 1,
-      perPage: 1000,
-    });
-    const emailById = new Map((authUsers?.users ?? []).map((u) => [u.id, u.email ?? null]));
+    // Per-target lookups, not a bulk listUsers({ perPage: 1000 }) — this
+    // fires on every approve/reassign/stage-change (a very hot path), and
+    // fetching up to 1000 users platform-wide each time was the same
+    // needless latency already found and fixed for support chat and
+    // @mentions.
+    const admin = createAdminClient();
+    const targetResults = await Promise.all(targets.map((uid) => admin.auth.admin.getUserById(uid)));
+    const emailById = new Map(
+      targets.map((uid, i) => [uid, targetResults[i].data.user?.email ?? null])
+    );
 
     await Promise.all(
       targets.map((uid) => {
@@ -519,11 +524,15 @@ export async function rejectWithReason(invoiceId: string, formData: FormData) {
         type: "rejected" as const,
       });
 
-      const [{ data: actorProfile }, { data: authUsers }] = await Promise.all([
+      // One targeted lookup (the submitter), not a bulk
+      // listUsers({ perPage: 1000 }) — same needless-latency pattern
+      // already found and fixed for @mentions, "it's your turn", and
+      // support chat.
+      const [{ data: actorProfile }, submitterUser] = await Promise.all([
         supabase.from("profiles").select("full_name").eq("id", user.id).single(),
-        createAdminClient().auth.admin.listUsers({ page: 1, perPage: 1000 }),
+        createAdminClient().auth.admin.getUserById(inv.submitted_by),
       ]);
-      const submitterEmail = authUsers?.users.find((u) => u.id === inv.submitted_by)?.email;
+      const submitterEmail = submitterUser.data.user?.email;
       if (submitterEmail) {
         await sendRejectedEmail({
           to: submitterEmail,
@@ -617,9 +626,16 @@ export async function addComment(invoiceId: string, formData: FormData) {
       }))
     );
 
-    const [{ data: actorProfile }, { data: authUsers }] = await Promise.all([
+    // Per-mention lookups, not a bulk listUsers({ perPage: 1000 }) — only
+    // ever need the handful of people actually @mentioned here, and
+    // fetching up to 1000 users platform-wide on every comment-with-a-
+    // mention was real, reported latency (3-5s) before a comment even
+    // finished posting. Same fix already applied to the support chat
+    // endpoint and the Members table's 2FA status for the identical reason.
+    const admin = createAdminClient();
+    const [{ data: actorProfile }, mentionedUserResults] = await Promise.all([
       supabase.from("profiles").select("full_name").eq("id", user.id).single(),
-      createAdminClient().auth.admin.listUsers({ page: 1, perPage: 1000 }),
+      Promise.all(mentionedIds.map((uid) => admin.auth.admin.getUserById(uid))),
     ]);
     const actorName = actorProfile?.full_name ?? "A teammate";
     const invoiceLabel = `${invoice.vendor_name ?? invoice.file_name}${
@@ -627,7 +643,7 @@ export async function addComment(invoiceId: string, formData: FormData) {
     }`;
     const invoiceUrl = `${getAppUrl()}/dashboard/${invoiceId}`;
     const emailById = new Map(
-      (authUsers?.users ?? []).map((u) => [u.id, u.email ?? null])
+      mentionedIds.map((uid, i) => [uid, mentionedUserResults[i].data.user?.email ?? null])
     );
 
     await Promise.all(

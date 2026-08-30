@@ -605,13 +605,16 @@ export default async function WorkflowsPage() {
           .select("id, full_name")
           .in("id", memberIds)
       : { data: [] };
+  // Per-member lookups, not a bulk listUsers({ perPage: 1000 }) — this
+  // page's own org has a bounded member list, so fetching up to 1000
+  // users platform-wide on every page load was pure waste (same pattern
+  // found and fixed on the @mention/assignment/support-chat paths).
   const admin = createAdminClient();
-  const { data: authUsers } = await admin.auth.admin.listUsers({
-    page: 1,
-    perPage: 1000,
-  });
+  const memberUserResults = await Promise.all(
+    memberIds.map((id) => admin.auth.admin.getUserById(id))
+  );
   const emailById = new Map(
-    (authUsers?.users ?? []).map((u) => [u.id, u.email ?? null])
+    memberIds.map((id, i) => [id, memberUserResults[i].data.user?.email ?? null])
   );
   const approverOptions = (profiles ?? [])
     .filter((p) => memberRoleById.get(p.id) !== "auditor")
