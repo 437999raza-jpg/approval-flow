@@ -8,14 +8,14 @@ import type { Database } from "@/lib/supabase/types";
 export async function fetchAllQboSuppliers(
   supabase: SupabaseClient<Database>,
   organizationId: string
-): Promise<{ id: string; name: string }[]> {
-  const all: { id: string; name: string }[] = [];
+): Promise<{ id: string; name: string; qbo_vendor_id: string | null }[]> {
+  const all: { id: string; name: string; qbo_vendor_id: string | null }[] = [];
   const pageSize = 1000;
   let from = 0;
   for (;;) {
     const { data, error } = await supabase
       .from("qbo_suppliers")
-      .select("id, name")
+      .select("id, name, qbo_vendor_id")
       .eq("organization_id", organizationId)
       .eq("active", true)
       .order("name", { ascending: true })

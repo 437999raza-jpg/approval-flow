@@ -228,12 +228,16 @@ export async function createInvoiceFromFile({
   // flags the invoice (qbo_vendor_matched=false) so it's visibly marked
   // and can't sync until a human picks the right supplier.
   let matchedVendorName: string | null = null;
+  let matchedQboVendorId: string | null = null;
   if (extracted?.vendor_name) {
     // Paginated: PostgREST caps responses at 1000 rows, and the mirror has
     // 2,045 — matching against a truncated list would silently keep the
     // OCR name and break the QBO push later.
     const qboSuppliers = await fetchAllQboSuppliers(supabase, organizationId);
     matchedVendorName = matchSupplier(qboSuppliers, extracted.vendor_name);
+    matchedQboVendorId = matchedVendorName
+      ? qboSuppliers.find((s) => s.name === matchedVendorName)?.qbo_vendor_id ?? null
+      : null;
   }
   const vendorName = matchedVendorName ?? extracted?.vendor_name ?? null;
   const qboVendorMatched = matchedVendorName !== null;
@@ -241,8 +245,8 @@ export async function createInvoiceFromFile({
   // Find-or-create the real Supplier row for this vendor name (migration
   // 0092) — the stable identity duplicate detection, supplier rules, and
   // statement matching key off, instead of re-normalizing text at every
-  // read site.
-  const supplier = await resolveSupplier(supabase, organizationId, vendorName);
+  // read site. A confirmed QBO match links the real vendor id too.
+  const supplier = await resolveSupplier(supabase, organizationId, vendorName, matchedQboVendorId);
 
   // Dext/ApprovalMax-style: a saved supplier rule wins over whatever the
   // extraction guessed for the fields it covers — it's a business rule a

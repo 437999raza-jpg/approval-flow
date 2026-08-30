@@ -863,14 +863,23 @@ export async function saveBill(invoiceId: string, formData: FormData) {
   let supplierId: string | null | undefined;
   if (vendorChanged && next.vendor_name) {
     const suppliers = await fetchAllQboSuppliers(supabase, before.organization_id);
-    qboVendorMatched = matchSupplier(suppliers, next.vendor_name) !== null;
+    const matchedName = matchSupplier(suppliers, next.vendor_name);
+    qboVendorMatched = matchedName !== null;
+    const matchedQboVendorId = matchedName
+      ? suppliers.find((s) => s.name === matchedName)?.qbo_vendor_id ?? null
+      : null;
     // Re-resolve supplier_id alongside vendor_name so the two can never
     // disagree — the same guarantee ingestion and re-extraction already
     // give; a manual vendor-name correction here was the one write path
     // that didn't, silently orphaning supplier_id (duplicate detection,
     // supplier-rule matching, and statement reconciliation are all keyed
     // off it) at whatever vendor it pointed to before the edit.
-    const supplier = await resolveSupplier(supabase, before.organization_id, next.vendor_name);
+    const supplier = await resolveSupplier(
+      supabase,
+      before.organization_id,
+      next.vendor_name,
+      matchedQboVendorId
+    );
     supplierId = supplier?.id ?? null;
   } else if (vendorChanged && !next.vendor_name) {
     qboVendorMatched = false;
@@ -3393,6 +3402,15 @@ export async function syncQboSuppliers() {
       // yet; one that already exists (self-configured, or seeded before)
       // is never touched. Non-fatal: the vendor sync above already
       // succeeded, so a hiccup here shouldn't be reported as a failure.
+      // Link every synced vendor to its real QBO id on the Supplier entity.
+      // This list IS the QBO vendor list, so the match is exact by
+      // construction — no name-normalization guesswork like ingestion
+      // needs. Runs on every sync, independent of the tax-rate seeding
+      // below, so orgs without a default tax rate still get linked.
+      const resolved = await Promise.all(
+        suppliers.map((s) => resolveSupplier(supabase, org.id, s.name, s.qboVendorId))
+      );
+
       const { data: orgRow } = await supabase
         .from("organizations")
         .select("default_tax_rate")
@@ -3404,9 +3422,6 @@ export async function syncQboSuppliers() {
         // only now, with no text-matching fallback. A row seeded without it
         // was invisible to ingestion: a brand-new vendor would get no tax
         // rate at all despite this seed appearing to have configured one.
-        const resolved = await Promise.all(
-          suppliers.map((s) => resolveSupplier(supabase, org.id, s.name))
-        );
         const seedRows = suppliers
           .map((s, i) => ({ supplier: resolved[i], name: s.name }))
           .filter((r): r is { supplier: { id: string; name: string }; name: string } => !!r.supplier)

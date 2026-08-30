@@ -8,12 +8,21 @@ import { normalizeForMatching } from "@/lib/matching";
 // text at every call site. Not a separate admin UI: suppliers are
 // created implicitly the same way supplier_defaults rows already are.
 // The first-seen spelling becomes the canonical display name and is
-// never silently renamed later. Expects an admin (service-role) client —
-// suppliers has no end-user insert policy.
+// never silently renamed later. Works under either an admin client or a
+// plain session client — the "suppliers: members can insert" RLS policy
+// (migration 0092) already covers non-auditor org members.
+//
+// qboVendorId links this supplier to its real QuickBooks vendor id when
+// the caller already knows it (a confirmed match, or iterating QBO's own
+// vendor list directly). It only ever fills in a missing link — an
+// existing row's qbo_vendor_id is never overwritten, so a call site with
+// no QBO info (e.g. re-extraction) can't erase a link ingestion already
+// established.
 export async function resolveSupplier(
   supabase: SupabaseClient<Database>,
   organizationId: string,
-  vendorName: string | null | undefined
+  vendorName: string | null | undefined,
+  qboVendorId?: string | null
 ): Promise<{ id: string; name: string } | null> {
   const name = vendorName?.trim();
   if (!name) return null;
@@ -21,15 +30,20 @@ export async function resolveSupplier(
   const normalized = normalizeForMatching(name);
   const { data: existing } = await supabase
     .from("suppliers")
-    .select("id, name")
+    .select("id, name, qbo_vendor_id")
     .eq("organization_id", organizationId)
     .eq("name_normalized", normalized)
     .maybeSingle();
-  if (existing) return existing;
+  if (existing) {
+    if (qboVendorId && !existing.qbo_vendor_id) {
+      await supabase.from("suppliers").update({ qbo_vendor_id: qboVendorId }).eq("id", existing.id);
+    }
+    return { id: existing.id, name: existing.name };
+  }
 
   const { data: created, error } = await supabase
     .from("suppliers")
-    .insert({ organization_id: organizationId, name })
+    .insert({ organization_id: organizationId, name, qbo_vendor_id: qboVendorId ?? null })
     .select("id, name")
     .single();
   if (created) return created;
