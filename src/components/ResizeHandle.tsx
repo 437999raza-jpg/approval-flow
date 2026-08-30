@@ -12,7 +12,7 @@ export function ResizeHandle({ onDrag }: { onDrag: (dx: number) => void }) {
     <div
       role="separator"
       aria-orientation="vertical"
-      className="group relative z-10 w-1.5 flex-none cursor-col-resize touch-none select-none bg-transparent hover:bg-blue-100 active:bg-blue-200"
+      className="group relative z-10 w-1.5 flex-none cursor-col-resize touch-none select-none bg-transparent hover:bg-brand-green/10 active:bg-brand-green/20"
       onPointerDown={(e) => {
         e.preventDefault();
         lastX.current = e.clientX;
@@ -24,7 +24,7 @@ export function ResizeHandle({ onDrag }: { onDrag: (dx: number) => void }) {
         lastX.current = e.clientX;
       }}
     >
-      <span className="pointer-events-none absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-slate-300 transition-colors group-hover:bg-blue-500" />
+      <span className="pointer-events-none absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-slate-300 transition-colors group-hover:bg-brand-green" />
     </div>
   );
 }
