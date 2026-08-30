@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { generateMfaRecoveryCodes } from "@/lib/mfa-recovery";
 
 // Self-service TOTP enrollment via Supabase Auth's own auth.mfa API — no
 // third-party service, works with any authenticator app. Per-user opt-in,
@@ -10,7 +11,7 @@ import { createClient } from "@/lib/supabase/client";
 // already shown in the Members table below and remind someone directly).
 // The actual sign-in-time challenge lives at /login/mfa, enforced by
 // middleware.ts for every authenticated request. Authored by Araza.
-type Step = "idle" | "enrolling" | "verifying";
+type Step = "idle" | "enrolling" | "recovery-codes";
 
 export function SecurityMfaSection({ initialEnabled }: { initialEnabled: boolean }) {
   const router = useRouter();
@@ -22,6 +23,7 @@ export function SecurityMfaSection({ initialEnabled }: { initialEnabled: boolean
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
 
   const startEnroll = async () => {
     setError(null);
@@ -59,7 +61,6 @@ export function SecurityMfaSection({ initialEnabled }: { initialEnabled: boolean
         return;
       }
       setEnabled(true);
-      setStep("idle");
       setCode("");
       setQrCode(null);
       setSecret(null);
@@ -67,9 +68,31 @@ export function SecurityMfaSection({ initialEnabled }: { initialEnabled: boolean
       // own "2FA" status) would otherwise stay stale until some unrelated
       // navigation happened to re-fetch it — this makes it immediate.
       router.refresh();
+      // Recovery codes right after enrollment — see mfa-recovery.ts. Shown
+      // once; the user must explicitly dismiss before returning to idle.
+      const codes = await generateMfaRecoveryCodes();
+      setRecoveryCodes(codes);
+      setStep("recovery-codes");
     } finally {
       setBusy(false);
     }
+  };
+
+  const regenerateRecoveryCodes = async () => {
+    setError(null);
+    setBusy(true);
+    try {
+      const codes = await generateMfaRecoveryCodes();
+      setRecoveryCodes(codes);
+      setStep("recovery-codes");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const dismissRecoveryCodes = () => {
+    setRecoveryCodes(null);
+    setStep("idle");
   };
 
   const cancelEnroll = async () => {
@@ -129,14 +152,24 @@ export function SecurityMfaSection({ initialEnabled }: { initialEnabled: boolean
             </p>
           </div>
           {enabled ? (
-            <button
-              type="button"
-              onClick={turnOff}
-              disabled={busy}
-              className="flex-none rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50"
-            >
-              {busy ? "Turning off…" : "Turn off"}
-            </button>
+            <div className="flex flex-none items-center gap-2">
+              <button
+                type="button"
+                onClick={regenerateRecoveryCodes}
+                disabled={busy}
+                className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+              >
+                {busy ? "Generating…" : "Regenerate recovery codes"}
+              </button>
+              <button
+                type="button"
+                onClick={turnOff}
+                disabled={busy}
+                className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+              >
+                {busy ? "Turning off…" : "Turn off"}
+              </button>
+            </div>
           ) : (
             <button
               type="button"
@@ -192,6 +225,41 @@ export function SecurityMfaSection({ initialEnabled }: { initialEnabled: boolean
               className="text-xs text-slate-500 hover:underline"
             >
               Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {step === "recovery-codes" && recoveryCodes && (
+        <div className="space-y-3">
+          <p className="text-sm font-medium text-amber-800">
+            Save these recovery codes somewhere safe — they won&apos;t be shown again.
+          </p>
+          <p className="text-xs text-slate-500">
+            If you ever lose access to your authenticator app, use one of
+            these to get back in. Each code works once and removes
+            two-factor authentication from your account — you&apos;ll be
+            prompted to set it up again right away.
+          </p>
+          <div className="grid grid-cols-2 gap-1.5 rounded-md border border-slate-200 bg-slate-50 p-3 font-mono text-sm text-slate-700">
+            {recoveryCodes.map((c) => (
+              <span key={c}>{c}</span>
+            ))}
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => navigator.clipboard.writeText(recoveryCodes.join("\n"))}
+              className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+            >
+              Copy all
+            </button>
+            <button
+              type="button"
+              onClick={dismissRecoveryCodes}
+              className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700"
+            >
+              I&apos;ve saved these
             </button>
           </div>
         </div>

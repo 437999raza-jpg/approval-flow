@@ -210,7 +210,7 @@ async function removeMember(membershipId: string) {
 export default async function SettingsPage({
   searchParams,
 }: {
-  searchParams: { error?: string; q?: string; qbo?: string; count?: string; taxdefault?: string; rate?: string };
+  searchParams: { error?: string; q?: string; qbo?: string; count?: string; taxdefault?: string; rate?: string; mfa?: string };
 }) {
   const supabase = createClient();
 
@@ -464,6 +464,14 @@ export default async function SettingsPage({
             <div className="mt-4 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
               {SETTINGS_ERRORS[searchParams.error] ??
                 "That action could not be completed."}
+            </div>
+          )}
+
+          {searchParams.mfa === "reset" && (
+            <div className="mt-4 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+              You used a recovery code to sign in, which turned off
+              two-factor authentication on your account. Set it up again
+              below under Security.
             </div>
           )}
 

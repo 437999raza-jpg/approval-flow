@@ -4,6 +4,7 @@ import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Image from "next/image";
 import { createClient } from "@/lib/supabase/client";
+import { redeemMfaRecoveryCode } from "@/lib/mfa-recovery";
 
 // Sign-in-time second step for anyone with a verified TOTP factor —
 // middleware.ts redirects here whenever a session's AAL is aal1 but the
@@ -30,6 +31,8 @@ function MfaChallengeInner() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [useRecoveryCode, setUseRecoveryCode] = useState(false);
+  const [recoveryCode, setRecoveryCode] = useState("");
 
   useEffect(() => {
     (async () => {
@@ -77,6 +80,23 @@ function MfaChallengeInner() {
     }
   };
 
+  const submitRecoveryCode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setBusy(true);
+    try {
+      const result = await redeemMfaRecoveryCode(recoveryCode);
+      if (!result.ok) {
+        setError(result.error ?? "That recovery code didn't work.");
+        return;
+      }
+      router.push("/settings?mfa=reset");
+      router.refresh();
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const signOutInstead = async () => {
     const supabase = createClient();
     await supabase.auth.signOut();
@@ -95,14 +115,53 @@ function MfaChallengeInner() {
           priority
         />
         <h1 className="mt-6 font-display text-lg font-extrabold text-brand-ink">
-          Enter your authentication code
+          {useRecoveryCode ? "Enter a recovery code" : "Enter your authentication code"}
         </h1>
         <p className="mt-1 text-sm text-brand-muted">
-          Open your authenticator app and enter the current 6-digit code.
+          {useRecoveryCode
+            ? "Enter one of the recovery codes you saved when you set up two-factor authentication. Using one turns two-factor off so you can sign in and set it up again."
+            : "Open your authenticator app and enter the current 6-digit code."}
         </p>
 
         {loading ? (
           <p className="mt-4 text-sm text-brand-muted">Checking…</p>
+        ) : useRecoveryCode ? (
+          <form onSubmit={submitRecoveryCode} className="mt-4 space-y-3">
+            <input
+              type="text"
+              autoFocus
+              autoCapitalize="characters"
+              placeholder="XXXXX-XXXXX"
+              value={recoveryCode}
+              onChange={(e) => setRecoveryCode(e.target.value)}
+              className="w-full rounded-lg border border-brand-line bg-white px-3.5 py-2.5 text-center text-lg tracking-widest text-slate-900 focus:border-brand-green focus:outline-none focus:ring-2 focus:ring-brand-green-light/30"
+            />
+            {error && <p className="text-sm text-rose-600">{error}</p>}
+            <button
+              type="submit"
+              disabled={busy || recoveryCode.trim().length === 0}
+              className="flex w-full items-center justify-center gap-2 rounded-lg bg-brand-green px-4 py-2.5 text-sm font-display font-bold text-white transition-colors hover:bg-brand-green-dark disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {busy ? "Checking…" : "Use this code"}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setUseRecoveryCode(false);
+                setError(null);
+              }}
+              className="w-full text-center text-sm text-brand-muted hover:underline"
+            >
+              Use my authenticator app instead
+            </button>
+            <button
+              type="button"
+              onClick={signOutInstead}
+              className="w-full text-center text-sm text-brand-muted hover:underline"
+            >
+              Sign out instead
+            </button>
+          </form>
         ) : (
           <form onSubmit={verify} className="mt-4 space-y-3">
             <input
@@ -121,6 +180,16 @@ function MfaChallengeInner() {
               className="flex w-full items-center justify-center gap-2 rounded-lg bg-brand-green px-4 py-2.5 text-sm font-display font-bold text-white transition-colors hover:bg-brand-green-dark disabled:cursor-not-allowed disabled:opacity-60"
             >
               {busy ? "Verifying…" : "Verify"}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setUseRecoveryCode(true);
+                setError(null);
+              }}
+              className="w-full text-center text-sm text-brand-muted hover:underline"
+            >
+              Use a recovery code instead
             </button>
             <button
               type="button"
