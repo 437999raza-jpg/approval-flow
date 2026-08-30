@@ -74,7 +74,7 @@ export interface BillData {
   ) => Promise<void>;
   deleteLineItem: (lineItemId: string) => Promise<void>;
   cloneLineItem: (lineItemId: string) => Promise<void>;
-  collapseToOneLine: () => Promise<void>;
+  collapseToOneLine: (lineItemIds: string[]) => Promise<void>;
   reExtract: () => Promise<void>;
   getPageCount: (invoiceId: string) => Promise<number | null>;
   reorderPages: (

@@ -2142,72 +2142,64 @@ export async function cloneLineItem(invoiceId: string, lineItemId: string) {
   revalidatePath("/dashboard", "layout");
 }
 
-// Manual escape hatch for a single invoice that came in fully line-by-line
-// but doesn't need it — merges every existing line item into one, the same
-// shape Simple-mode invoices use (see buildSimpleLineItem/invoices.ts), but
-// applied on demand to an already-detailed invoice rather than driven by
-// org plan. Amount/tax are derived from the CURRENT line items (not a
-// fresh extraction) so the invoice's total doesn't move: the merged line's
-// tax_rate is back-calculated from the existing tax dollar total so
-// re-deriving through computeLineItemTotals reproduces the same numbers a
-// human already reviewed, rather than swapping in a supplier/org rate that
-// might not match what was actually entered.
-export async function collapseInvoiceToOneLine(invoiceId: string) {
+// Manual escape hatch for an invoice that came in fully line-by-line but
+// doesn't need all of it split out — merges the SELECTED line items into
+// one; any line left unchecked is untouched. The first selected line (by
+// line order) wins outright: its category/class/project/tax_rate are used
+// exactly as they are, no blending, no supplier-default override — only
+// its amount is replaced by the sum of every selected line's amount. A
+// null tax_rate on that first line falls back to the org's default rate,
+// same as everywhere else amounts get a rate. Untouched lines keep their
+// own amount/tax, and recomputeInvoiceTotals sums across all of them
+// (merged + untouched) same as any other line-item edit — no separate
+// totals logic needed.
+export async function collapseInvoiceToOneLine(invoiceId: string, lineItemIds: string[]) {
   const supabase = createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
+  if (lineItemIds.length <= 1) return;
+
   const { data: invoice } = await supabase
     .from("invoices")
-    .select("organization_id, vendor_name")
+    .select("organization_id")
     .eq("id", invoiceId)
     .single();
   if (!invoice) return;
 
   const { data: items } = await supabase
     .from("invoice_line_items")
-    .select("amount, tax_rate, category, class, project_id")
+    .select("id, amount, tax_rate, category, class, project_id, line_order")
     .eq("invoice_id", invoiceId)
+    .in("id", lineItemIds)
     .order("line_order", { ascending: true });
   if (!items || items.length <= 1) return;
 
-  const [supplierDefaults, { data: orgDefault }] = await Promise.all([
-    getSupplierDefaults(supabase, invoice.organization_id, invoice.vendor_name),
-    supabase
-      .from("organizations")
-      .select("default_tax_rate, default_tax_code_id")
-      .eq("id", invoice.organization_id)
-      .single(),
-  ]);
+  const { data: orgDefault } = await supabase
+    .from("organizations")
+    .select("default_tax_rate, default_tax_code_id")
+    .eq("id", invoice.organization_id)
+    .single();
   const orgDefaultTaxRate = orgDefault?.default_tax_rate ?? null;
   const orgDefaultTaxCodeId = orgDefault?.default_tax_code_id ?? null;
 
-  const totals = computeLineItemTotals(items);
-  const effectiveRate =
-    supplierDefaults?.tax_rate ??
-    orgDefaultTaxRate ??
-    (totals.subtotal !== 0 ? (totals.tax / totals.subtotal) * 100 : null);
+  const first = items[0];
+  const mergedAmount = items.reduce((sum, i) => sum + (i.amount ?? 0), 0);
+  const appliedRate = first.tax_rate ?? orgDefaultTaxRate;
 
-  // A category/class/project already agreed on across every line is worth
-  // keeping — only fall back to blank when the lines actually disagreed
-  // (nothing to sensibly pick between) or never had one at all. A saved
-  // supplier rule still wins over whatever was already on the lines.
-  const sameAcrossLines = <T,>(pick: (i: NonNullable<typeof items>[number]) => T) =>
-    items.every((i) => pick(i) === pick(items[0])) ? pick(items[0]) : null;
-
-  await supabase.from("invoice_line_items").delete().eq("invoice_id", invoiceId);
+  await supabase.from("invoice_line_items").delete().in("id", items.map((i) => i.id));
   await supabase.from("invoice_line_items").insert({
     invoice_id: invoiceId,
     description: null,
-    amount: totals.subtotal,
-    tax_rate: effectiveRate,
-    qbo_tax_code_id: taxCodeIdFor(effectiveRate, orgDefaultTaxRate, orgDefaultTaxCodeId),
-    category: supplierDefaults?.category ?? sameAcrossLines((i) => i.category),
-    class: supplierDefaults?.class ?? sameAcrossLines((i) => i.class),
-    project_id: sameAcrossLines((i) => i.project_id),
-    line_order: 1,
+    amount: mergedAmount,
+    tax_rate: appliedRate,
+    qbo_tax_code_id: taxCodeIdFor(appliedRate, orgDefaultTaxRate, orgDefaultTaxCodeId),
+    category: first.category,
+    class: first.class,
+    project_id: first.project_id,
+    line_order: first.line_order,
   });
 
   await recomputeInvoiceTotals(supabase, invoiceId);

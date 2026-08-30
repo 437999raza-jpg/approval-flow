@@ -202,7 +202,7 @@ export function BillPanel({
   ) => Promise<void>;
   deleteLineItem: (lineItemId: string) => Promise<void>;
   cloneLineItem: (lineItemId: string) => Promise<void>;
-  collapseToOneLine: () => Promise<void>;
+  collapseToOneLine: (lineItemIds: string[]) => Promise<void>;
   reExtract: () => Promise<void>;
   getPageCount: (invoiceId: string) => Promise<number | null>;
   reorderPages: (
@@ -488,23 +488,26 @@ export function BillPanel({
     }
   };
 
-  // Merges every line item on the invoice into one — a manual escape hatch
-  // for an invoice that extracted line-by-line but doesn't need it, rather
-  // than switching the whole org's plan/mode. Not scoped to the current
-  // selection — the checkboxes above are what makes this bar visible, but
-  // this button always collapses the WHOLE invoice.
+  // Merges the SELECTED line items into one — a manual escape hatch for an
+  // invoice that extracted line-by-line but doesn't need all of it split
+  // out, rather than switching the whole org's plan/mode. Any line left
+  // unchecked is untouched; the first selected line's category/class/
+  // project/tax_rate win outright, only the amount is the sum of the
+  // selected lines.
   const [collapsing, setCollapsing] = useState(false);
   const handleCollapseToOneLine = async () => {
+    const ids = [...selectedLineIds];
+    if (ids.length <= 1) return;
     if (
       !window.confirm(
-        `Merge all ${lineItems.length} line items into one? This can't be undone.`
+        `Merge ${ids.length} selected line items into one? This can't be undone.`
       )
     ) {
       return;
     }
     setCollapsing(true);
     try {
-      await collapseToOneLine();
+      await collapseToOneLine(ids);
       setSelectedLineIds(new Set());
       resetBulkDrafts();
     } finally {
@@ -1133,12 +1136,12 @@ export function BillPanel({
                     {bulkSetting ? "Saving…" : "Save"}
                   </button>
                 )}
-                {lineItems.length > 1 && (
+                {selectedLineIds.size > 1 && (
                   <button
                     type="button"
                     disabled={collapsing}
                     onClick={handleCollapseToOneLine}
-                    title="Merge every line item on this invoice into one"
+                    title="Merge the selected line items into one"
                     className="font-medium text-blue-700 hover:underline disabled:opacity-50"
                   >
                     {collapsing ? "Converting…" : "Convert to one line"}
