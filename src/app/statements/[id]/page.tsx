@@ -5,6 +5,7 @@ import { getCurrentOrg } from "@/lib/current-org";
 import { sendStatementEmail, updateStatementDetails, updateStatementSupplier, reconcileStatementAgain } from "@/lib/dashboard-actions";
 import { SubmitButton } from "@/components/SubmitButton";
 import { fetchAllQboSuppliers } from "@/lib/qbo-all";
+import { resolveSupplier } from "@/lib/suppliers";
 import { StatementEmailDraft } from "@/components/StatementEmailDraft";
 import { StatementDetailsForm } from "@/components/StatementDetailsForm";
 import { StatementSupplierField } from "@/components/StatementSupplierField";
@@ -62,14 +63,21 @@ export default async function StatementDetailPage({
     : { data: [] };
   const invoiceById = new Map((matchedInvoices ?? []).map((i) => [i.id, i]));
 
+  // Matched by supplier_id, not a raw ILIKE on vendor_name text — the
+  // latter missed a punctuation-only difference between the statement's
+  // supplier name and an invoice's OCR'd vendor name.
+  const supplier = await resolveSupplier(supabase, org.id, statement.supplier_name);
+
   // Flow's own outstanding balance for this vendor: every invoice not yet
   // marked paid — same "still owed" semantics runQboPaymentSync (src/lib/
   // qbo.ts) uses to decide which bills still need checking.
-  const { data: vendorInvoices } = await supabase
-    .from("invoices")
-    .select("amount, qbo_payment_status")
-    .eq("organization_id", org.id)
-    .ilike("vendor_name", statement.supplier_name);
+  const { data: vendorInvoices } = supplier
+    ? await supabase
+        .from("invoices")
+        .select("amount, qbo_payment_status")
+        .eq("organization_id", org.id)
+        .eq("supplier_id", supplier.id)
+    : { data: [] };
   // .neq() on a nullable column drops NULL rows entirely (NULL != 'paid'
   // is NULL, not true, in SQL) — filtering in JS instead so an invoice
   // that hasn't been checked against QBO yet still counts as outstanding,
@@ -86,14 +94,16 @@ export default async function StatementDetailPage({
   // recent invoice from them (there's no dedicated per-supplier email
   // field — see the same reasoning in BillPanel.tsx). Empty if none found;
   // the admin can always type it in.
-  const { data: recentInvoice } = await supabase
-    .from("invoices")
-    .select("extraction")
-    .eq("organization_id", org.id)
-    .ilike("vendor_name", statement.supplier_name)
-    .not("extraction", "is", null)
-    .order("created_at", { ascending: false })
-    .limit(20);
+  const { data: recentInvoice } = supplier
+    ? await supabase
+        .from("invoices")
+        .select("extraction")
+        .eq("organization_id", org.id)
+        .eq("supplier_id", supplier.id)
+        .not("extraction", "is", null)
+        .order("created_at", { ascending: false })
+        .limit(20)
+    : { data: [] };
   const defaultTo =
     (recentInvoice ?? [])
       .map((i) => (i.extraction as Record<string, unknown> | null)?.vendor_email)

@@ -283,15 +283,16 @@ export default async function DashboardPage({
   const workflowIds = (workflows ?? []).map((w) => w.id);
   const invoiceIds = (invoices ?? []).map((i) => i.id);
 
-  // Duplicate detection, org-wide: same (normalized vendor name, invoice
-  // number), excluding cancelled/rejected invoices from the pool. Reused
-  // for both the per-invoice "Possible duplicate" banner below and for
-  // pinning/badging duplicate pairs in the list pane. Vendor/invoice
-  // numbers are normalized (lowercase, punctuation collapsed — e.g.
-  // "ONYX•FIRE…" and "ONYX FIRE…" match), see src/lib/matching.ts.
+  // Duplicate detection, org-wide: same (supplier, invoice number),
+  // excluding cancelled/rejected invoices from the pool. Reused for both
+  // the per-invoice "Possible duplicate" banner below and for pinning/
+  // badging duplicate pairs in the list pane. Keyed by supplier_id (the
+  // real Supplier entity, migration 0092) rather than re-normalizing
+  // vendor_name text — invoice_number still normalizes (lowercase,
+  // punctuation collapsed), see src/lib/matching.ts.
   const duplicateGroupKey = (i: Invoice): string | null =>
-    i.invoice_number && i.vendor_name
-      ? `${normalizeForMatching(i.vendor_name)}::${normalizeForMatching(i.invoice_number)}`
+    i.invoice_number && i.supplier_id
+      ? `${i.supplier_id}::${normalizeForMatching(i.invoice_number)}`
       : null;
   const duplicateGroups = new Map<string, Invoice[]>();
   for (const inv of invoices ?? []) {
@@ -370,16 +371,17 @@ export default async function DashboardPage({
   // vs "Onyx-Fire Protection Services") showed as two separate filter
   // chips instead of one. id is the normalized key (what gets matched
   // against and persisted in the URL); label keeps the first-seen raw
-  // spelling so the chip still reads naturally.
-  const vendorLabelByNormalized = new Map<string, string>();
+  // spelling so the chip still reads naturally. Deduped by supplier_id
+  // (the real Supplier entity, migration 0092) rather than re-normalizing
+  // vendor_name text.
+  const vendorLabelBySupplierId = new Map<string, string>();
   for (const i of invoices ?? []) {
-    if (!i.vendor_name) continue;
-    const key = normalizeForMatching(i.vendor_name);
-    if (!vendorLabelByNormalized.has(key)) {
-      vendorLabelByNormalized.set(key, i.vendor_name);
+    if (!i.supplier_id || !i.vendor_name) continue;
+    if (!vendorLabelBySupplierId.has(i.supplier_id)) {
+      vendorLabelBySupplierId.set(i.supplier_id, i.vendor_name);
     }
   }
-  const vendorOptions: MultiSelectOption[] = [...vendorLabelByNormalized.entries()]
+  const vendorOptions: MultiSelectOption[] = [...vendorLabelBySupplierId.entries()]
     .sort((a, b) => a[1].localeCompare(b[1]))
     .map(([id, label]) => ({ id, label }));
 
@@ -685,9 +687,7 @@ export default async function DashboardPage({
   }
   if (advanced.supplier.length > 0) {
     filtered = filtered.filter(
-      (i) =>
-        i.vendor_name !== null &&
-        advanced.supplier.includes(normalizeForMatching(i.vendor_name))
+      (i) => i.supplier_id !== null && advanced.supplier.includes(i.supplier_id)
     );
   }
   if (advanced.customer.length > 0) {

@@ -12,8 +12,8 @@ import {
 } from "@/lib/extract-invoice";
 import { selectWorkflowForInvoice } from "@/lib/workflow-routing";
 import { computeLineItemTotals } from "@/lib/invoice-totals";
-import { normalizeForMatching } from "@/lib/matching";
 import { holdbackCategoryFor, getSupplierDefaults, taxCodeIdFor, buildSimpleLineItem } from "@/lib/invoices";
+import { resolveSupplier } from "@/lib/suppliers";
 import {
   effectiveApproversForStep,
   stepDecisionState,
@@ -916,6 +916,8 @@ export async function saveSupplierDefaults(
   const org = await getCurrentOrg(supabase);
   if (!org) return;
 
+  const supplier = await resolveSupplier(supabase, org.id, vendorName);
+
   const text = (key: string) => String(formData.get(key) ?? "").trim() || null;
   const num = (key: string) => {
     const raw = String(formData.get(key) ?? "").trim();
@@ -944,6 +946,7 @@ export async function saveSupplierDefaults(
   // supplier can work on many jobs), never saved as a supplier rule.
   const rule: Database["public"]["Tables"]["supplier_defaults"]["Update"] = {
     vendor_name: vendorName,
+    supplier_id: supplier?.id ?? null,
     updated_at: new Date().toISOString(),
   };
   if (values.category) rule.category = values.category;
@@ -962,17 +965,14 @@ export async function saveSupplierDefaults(
     { onConflict: "organization_id,vendor_name_normalized" }
   );
 
-  if (formData.get("apply_to_inbox") === "on") {
-    const normalized = normalizeForMatching(vendorName);
+  if (formData.get("apply_to_inbox") === "on" && supplier) {
     const { data: candidates } = await supabase
       .from("invoices")
-      .select("id, bill_date, vendor_name")
+      .select("id, bill_date, supplier_id")
       .eq("organization_id", org.id)
       .eq("status", "on_review");
 
-    const matches = (candidates ?? []).filter(
-      (i) => normalizeForMatching(i.vendor_name) === normalized
-    );
+    const matches = (candidates ?? []).filter((i) => i.supplier_id === supplier.id);
 
     for (const inv of matches) {
       const invoiceUpdate: Database["public"]["Tables"]["invoices"]["Update"] = {};
@@ -2283,10 +2283,17 @@ async function reExtractInvoiceCore(
   const extracted = await extractInvoiceFields(file, undefined, invoice.organization_id);
   if (!extracted) return false;
 
+  // Resolved from the FRESH extraction (not the invoice's pre-re-extract
+  // vendor_name) so vendor_name and supplier_id land on the row in the
+  // same update and can never disagree — mapExtractionToInvoice sets
+  // vendor_name from this same extracted value.
+  const supplier = await resolveSupplier(supabase, invoice.organization_id, extracted.vendor_name);
+
   await supabase
     .from("invoices")
     .update({
       ...mapExtractionToInvoice(extracted),
+      supplier_id: supplier?.id ?? null,
       updated_at: new Date().toISOString(),
     })
     .eq("id", invoiceId);
@@ -2314,14 +2321,16 @@ async function reExtractInvoiceCore(
     .from("invoice_line_items")
     .delete()
     .eq("invoice_id", invoiceId);
-  const [supplierDefaults, { data: orgDefault }] = await Promise.all([
-    getSupplierDefaults(supabase, invoice.organization_id, invoice.vendor_name),
-    supabase
-      .from("organizations")
-      .select("default_tax_rate, default_tax_code_id, plan, trial_ends_at")
-      .eq("id", invoice.organization_id)
-      .single(),
-  ]);
+  const { data: orgDefault } = await supabase
+    .from("organizations")
+    .select("default_tax_rate, default_tax_code_id, plan, trial_ends_at")
+    .eq("id", invoice.organization_id)
+    .single();
+  const supplierDefaults = await getSupplierDefaults(
+    supabase,
+    invoice.organization_id,
+    supplier?.id ?? null
+  );
   const orgDefaultTaxRate = orgDefault?.default_tax_rate ?? null;
   const orgDefaultTaxCodeId = orgDefault?.default_tax_code_id ?? null;
   if (extractionModeForOrg(orgDefault?.plan, orgDefault?.trial_ends_at) === "simple") {
@@ -4022,11 +4031,18 @@ async function matchInvoicesForVendor(
   organizationId: string,
   supplierName: string
 ): Promise<Map<string, string>> {
+  // Matched by supplier_id now, not a raw ILIKE on vendor_name text (which
+  // was already inconsistent with the normalized matching used everywhere
+  // else — a punctuation-only difference between the statement's supplier
+  // name and the invoice's OCR'd vendor name would miss entirely).
+  const supplier = await resolveSupplier(supabase, organizationId, supplierName);
+  if (!supplier) return new Map();
+
   const { data: candidateInvoices } = await supabase
     .from("invoices")
     .select("id, invoice_number")
     .eq("organization_id", organizationId)
-    .ilike("vendor_name", supplierName);
+    .eq("supplier_id", supplier.id);
 
   const byInvoiceNumber = new Map<string, string>();
   for (const inv of candidateInvoices ?? []) {

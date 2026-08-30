@@ -250,6 +250,7 @@ export interface Database {
           qbo_paid_at: string | null;
           qbo_vendor_matched: boolean;
           totals_note: string | null;
+          supplier_id: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -596,6 +597,7 @@ export interface Database {
           tax_rate: number | null;
           payment_terms_days: number | null;
           currency: string | null;
+          supplier_id: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -873,6 +875,22 @@ export interface Database {
           code_hash: string;
         };
         Update: Partial<Database["public"]["Tables"]["mfa_recovery_codes"]["Row"]>;
+        Relationships: [];
+      };
+      suppliers: {
+        Row: {
+          id: string;
+          organization_id: string;
+          name: string;
+          name_normalized: string;
+          qbo_vendor_id: string | null;
+          created_at: string;
+        };
+        Insert: Partial<Database["public"]["Tables"]["suppliers"]["Row"]> & {
+          organization_id: string;
+          name: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["suppliers"]["Row"]>;
         Relationships: [];
       };
     };

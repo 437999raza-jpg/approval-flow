@@ -2,11 +2,12 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database, InvoiceSource } from "@/lib/supabase/types";
 import { extractInvoiceFields, type ExtractedInvoiceData } from "@/lib/extract-invoice";
 import { selectWorkflowForInvoice } from "@/lib/workflow-routing";
-import { normalizeForMatching, matchProjectFromPoNumber } from "@/lib/matching";
+import { matchProjectFromPoNumber } from "@/lib/matching";
 import { matchSupplier } from "@/lib/qbo";
 import { fetchAllQboSuppliers } from "@/lib/qbo-all";
 import { computeLineItemTotals } from "@/lib/invoice-totals";
 import { extractionModeForOrg } from "@/lib/plans";
+import { resolveSupplier } from "@/lib/suppliers";
 
 const INVOICE_BUCKET = "invoices";
 const MAX_FILE_BYTES = 20 * 1024 * 1024; // 20MB
@@ -59,20 +60,21 @@ export interface SupplierDefaults {
   currency: string | null;
 }
 
-// Dext/ApprovalMax-style supplier rules, matched by normalized (trim+lower)
-// vendor name — there's no first-class Supplier entity yet, so this is a
-// pragmatic v1. Configured via the "Supplier rules" modal on the Bill panel.
+// Dext/ApprovalMax-style supplier rules, keyed by the real Supplier
+// entity (migration 0092, resolveSupplier() in src/lib/suppliers.ts) —
+// resolve the supplier first, then look up its rule by id, rather than
+// re-normalizing vendor-name text at every call site.
 export async function getSupplierDefaults(
   supabase: SupabaseClient<Database>,
   organizationId: string,
-  vendorName: string | null
+  supplierId: string | null
 ): Promise<SupplierDefaults | null> {
-  if (!vendorName?.trim()) return null;
+  if (!supplierId) return null;
   const { data } = await supabase
     .from("supplier_defaults")
     .select("category, class, project_id, tax_rate, payment_terms_days, currency")
     .eq("organization_id", organizationId)
-    .eq("vendor_name_normalized", normalizeForMatching(vendorName))
+    .eq("supplier_id", supplierId)
     .maybeSingle();
   return data ?? null;
 }
@@ -236,13 +238,19 @@ export async function createInvoiceFromFile({
   const vendorName = matchedVendorName ?? extracted?.vendor_name ?? null;
   const qboVendorMatched = matchedVendorName !== null;
 
+  // Find-or-create the real Supplier row for this vendor name (migration
+  // 0092) — the stable identity duplicate detection, supplier rules, and
+  // statement matching key off, instead of re-normalizing text at every
+  // read site.
+  const supplier = await resolveSupplier(supabase, organizationId, vendorName);
+
   // Dext/ApprovalMax-style: a saved supplier rule wins over whatever the
   // extraction guessed for the fields it covers — it's a business rule a
   // human configured on purpose, not a best-effort read of the document.
   const supplierDefaults = await getSupplierDefaults(
     supabase,
     organizationId,
-    vendorName
+    supplier?.id ?? null
   );
 
   // Org-wide default tax (Settings → Data from QuickBooks). Stored as a
@@ -415,6 +423,7 @@ export async function createInvoiceFromFile({
       file_path: filePath,
       file_name: file.name,
       vendor_name: vendorName,
+      supplier_id: supplier?.id ?? null,
       qbo_vendor_matched: qboVendorMatched,
       totals_note: totalsNote,
       invoice_number: extracted?.invoice_number ?? null,
