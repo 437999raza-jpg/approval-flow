@@ -26,6 +26,7 @@ export function SupportChatWidget() {
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const fetchMessages = async () => {
@@ -55,14 +56,27 @@ export function SupportChatWidget() {
     const body = text.trim();
     if (!body || sending) return;
     setSending(true);
-    setText("");
+    setSendError(null);
     try {
-      await fetch("/api/support/messages", {
+      const res = await fetch("/api/support/messages", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ body }),
       });
+      if (!res.ok) {
+        // Restore the draft rather than silently losing it — previously
+        // the input cleared unconditionally before the request even
+        // resolved, so a failed send (auth hiccup, no organization found,
+        // a DB error) looked identical to a successful one: the box went
+        // empty and nothing ever appeared, with no record and no error.
+        const json = await res.json().catch(() => null);
+        setSendError(json?.error ?? "Could not send. Try again.");
+        return;
+      }
+      setText("");
       await fetchMessages();
+    } catch {
+      setSendError("Could not send. Check your connection and try again.");
     } finally {
       setSending(false);
     }
@@ -140,6 +154,11 @@ export function SupportChatWidget() {
             )}
           </div>
 
+          {sendError && (
+            <div className="flex-none border-t border-rose-100 bg-rose-50 px-3 py-1.5 text-xs text-rose-700">
+              {sendError}
+            </div>
+          )}
           <div className="flex flex-none items-end gap-2 border-t border-brand-line bg-white p-3">
             <textarea
               value={text}
