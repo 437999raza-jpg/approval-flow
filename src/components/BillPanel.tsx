@@ -145,6 +145,7 @@ export function BillPanel({
   saveLineItem,
   deleteLineItem,
   cloneLineItem,
+  collapseToOneLine,
   reExtract,
   getPageCount,
   reorderPages,
@@ -201,6 +202,7 @@ export function BillPanel({
   ) => Promise<void>;
   deleteLineItem: (lineItemId: string) => Promise<void>;
   cloneLineItem: (lineItemId: string) => Promise<void>;
+  collapseToOneLine: () => Promise<void>;
   reExtract: () => Promise<void>;
   getPageCount: (invoiceId: string) => Promise<number | null>;
   reorderPages: (
@@ -483,6 +485,30 @@ export function BillPanel({
       resetBulkDrafts();
     } finally {
       setBulkSetting(false);
+    }
+  };
+
+  // Merges every line item on the invoice into one — a manual escape hatch
+  // for an invoice that extracted line-by-line but doesn't need it, rather
+  // than switching the whole org's plan/mode. Not scoped to the current
+  // selection — the checkboxes above are what makes this bar visible, but
+  // this button always collapses the WHOLE invoice.
+  const [collapsing, setCollapsing] = useState(false);
+  const handleCollapseToOneLine = async () => {
+    if (
+      !window.confirm(
+        `Merge all ${lineItems.length} line items into one? This can't be undone.`
+      )
+    ) {
+      return;
+    }
+    setCollapsing(true);
+    try {
+      await collapseToOneLine();
+      setSelectedLineIds(new Set());
+      resetBulkDrafts();
+    } finally {
+      setCollapsing(false);
     }
   };
 
@@ -1105,6 +1131,17 @@ export function BillPanel({
                     className="rounded-md bg-blue-600 px-2.5 py-1 font-medium text-white hover:bg-blue-700 disabled:opacity-50"
                   >
                     {bulkSetting ? "Saving…" : "Save"}
+                  </button>
+                )}
+                {lineItems.length > 1 && (
+                  <button
+                    type="button"
+                    disabled={collapsing}
+                    onClick={handleCollapseToOneLine}
+                    title="Merge every line item on this invoice into one"
+                    className="font-medium text-blue-700 hover:underline disabled:opacity-50"
+                  >
+                    {collapsing ? "Converting…" : "Convert to one line"}
                   </button>
                 )}
                 <button

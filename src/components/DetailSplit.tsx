@@ -74,6 +74,7 @@ export interface BillData {
   ) => Promise<void>;
   deleteLineItem: (lineItemId: string) => Promise<void>;
   cloneLineItem: (lineItemId: string) => Promise<void>;
+  collapseToOneLine: () => Promise<void>;
   reExtract: () => Promise<void>;
   getPageCount: (invoiceId: string) => Promise<number | null>;
   reorderPages: (
@@ -424,6 +425,7 @@ export function DetailSplit({
             saveLineItem={bill.saveLineItem}
             deleteLineItem={bill.deleteLineItem}
             cloneLineItem={bill.cloneLineItem}
+            collapseToOneLine={bill.collapseToOneLine}
             reExtract={bill.reExtract}
             getPageCount={bill.getPageCount}
             reorderPages={bill.reorderPages}

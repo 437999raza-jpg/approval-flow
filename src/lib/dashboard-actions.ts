@@ -2142,6 +2142,88 @@ export async function cloneLineItem(invoiceId: string, lineItemId: string) {
   revalidatePath("/dashboard", "layout");
 }
 
+// Manual escape hatch for a single invoice that came in fully line-by-line
+// but doesn't need it — merges every existing line item into one, the same
+// shape Simple-mode invoices use (see buildSimpleLineItem/invoices.ts), but
+// applied on demand to an already-detailed invoice rather than driven by
+// org plan. Amount/tax are derived from the CURRENT line items (not a
+// fresh extraction) so the invoice's total doesn't move: the merged line's
+// tax_rate is back-calculated from the existing tax dollar total so
+// re-deriving through computeLineItemTotals reproduces the same numbers a
+// human already reviewed, rather than swapping in a supplier/org rate that
+// might not match what was actually entered.
+export async function collapseInvoiceToOneLine(invoiceId: string) {
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
+  const { data: invoice } = await supabase
+    .from("invoices")
+    .select("organization_id, vendor_name")
+    .eq("id", invoiceId)
+    .single();
+  if (!invoice) return;
+
+  const { data: items } = await supabase
+    .from("invoice_line_items")
+    .select("amount, tax_rate, category, class, project_id")
+    .eq("invoice_id", invoiceId)
+    .order("line_order", { ascending: true });
+  if (!items || items.length <= 1) return;
+
+  const [supplierDefaults, { data: orgDefault }] = await Promise.all([
+    getSupplierDefaults(supabase, invoice.organization_id, invoice.vendor_name),
+    supabase
+      .from("organizations")
+      .select("default_tax_rate, default_tax_code_id")
+      .eq("id", invoice.organization_id)
+      .single(),
+  ]);
+  const orgDefaultTaxRate = orgDefault?.default_tax_rate ?? null;
+  const orgDefaultTaxCodeId = orgDefault?.default_tax_code_id ?? null;
+
+  const totals = computeLineItemTotals(items);
+  const effectiveRate =
+    supplierDefaults?.tax_rate ??
+    orgDefaultTaxRate ??
+    (totals.subtotal !== 0 ? (totals.tax / totals.subtotal) * 100 : null);
+
+  // A category/class/project already agreed on across every line is worth
+  // keeping — only fall back to blank when the lines actually disagreed
+  // (nothing to sensibly pick between) or never had one at all. A saved
+  // supplier rule still wins over whatever was already on the lines.
+  const sameAcrossLines = <T,>(pick: (i: NonNullable<typeof items>[number]) => T) =>
+    items.every((i) => pick(i) === pick(items[0])) ? pick(items[0]) : null;
+
+  await supabase.from("invoice_line_items").delete().eq("invoice_id", invoiceId);
+  await supabase.from("invoice_line_items").insert({
+    invoice_id: invoiceId,
+    description: null,
+    amount: totals.subtotal,
+    tax_rate: effectiveRate,
+    qbo_tax_code_id: taxCodeIdFor(effectiveRate, orgDefaultTaxRate, orgDefaultTaxCodeId),
+    category: supplierDefaults?.category ?? sameAcrossLines((i) => i.category),
+    class: supplierDefaults?.class ?? sameAcrossLines((i) => i.class),
+    project_id: sameAcrossLines((i) => i.project_id),
+    line_order: 1,
+  });
+
+  await recomputeInvoiceTotals(supabase, invoiceId);
+
+  await supabase.from("audit_log").insert({
+    organization_id: invoice.organization_id,
+    invoice_id: invoiceId,
+    actor_id: user.id,
+    action: "invoice.collapsed_to_one_line",
+    metadata: { previous_line_count: items.length },
+  });
+
+  revalidateTag(INVOICES_TAG);
+  revalidatePath("/dashboard", "layout");
+}
+
 // Shared core of re-extraction: downloads the invoice's primary document,
 // re-runs extraction, replaces the mapped fields + line items. Used by the
 // Re-extract button and by page reordering (which re-extracts after the
