@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { computeOrgPending } from "@/lib/reminders";
 import { sendDigestEmail, sendEscalationEmail } from "@/lib/notify";
+import { getAppUrl } from "@/lib/app-url";
 
 // Reads request.headers directly (not next/headers' headers()) and touches
 // no cookies, so Next has no signal to treat this as dynamic on its own —
@@ -26,7 +27,7 @@ export async function GET(request: NextRequest) {
   }
 
   const admin = createAdminClient();
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3210";
+  const appUrl = getAppUrl();
 
   const { data: orgs } = await admin.from("organizations").select("id");
   const { data: authUsers } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 });

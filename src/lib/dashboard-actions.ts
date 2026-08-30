@@ -27,6 +27,7 @@ import { buildMergedInvoicePdf } from "@/lib/invoice-export";
 import { qboTag, INVOICES_TAG } from "@/lib/org-cache";
 import { PLANS, isPlanId, hasStatementReconciliation, isOrgLocked, extractionModeForOrg } from "@/lib/plans";
 import { extractStatementLines } from "@/lib/extract-statement";
+import { getAppUrl } from "@/lib/app-url";
 
 // Server actions for the dashboard (moved out of the page component so
 // the page stays render-only). Authored by Araza.
@@ -221,7 +222,7 @@ async function notifyNewApprovers(
     const invoiceLabel = `${invoice.vendor_name ?? invoice.file_name}${
       invoice.invoice_number ? ` #${invoice.invoice_number}` : ""
     }`;
-    const invoiceUrl = `${process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3210"}/dashboard/${params.invoiceId}`;
+    const invoiceUrl = `${getAppUrl()}/dashboard/${params.invoiceId}`;
 
     const { data: authUsers } = await createAdminClient().auth.admin.listUsers({
       page: 1,
@@ -531,7 +532,7 @@ export async function rejectWithReason(invoiceId: string, formData: FormData) {
           }`,
           actorName: actorProfile?.full_name ?? "A teammate",
           reason,
-          invoiceUrl: `${process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3210"}/dashboard/${invoiceId}`,
+          invoiceUrl: `${getAppUrl()}/dashboard/${invoiceId}`,
         });
       }
     }
@@ -624,7 +625,7 @@ export async function addComment(invoiceId: string, formData: FormData) {
     const invoiceLabel = `${invoice.vendor_name ?? invoice.file_name}${
       invoice.invoice_number ? ` #${invoice.invoice_number}` : ""
     }`;
-    const invoiceUrl = `${process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3210"}/dashboard/${invoiceId}`;
+    const invoiceUrl = `${getAppUrl()}/dashboard/${invoiceId}`;
     const emailById = new Map(
       (authUsers?.users ?? []).map((u) => [u.id, u.email ?? null])
     );
@@ -2726,9 +2727,7 @@ export async function createUsageCheckout(): Promise<{ ok: boolean; url?: string
   const overageCents = Math.round(overageDocs * plan.overageRatePerDoc * 100);
   const planCents = Math.round(plan.priceUsd * 100);
 
-  const origin =
-    process.env.NEXT_PUBLIC_APP_URL ??
-    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3210");
+  const origin = getAppUrl();
 
   try {
     const bodyParams: Record<string, string> = {
@@ -2801,9 +2800,7 @@ export async function createBillingPortalSession(): Promise<{ ok: boolean; url?:
   const customer = await ensureStripeCustomer(supabase, secret, org);
   if (!customer.ok) return { ok: false, error: customer.error };
 
-  const origin =
-    process.env.NEXT_PUBLIC_APP_URL ??
-    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3210");
+  const origin = getAppUrl();
 
   try {
     const res = await fetch("https://api.stripe.com/v1/billing_portal/sessions", {
