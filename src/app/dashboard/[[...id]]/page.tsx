@@ -176,31 +176,6 @@ export default async function DashboardPage({
     );
   }
 
-  const { data: trialOrgRow } = await supabase
-    .from("organizations")
-    .select("plan, trial_ends_at")
-    .eq("id", org.id)
-    .single();
-
-  // Almost everyone has exactly one organization_members row, so this stays
-  // empty for them — only the platform admin (given standing support access
-  // to every org they create/join, see admin-actions.ts) ever sees the
-  // switcher render.
-  const { data: myMemberships } = await supabase
-    .from("organization_members")
-    .select("organization_id")
-    .eq("user_id", user.id);
-  const myOrgIds = (myMemberships ?? []).map((m) => m.organization_id);
-  let myOrgs: { id: string; name: string }[] = [];
-  if (myOrgIds.length > 1) {
-    const { data } = await supabase
-      .from("organizations")
-      .select("id, name")
-      .in("id", myOrgIds)
-      .order("name");
-    myOrgs = data ?? [];
-  }
-
   const selectedId = params.id?.[0];
   const isAuditor = org.role === "auditor";
   // Review (the Pending Review queue) is admin-only; auditors can view it
@@ -224,7 +199,17 @@ export default async function DashboardPage({
   // between invoices keep the same split view instead of risking losing it.
   const docOpen = searchParams.doc === "1";
 
+  // Everything below is independent of everything else in this batch — no
+  // query here needs another query's result — so it all runs as ONE
+  // Promise.all instead of a chain of sequential round trips. Only the
+  // steps→approvers→conditions chain further down has a real dependency
+  // (each needs the previous query's ids) and stays sequential.
   const [
+    { data: trialOrgRow },
+    { data: myMemberships },
+    { data: qboConnection },
+    { memberUserIds, profileRows },
+    { data: memberRoleRows },
     { data: workflows },
     { data: projects },
     qboCategoryRows,
@@ -234,7 +219,36 @@ export default async function DashboardPage({
     qboTaxCodeRows,
     pendingSplitsRes,
     unreadNotificationsRes,
+    { invoices, approvedPairs: approvedRows, lineItemRows },
   ] = await Promise.all([
+    supabase
+      .from("organizations")
+      .select("plan, trial_ends_at")
+      .eq("id", org.id)
+      .single(),
+    // Almost everyone has exactly one organization_members row, so this
+    // stays empty for them — only the platform admin (given standing
+    // support access to every org they create/join, see admin-actions.ts)
+    // ever sees the switcher render.
+    supabase
+      .from("organization_members")
+      .select("organization_id")
+      .eq("user_id", user.id),
+    // QBO connection (RLS: admins only — everyone else gets null).
+    supabase
+      .from("qbo_connections")
+      .select("realm_id, company_name")
+      .eq("organization_id", org.id)
+      .maybeSingle(),
+    getCachedMemberRoster(org.id),
+    // Roles aren't part of the cached roster (it's shared with pages that
+    // don't need them) — fetched separately, just to know who's an admin
+    // for the @mention scoping below (admins are always mentionable,
+    // regardless of project).
+    supabase
+      .from("organization_members")
+      .select("user_id, role")
+      .eq("organization_id", org.id),
     supabase
       .from("approval_workflows")
       .select("id")
@@ -262,16 +276,23 @@ export default async function DashboardPage({
       .select("id", { count: "exact", head: true })
       .eq("user_id", user.id)
       .eq("read", false),
+    // The invoice list (+ the approved-pairs and line-item lookups derived
+    // from it) is cached per-org and invalidated by every invoice-mutating
+    // action — so clicking between invoices doesn't re-download everything.
+    getCachedInvoiceList(org.id),
   ]);
 
-  // The invoice list (+ the approved-pairs and line-item lookups derived
-  // from it) is cached per-org and invalidated by every invoice-mutating
-  // action — so clicking between invoices doesn't re-download everything.
-  const {
-    invoices,
-    approvedPairs: approvedRows,
-    lineItemRows,
-  } = await getCachedInvoiceList(org.id);
+  const myOrgIds = (myMemberships ?? []).map((m) => m.organization_id);
+  let myOrgs: { id: string; name: string }[] = [];
+  if (myOrgIds.length > 1) {
+    const { data } = await supabase
+      .from("organizations")
+      .select("id, name")
+      .in("id", myOrgIds)
+      .order("name");
+    myOrgs = data ?? [];
+  }
+
   const pendingSplitsCount = pendingSplitsRes.count ?? 0;
   const unreadNotificationsCount = unreadNotificationsRes.count ?? 0;
 
@@ -302,6 +323,10 @@ export default async function DashboardPage({
     if (group.length > 1) group.forEach((inv) => duplicateInvoiceIds.add(inv.id));
   }
 
+  // Steps → approvers → conditions form a genuine dependency chain (each
+  // needs the previous query's ids), so these stay sequential — but now
+  // start from data that's already loaded above, instead of adding three
+  // more round trips on top of everything else.
   const { data: allSteps } =
     workflowIds.length > 0
       ? await supabase
@@ -312,34 +337,15 @@ export default async function DashboardPage({
       : { data: [] };
   const stepIds = (allSteps ?? []).map((s) => s.id);
 
-  // QBO connection (RLS: admins only — everyone else gets null).
-  const { data: qboConnection } = await supabase
-    .from("qbo_connections")
-    .select("realm_id, company_name")
-    .eq("organization_id", org.id)
-    .maybeSingle();
-
-  const [
-    { data: allStepApprovers },
-  ] = await Promise.all([
+  const { data: allStepApprovers } =
     stepIds.length > 0
-      ? supabase
+      ? await supabase
           .from("approval_workflow_step_approvers")
           .select("*")
           .in("step_id", stepIds)
           .order("row_order", { ascending: true })
-      : Promise.resolve({ data: [] }),
-  ]);
+      : { data: [] };
 
-  const { memberUserIds, profileRows } = await getCachedMemberRoster(org.id);
-  // Roles aren't part of the cached roster (it's shared with pages that
-  // don't need them) — fetched separately here, just to know who's an
-  // admin for the @mention scoping below (admins are always mentionable,
-  // regardless of project).
-  const { data: memberRoleRows } = await supabase
-    .from("organization_members")
-    .select("user_id, role")
-    .eq("organization_id", org.id);
   const adminUserIds = new Set(
     (memberRoleRows ?? []).filter((m) => m.role === "admin").map((m) => m.user_id)
   );
@@ -845,7 +851,7 @@ export default async function DashboardPage({
   let qboVendorIdForSelected: string | null = null;
 
   if (selected) {
-    const [signed, approvalsRes, commentsRes, docsRes, lineItemsRes, auditRes] =
+    const [signed, approvalsRes, commentsRes, docsRes, lineItemsRes, auditRes, instrRes] =
       await Promise.all([
         supabase.storage.from("invoices").createSignedUrl(selected.file_path, 60 * 10),
         supabase.from("invoice_approvals").select("*").eq("invoice_id", selected.id),
@@ -867,6 +873,14 @@ export default async function DashboardPage({
         supabase
           .from("audit_log")
           .select("*")
+          .eq("invoice_id", selected.id)
+          .order("created_at", { ascending: true }),
+        // Doesn't depend on anything else in this batch — pulled in here
+        // instead of after, same reasoning as the org-wide Promise.all
+        // above.
+        supabase
+          .from("accounting_instructions")
+          .select("id, author_id, body, created_at")
           .eq("invoice_id", selected.id)
           .order("created_at", { ascending: true }),
       ]);
@@ -986,12 +1000,9 @@ export default async function DashboardPage({
       (authors ?? []).map((a) => [a.id, a.full_name ?? "Team member"])
     );
 
-    // Accounting-instructions thread (append-only; becomes the QBO memo).
-    const { data: instrRows } = await supabase
-      .from("accounting_instructions")
-      .select("id, author_id, body, created_at")
-      .eq("invoice_id", selected.id)
-      .order("created_at", { ascending: true });
+    // Accounting-instructions thread (append-only; becomes the QBO memo) —
+    // fetched above in the first Promise.all.
+    const instrRows = instrRes.data;
     const instrAuthorIds = [
       ...new Set(
         (instrRows ?? [])
