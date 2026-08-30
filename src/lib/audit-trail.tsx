@@ -1,6 +1,7 @@
+import { Fragment } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/types";
-import { buildPdf, textWidth, wrapLine, type PdfColor, type PdfLine } from "@/lib/pdf";
+import { Document, Page, View, Text, StyleSheet, renderToBuffer } from "@react-pdf/renderer";
 import { buildAuditTimeline } from "@/lib/audit-timeline";
 import {
   effectiveApproversForStep,
@@ -12,10 +13,20 @@ import {
 // summary, approval log (table), line items (table) with totals,
 // instructions for accounting, and a single chronological timeline of
 // everything else that happened (bill edits, line item changes,
-// documents, status overrides, discussion). Styled after the Dext-style
-// audit report this app's users already expect. This is ONE of the two
-// files attached to the bill when the invoice syncs to QuickBooks — the
-// other is the original invoice document. Authored by Araza.
+// documents, status overrides, discussion). Card-based layout (rounded
+// corners, colored pills, a light page background) built with
+// @react-pdf/renderer — a React-like PDF renderer, not a browser
+// screenshot, so it works in a normal serverless function with no
+// headless-Chromium dependency. This is ONE of the two files attached to
+// the bill when the invoice syncs to QuickBooks — the other is the
+// original invoice document. Authored by Araza.
+//
+// Deliberately no decorative icons/emoji: react-pdf can only place them by
+// fetching each glyph as an image from an external CDN at render time
+// (Font.registerEmojiSource), and this document also feeds the QBO sync
+// attachment — a flaky third-party fetch has no business being a point of
+// failure there. The colored pills/badges carry the same "read at a
+// glance" job emoji would have.
 
 export interface InvoiceAuditDocument {
   filename: string;
@@ -40,8 +51,6 @@ export function invoiceFileBase(invoice: {
   return `${vendor}.${number}`;
 }
 
-const CONTENT_W = 512; // page width minus both margins
-
 const STATUS_LABELS: Record<string, string> = {
   on_review: "ON REVIEW",
   on_approval: "ON APPROVAL",
@@ -53,26 +62,147 @@ const STATUS_LABELS: Record<string, string> = {
 
 // Mirrors InvoiceStatusBadge's Tailwind palette (bg-*-100 / text-*-800) so
 // the PDF's status pill matches what the same status looks like in the
-// app. Light tint fills only — this report is designed to print cheaply,
-// never a solid/dark background.
-const STATUS_COLORS: Record<string, { bg: PdfColor; text: PdfColor }> = {
-  on_review: { bg: { r: 0.929, g: 0.914, b: 0.996 }, text: { r: 0.357, g: 0.129, b: 0.714 } },
-  on_approval: { bg: { r: 0.996, g: 0.953, b: 0.78 }, text: { r: 0.573, g: 0.251, b: 0.055 } },
-  approved: { bg: { r: 0.82, g: 0.98, b: 0.898 }, text: { r: 0.024, g: 0.373, b: 0.275 } },
-  cancelled: { bg: { r: 0.945, g: 0.961, b: 0.976 }, text: { r: 0.392, g: 0.455, b: 0.545 } },
-  rejected: { bg: { r: 0.996, g: 0.886, b: 0.886 }, text: { r: 0.6, g: 0.106, b: 0.106 } },
-  on_hold: { bg: { r: 1, g: 0.929, b: 0.835 }, text: { r: 0.604, g: 0.204, b: 0.071 } },
+// app.
+const STATUS_COLORS: Record<string, { bg: string; text: string }> = {
+  on_review: { bg: "#ede9fe", text: "#5b21b6" },
+  on_approval: { bg: "#fef3c7", text: "#92400e" },
+  approved: { bg: "#d1fae5", text: "#065f46" },
+  cancelled: { bg: "#f1f5f9", text: "#64748b" },
+  rejected: { bg: "#fee2e2", text: "#991b1b" },
+  on_hold: { bg: "#ffedd5", text: "#9a3412" },
 };
 const DEFAULT_STATUS_COLOR = STATUS_COLORS.cancelled;
 
-const LIGHT_GRAY: PdfColor = { r: 0.965, g: 0.968, b: 0.973 };
-const AMBER_FILL: PdfColor = { r: 0.996, g: 0.961, b: 0.867 };
-const AMBER_ACCENT: PdfColor = { r: 0.706, g: 0.325, b: 0.035 };
-const RED_FILL: PdfColor = { r: 0.996, g: 0.929, b: 0.929 };
-const RED_ACCENT: PdfColor = { r: 0.6, g: 0.106, b: 0.106 };
-const EMERALD_TEXT: PdfColor = { r: 0.024, g: 0.373, b: 0.275 };
-const RED_TEXT: PdfColor = { r: 0.6, g: 0.106, b: 0.106 };
-const TIMELINE_DOT: PdfColor = { r: 0.373, g: 0.404, b: 0.949 }; // indigo-500-ish
+// Approval-log decision pills — every state gets a filled badge, not just
+// approved/rejected, so "Awaiting" and "Not decided" read at a glance
+// instead of blending into plain body text.
+const DECISION_COLORS: Record<string, { bg: string; text: string }> = {
+  awaiting: { bg: "#fef3c7", text: "#b45309" },
+  "not decided": { bg: "#f3f4f6", text: "#6b7280" },
+  approved: STATUS_COLORS.approved,
+  rejected: STATUS_COLORS.rejected,
+};
+
+const INK = "#111827";
+const MUTED = "#6b7280";
+const FAINT = "#9ca3af";
+const BORDER = "#e5e7eb";
+const PAGE_BG = "#f9fafb";
+const AMBER_FILL = "#fef3c7";
+const AMBER_ACCENT = "#b45309";
+const RED_FILL = "#fee2e2";
+const RED_ACCENT = "#991b1b";
+const TIMELINE_DOT = "#5f67f2";
+
+const styles = StyleSheet.create({
+  page: { backgroundColor: PAGE_BG, padding: 28, fontSize: 9, color: INK, fontFamily: "Helvetica" },
+  headerRow: { flexDirection: "row", justifyContent: "space-between", marginBottom: 14 },
+  billFrom: { fontSize: 9, color: MUTED, marginBottom: 3 },
+  billTitle: { fontSize: 16, fontFamily: "Helvetica-Bold" },
+  amount: { fontSize: 18, fontFamily: "Helvetica-Bold", textAlign: "right" },
+  badge: {
+    alignSelf: "flex-end",
+    marginTop: 6,
+    paddingVertical: 3,
+    paddingHorizontal: 9,
+    borderRadius: 999,
+  },
+  badgeText: { fontSize: 7.5, fontFamily: "Helvetica-Bold", letterSpacing: 0.5 },
+  card: {
+    backgroundColor: "#ffffff",
+    borderWidth: 1,
+    borderColor: BORDER,
+    borderRadius: 8,
+    padding: 14,
+    marginBottom: 11,
+  },
+  sectionTitle: {
+    fontSize: 11,
+    fontFamily: "Helvetica-Bold",
+    marginBottom: 9,
+    paddingBottom: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: BORDER,
+  },
+  detailsGrid: { flexDirection: "row" },
+  detailsCol: { flex: 1 },
+  detailRow: { marginBottom: 8 },
+  detailLabel: { fontSize: 7, fontFamily: "Helvetica-Bold", color: FAINT, letterSpacing: 0.5, marginBottom: 2 },
+  detailValue: { fontSize: 10, fontFamily: "Helvetica-Bold" },
+  tableHeaderRow: {
+    flexDirection: "row",
+    borderBottomWidth: 1,
+    borderBottomColor: BORDER,
+    paddingBottom: 5,
+    marginBottom: 6,
+  },
+  th: { fontSize: 7, fontFamily: "Helvetica-Bold", color: FAINT, letterSpacing: 0.5 },
+  tableRow: {
+    flexDirection: "row",
+    borderBottomWidth: 1,
+    borderBottomColor: "#f3f4f6",
+    paddingVertical: 6,
+  },
+  tableRowLast: { flexDirection: "row", paddingVertical: 6 },
+  td: { fontSize: 9 },
+  pill: { alignSelf: "flex-start", paddingVertical: 2, paddingHorizontal: 7, borderRadius: 999 },
+  pillText: { fontSize: 8, fontFamily: "Helvetica-Bold" },
+  totalsWrap: { alignItems: "flex-end", marginTop: 10 },
+  totalsBlock: { minWidth: 180 },
+  totalsRow: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 2 },
+  totalsLabel: { fontSize: 9, color: MUTED },
+  totalsValue: { fontSize: 9 },
+  grandRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    borderTopWidth: 2,
+    borderTopColor: INK,
+    marginTop: 5,
+    paddingTop: 7,
+  },
+  grandLabel: { fontSize: 12, fontFamily: "Helvetica-Bold" },
+  grandValue: { fontSize: 12, fontFamily: "Helvetica-Bold" },
+  note: {
+    backgroundColor: PAGE_BG,
+    borderLeftWidth: 3,
+    borderLeftColor: "#d1d5db",
+    padding: 9,
+    fontSize: 9,
+    color: MUTED,
+    fontStyle: "italic",
+  },
+  noteAccent: { padding: 9, fontSize: 9 },
+  timelineRow: { flexDirection: "row", marginBottom: 10 },
+  timelineDotCol: { width: 16, alignItems: "center", paddingTop: 3 },
+  // react-pdf Views default to flexDirection "row" (unlike web/React
+  // Native's "column" default) — without this explicit override, the
+  // title+date row and the description line below it become row-siblings
+  // and render on top of each other instead of stacking.
+  timelineBody: { flex: 1, flexDirection: "column" },
+  timelineDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: TIMELINE_DOT },
+  timelineContent: { flex: 1, flexDirection: "row", justifyContent: "space-between" },
+  timelineTitle: { fontSize: 9.5, fontFamily: "Helvetica-Bold" },
+  timelineDesc: { fontSize: 9, color: MUTED, marginTop: 1 },
+  timelineDetail: { fontSize: 8.5, color: "#9ca3af", marginTop: 2 },
+  timelineDate: { fontSize: 8, color: FAINT, flexShrink: 0, marginLeft: 8 },
+  reviewerNote: {
+    backgroundColor: RED_FILL,
+    borderLeftWidth: 3,
+    borderLeftColor: RED_ACCENT,
+    padding: 9,
+    fontSize: 8.5,
+    marginTop: 6,
+  },
+});
+
+function Card({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <View style={styles.card} wrap={false}>
+      <Text style={styles.sectionTitle}>{title}</Text>
+      {children}
+    </View>
+  );
+}
 
 export async function buildInvoiceAuditDocument(
   supabase: SupabaseClient<Database>,
@@ -213,52 +343,9 @@ export async function buildInvoiceAuditDocument(
   const fmtAmount = (n: number | null) =>
     n != null ? n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "—";
 
-  // --- Primitives -------------------------------------------------------
-  const rule = (spaceBefore = 10, gray = 0.85): PdfLine => ({ rule: true, spaceBefore, gray });
-  const sectionHeader = (text: string): PdfLine => ({
-    text,
-    bold: true,
-    size: 11,
-    spaceBefore: 18,
-    gray: 0.2,
-  });
-  const tableHeader = (cols: { text: string; x: number; align?: "left" | "right" }[]): PdfLine => ({
-    cells: cols.map((c) => ({ text: c.text.toUpperCase(), x: c.x, align: c.align, bold: true, size: 8, gray: 0.5 })),
-    spaceBefore: 10,
-  });
-
-  const lines: PdfLine[] = [];
-
-  // --- Header: title + amount, metadata + status badge ------------------
-  const amountText = `${fmtAmount(invoice.amount)} ${invoice.currency}`;
-  lines.push({
-    size: 15,
-    cells: [
-      {
-        text: `Bill ${invoice.invoice_number ?? "-"} from ${invoice.vendor_name ?? invoice.file_name}`,
-        x: 0,
-        bold: true,
-        size: 15,
-        maxWidth: CONTENT_W - textWidth(amountText, 15, true) - 16,
-      },
-      { text: amountText, x: CONTENT_W, align: "right", bold: true, size: 15 },
-    ],
-  });
-
   const statusLabel = STATUS_LABELS[invoice.status] ?? invoice.status.toUpperCase();
   const statusColor = STATUS_COLORS[invoice.status] ?? DEFAULT_STATUS_COLOR;
-  const badgeW = textWidth(statusLabel, 8.5, true) + 20;
-  lines.push({
-    spaceBefore: 10,
-    cells: [{ text: statusLabel, x: CONTENT_W - badgeW + 10, size: 8.5, bold: true, color: statusColor.text }],
-    box: { x: CONTENT_W - badgeW, width: badgeW, height: 16, fill: statusColor.bg },
-  });
 
-  // A single light-tint card holding what used to be two separate blocks
-  // (header metadata + the "Invoice" section further down) — a cheap way
-  // to get the reference's two-card look out of this engine's sequential
-  // row layout: one shared fill box behind label/value rows zipped into
-  // two columns.
   const metaRows: [{ label: string; value: string }, { label: string; value: string }][] = [
     [
       { label: "Organization", value: org?.name ?? "Unknown" },
@@ -273,233 +360,228 @@ export async function buildInvoiceAuditDocument(
       { label: "Due date", value: invoice.due_date ?? "—" },
     ],
   ];
-  const gridH = metaRows.length * 36 + 14;
-  metaRows.forEach((row, i) => {
-    lines.push({
-      spaceBefore: i === 0 ? 14 : 12,
-      cells: [
-        { text: row[0].label.toUpperCase(), x: 14, gray: 0.55, size: 7.5, bold: true },
-        { text: row[1].label.toUpperCase(), x: 270, gray: 0.55, size: 7.5, bold: true },
-      ],
-      box: i === 0 ? { x: 0, width: CONTENT_W, height: gridH, fill: LIGHT_GRAY } : undefined,
-    });
-    lines.push({
-      spaceBefore: 2,
-      cells: [
-        { text: row[0].value, x: 14, size: 10.5, bold: true, maxWidth: 230 },
-        { text: row[1].value, x: 270, size: 10.5, bold: true, maxWidth: 230 },
-      ],
-    });
-  });
-  lines.push(rule(20));
 
-  // --- Approval log -------------------------------------------------
-  lines.push(sectionHeader("Approval log"));
-  const approvalCols = [
-    { text: "Name", x: 0 },
-    { text: "Step", x: 220 },
-    { text: "Decision", x: 340 },
-    { text: "Date / time", x: 420 },
-  ];
-  if (steps.length === 0) {
-    lines.push({ text: "No approval workflow assigned.", size: 10, spaceBefore: 8 });
-  } else {
-    lines.push(tableHeader(approvalCols));
-    for (const step of steps) {
-      const stepApprovers = approversByStepId.get(step.id) ?? [];
-      const stepConditions = stepApprovers.flatMap(
-        (a) => conditionsByApproverId.get(a.id) ?? []
-      );
-      const requiredIds = effectiveApproversForStep(
-        stepApprovers,
-        stepConditions,
-        { vendor_name: invoice.vendor_name, project_id: invoice.project_id },
-        lineItems.map((li) => ({ class: li.class, category: li.category, project_id: li.project_id }))
-      );
-      const decisionsForStep = approvals.filter((a) => a.step_order === step.step_order);
-      const isOpen =
-        step.step_order === invoice.current_step_order &&
-        invoice.status !== "approved" &&
-        invoice.status !== "rejected" &&
-        invoice.status !== "cancelled";
+  const subtotal =
+    invoice.amount != null && invoice.tax_amount != null ? invoice.amount - invoice.tax_amount : null;
 
-      const rowApproverIds = requiredIds.length > 0 ? requiredIds : [null];
-      for (const approverId of rowApproverIds) {
-        const decision = decisionsForStep.find((d) => d.approver_id === approverId);
-        const state = isOpen ? "Awaiting" : decision ? decision.decision : "Not decided";
-        const stateColor =
-          state === "approved" ? EMERALD_TEXT : state === "rejected" ? RED_TEXT : undefined;
-        lines.push({
-          cells: [
-            {
-              text: approverId ? nameOf(approverId) : "No approver assigned",
-              x: 0,
-              bold: true,
-              size: 10,
-              maxWidth: 210,
-            },
-            { text: step.name || `Step ${step.step_order}`, x: 220, size: 10 },
-            {
-              text: state.charAt(0).toUpperCase() + state.slice(1),
-              x: 340,
-              size: 10,
-              bold: !!stateColor,
-              color: stateColor,
-            },
-            {
-              text: decision
-                ? new Date(decision.decided_at).toLocaleDateString(undefined, { timeZone: TZ })
-                : "-",
-              x: 420,
-              size: 10,
-            },
-          ],
-          spaceBefore: 10,
-        });
-        if (decision?.comment) {
-          lines.push({ text: `"${decision.comment}"`, size: 9, gray: 0.4, indent: 8 });
-        }
-      }
-    }
-  }
-  lines.push(rule(14));
+  const hasOverride = auditEntries.some((e) => e.action === "invoice.admin_override_status");
 
-  // --- Line items -------------------------------------------------
-  lines.push(sectionHeader(`Line items (${lineItems.length})`));
-  if (lineItems.length === 0) {
-    lines.push({ text: "No line items.", size: 10, spaceBefore: 8 });
-  } else {
-    const itemCols = [
-      { text: "Category", x: 0 },
-      { text: "Description", x: 80 },
-      { text: "Tax %", x: 290, align: "right" as const },
-      { text: "Class", x: 310 },
-      { text: "Amount", x: CONTENT_W, align: "right" as const },
-    ];
-    lines.push(tableHeader(itemCols));
-    for (const item of lineItems) {
-      lines.push({
-        cells: [
-          { text: item.category ?? "-", x: 0, size: 9.5, maxWidth: 70 },
-          { text: item.description ?? "-", x: 80, size: 9.5, maxWidth: 165 },
-          { text: item.tax_rate != null ? `${item.tax_rate}%` : "-", x: 290, align: "right", size: 9.5 },
-          { text: item.class ?? "-", x: 310, size: 9.5, maxWidth: 130 },
-          { text: fmtAmount(item.amount), x: CONTENT_W, align: "right", size: 9.5 },
-        ],
-        spaceBefore: 8,
-      });
-    }
-  }
-  const subtotal = invoice.amount != null && invoice.tax_amount != null
-    ? invoice.amount - invoice.tax_amount
-    : null;
-  lines.push(
-    rule(10),
-    {
-      cells: [
-        { text: "Subtotal", x: 400, gray: 0.5, size: 9.5 },
-        { text: fmtAmount(subtotal), x: CONTENT_W, align: "right", size: 9.5 },
-      ],
-      spaceBefore: 8,
-    },
-    {
-      cells: [
-        { text: "Tax", x: 400, gray: 0.5, size: 9.5 },
-        { text: fmtAmount(invoice.tax_amount), x: CONTENT_W, align: "right", size: 9.5 },
-      ],
-    },
-    {
-      cells: [
-        { text: "Total", x: 400, bold: true, size: 11 },
-        { text: `${fmtAmount(invoice.amount)} ${invoice.currency}`, x: CONTENT_W, align: "right", bold: true, size: 11 },
-      ],
-      spaceBefore: 4,
-    }
+  const doc = (
+    <Document>
+      <Page size="LETTER" style={styles.page} wrap>
+        {/* Header */}
+        <View style={styles.headerRow}>
+          <View>
+            <Text style={styles.billFrom}>
+              Bill from {invoice.vendor_name ?? invoice.file_name}
+            </Text>
+            <Text style={styles.billTitle}>Invoice {invoice.invoice_number ?? "—"}</Text>
+          </View>
+          <View>
+            <Text style={styles.amount}>
+              {fmtAmount(invoice.amount)} {invoice.currency}
+            </Text>
+            <View style={[styles.badge, { backgroundColor: statusColor.bg }]}>
+              <Text style={[styles.badgeText, { color: statusColor.text }]}>{statusLabel}</Text>
+            </View>
+          </View>
+        </View>
+
+        {/* Bill details */}
+        <Card title="Bill details">
+          <View style={styles.detailsGrid}>
+            <View style={styles.detailsCol}>
+              {metaRows.map((row, i) => (
+                <View key={i} style={styles.detailRow}>
+                  <Text style={styles.detailLabel}>{row[0].label.toUpperCase()}</Text>
+                  <Text style={styles.detailValue}>{row[0].value}</Text>
+                </View>
+              ))}
+            </View>
+            <View style={styles.detailsCol}>
+              {metaRows.map((row, i) => (
+                <View key={i} style={styles.detailRow}>
+                  <Text style={styles.detailLabel}>{row[1].label.toUpperCase()}</Text>
+                  <Text style={styles.detailValue}>{row[1].value}</Text>
+                </View>
+              ))}
+            </View>
+          </View>
+        </Card>
+
+        {/* Approval log */}
+        <Card title="Approval log">
+          {steps.length === 0 ? (
+            <Text style={{ fontSize: 9.5, color: MUTED }}>No approval workflow assigned.</Text>
+          ) : (
+            <>
+              <View style={styles.tableHeaderRow}>
+                <Text style={[styles.th, { flex: 0.34 }]}>NAME</Text>
+                <Text style={[styles.th, { flex: 0.26 }]}>STEP</Text>
+                <Text style={[styles.th, { flex: 0.2 }]}>DECISION</Text>
+                <Text style={[styles.th, { flex: 0.2, textAlign: "right" }]}>DATE / TIME</Text>
+              </View>
+              {steps.map((step) => {
+                const stepApprovers = approversByStepId.get(step.id) ?? [];
+                const stepConditions = stepApprovers.flatMap(
+                  (a) => conditionsByApproverId.get(a.id) ?? []
+                );
+                const requiredIds = effectiveApproversForStep(
+                  stepApprovers,
+                  stepConditions,
+                  { vendor_name: invoice.vendor_name, project_id: invoice.project_id },
+                  lineItems.map((li) => ({ class: li.class, category: li.category, project_id: li.project_id }))
+                );
+                const decisionsForStep = approvals.filter((a) => a.step_order === step.step_order);
+                const isOpen =
+                  step.step_order === invoice.current_step_order &&
+                  invoice.status !== "approved" &&
+                  invoice.status !== "rejected" &&
+                  invoice.status !== "cancelled";
+                const rowApproverIds = requiredIds.length > 0 ? requiredIds : [null];
+
+                return rowApproverIds.map((approverId, i) => {
+                  const decision = decisionsForStep.find((d) => d.approver_id === approverId);
+                  const state = isOpen ? "Awaiting" : decision ? decision.decision : "Not decided";
+                  const stateLabel = state.charAt(0).toUpperCase() + state.slice(1);
+                  const pillColors = DECISION_COLORS[state.toLowerCase()] ?? DECISION_COLORS["not decided"];
+                  const isLast = step === steps[steps.length - 1] && i === rowApproverIds.length - 1;
+                  return (
+                    <Fragment key={`${step.id}-${approverId ?? "none"}`}>
+                      <View style={isLast ? styles.tableRowLast : styles.tableRow}>
+                        <Text style={[styles.td, { flex: 0.34, fontFamily: "Helvetica-Bold", paddingRight: 6 }]}>
+                          {approverId ? nameOf(approverId) : "No approver assigned"}
+                        </Text>
+                        <Text style={[styles.td, { flex: 0.26, paddingRight: 6 }]}>
+                          {step.name || `Step ${step.step_order}`}
+                        </Text>
+                        <View style={{ flex: 0.2 }}>
+                          <View style={[styles.pill, { backgroundColor: pillColors.bg }]}>
+                            <Text style={[styles.pillText, { color: pillColors.text }]}>{stateLabel}</Text>
+                          </View>
+                        </View>
+                        <Text style={[styles.td, { flex: 0.2, textAlign: "right", color: MUTED }]}>
+                          {decision
+                            ? new Date(decision.decided_at).toLocaleDateString(undefined, { timeZone: TZ })
+                            : "—"}
+                        </Text>
+                      </View>
+                      {decision?.comment && (
+                        <Text style={{ fontSize: 8.5, color: MUTED, fontStyle: "italic", marginTop: -3, marginBottom: 4 }}>
+                          {`"${decision.comment}"`}
+                        </Text>
+                      )}
+                    </Fragment>
+                  );
+                });
+              })}
+            </>
+          )}
+        </Card>
+
+        {/* Line items */}
+        <Card title={`Line items (${lineItems.length})`}>
+          {lineItems.length === 0 ? (
+            <Text style={{ fontSize: 9.5, color: MUTED }}>No line items.</Text>
+          ) : (
+            <>
+              <View style={styles.tableHeaderRow}>
+                <Text style={[styles.th, { flex: 0.21, paddingRight: 6 }]}>CATEGORY</Text>
+                <Text style={[styles.th, { flex: 0.36, paddingRight: 6 }]}>DESCRIPTION</Text>
+                <Text style={[styles.th, { flex: 0.1, textAlign: "right", paddingRight: 10 }]}>TAX %</Text>
+                <Text style={[styles.th, { flex: 0.15, paddingRight: 6 }]}>CLASS</Text>
+                <Text style={[styles.th, { flex: 0.18, textAlign: "right" }]}>AMOUNT</Text>
+              </View>
+              {lineItems.map((item, i) => (
+                <View key={item.id} style={i === lineItems.length - 1 ? styles.tableRowLast : styles.tableRow}>
+                  <Text style={[styles.td, { flex: 0.21, paddingRight: 6 }]}>{item.category ?? "—"}</Text>
+                  <Text style={[styles.td, { flex: 0.36, paddingRight: 6 }]}>{item.description ?? "—"}</Text>
+                  <Text style={[styles.td, { flex: 0.1, textAlign: "right", paddingRight: 10 }]}>
+                    {item.tax_rate != null ? `${item.tax_rate}%` : "—"}
+                  </Text>
+                  <Text style={[styles.td, { flex: 0.15, paddingRight: 6 }]}>{item.class ?? "—"}</Text>
+                  <Text style={[styles.td, { flex: 0.18, textAlign: "right", fontFamily: "Helvetica-Bold" }]}>
+                    {fmtAmount(item.amount)}
+                  </Text>
+                </View>
+              ))}
+            </>
+          )}
+          <View style={styles.totalsWrap}>
+            <View style={styles.totalsBlock}>
+              <View style={styles.totalsRow}>
+                <Text style={styles.totalsLabel}>Subtotal</Text>
+                <Text style={styles.totalsValue}>{fmtAmount(subtotal)}</Text>
+              </View>
+              <View style={styles.totalsRow}>
+                <Text style={styles.totalsLabel}>Tax</Text>
+                <Text style={styles.totalsValue}>{fmtAmount(invoice.tax_amount)}</Text>
+              </View>
+              <View style={styles.grandRow}>
+                <Text style={styles.grandLabel}>Total</Text>
+                <Text style={styles.grandValue}>
+                  {fmtAmount(invoice.amount)} {invoice.currency}
+                </Text>
+              </View>
+            </View>
+          </View>
+        </Card>
+
+        {/* Instructions for accounting */}
+        <Card title="Instructions for accounting">
+          {invoice.accounting_instructions ? (
+            <View style={[styles.noteAccent, { backgroundColor: AMBER_FILL, borderLeftWidth: 3, borderLeftColor: AMBER_ACCENT }]}>
+              <Text>{invoice.accounting_instructions}</Text>
+            </View>
+          ) : (
+            <View style={styles.note}>
+              <Text>None.</Text>
+            </View>
+          )}
+        </Card>
+
+        {/* Timeline */}
+        <Card title="Timeline">
+          {timeline.length === 0 ? (
+            <Text style={{ fontSize: 9.5, color: MUTED }}>No activity recorded.</Text>
+          ) : (
+            timeline.map((entry, i) => (
+              <View key={i} style={styles.timelineRow} wrap={false}>
+                <View style={styles.timelineDotCol}>
+                  <View style={styles.timelineDot} />
+                </View>
+                <View style={styles.timelineBody}>
+                  <View style={styles.timelineContent}>
+                    <Text style={styles.timelineTitle}>{entry.actorName}</Text>
+                    <Text style={styles.timelineDate}>{fmtDate(entry.at)}</Text>
+                  </View>
+                  <Text style={styles.timelineDesc}>
+                    {entry.kind === "comment" ? "commented" : entry.summary}
+                  </Text>
+                  {entry.detail && <Text style={styles.timelineDetail}>{entry.detail}</Text>}
+                </View>
+              </View>
+            ))
+          )}
+        </Card>
+
+        {hasOverride && (
+          <View style={styles.reviewerNote} wrap={false}>
+            <Text>
+              {"Note for reviewers: This invoice's status was changed manually by an admin, outside " +
+                "the normal approval flow. Please review the timeline above before relying on the " +
+                "approval log alone."}
+            </Text>
+          </View>
+        )}
+      </Page>
+    </Document>
   );
 
-  // --- Instructions for accounting -------------------------------------------------
-  lines.push(rule(16), sectionHeader("Instructions for accounting"));
-  if (invoice.accounting_instructions) {
-    const size = 10;
-    const indent = 16;
-    const lineH = Math.round(size * 1.35);
-    const wrapped = wrapLine(invoice.accounting_instructions, size);
-    const boxH = wrapped.length * lineH + 16;
-    wrapped.forEach((text, i) => {
-      lines.push({
-        text,
-        size,
-        indent,
-        spaceBefore: i === 0 ? 10 : 0,
-        box: i === 0 ? { x: -indent, width: CONTENT_W, height: boxH, fill: AMBER_FILL } : undefined,
-        vline: i === 0 ? { x: -indent, length: boxH - 2, color: AMBER_ACCENT, width: 3 } : undefined,
-      });
-    });
-  } else {
-    lines.push({ text: "None.", size: 10, gray: 0.5, spaceBefore: 8 });
-  }
-
-  // --- Timeline (audit log + discussion, merged & chronological) -------------------------------------------------
-  lines.push(rule(16), sectionHeader("Timeline"));
-  if (timeline.length === 0) {
-    lines.push({ text: "No activity recorded.", size: 10, spaceBefore: 8 });
-  } else {
-    const dotR = 3;
-    const dotX = 2;
-    timeline.forEach((entry, i) => {
-      const actorW = Math.min(textWidth(entry.actorName, 9.5, true), 140);
-      const summaryX = actorW + 15;
-      const hasDetail = !!entry.detail;
-      // Each entry's rail segment reaches down to where the NEXT entry's
-      // dot sits, so consecutive segments chain into one continuous line
-      // without needing cross-entry pixel knowledge. The last entry omits
-      // the trailing segment (nothing to connect to).
-      const segmentLength = i < timeline.length - 1 ? (hasDetail ? 13 + 24 : 13) + 9 : 0;
-      lines.push({
-        indent: 16,
-        cells: [
-          { text: entry.actorName, x: 0, bold: true, size: 9.5, maxWidth: 135 },
-          {
-            text: entry.kind === "comment" ? "commented" : entry.summary,
-            x: summaryX,
-            size: 9.5,
-            maxWidth: CONTENT_W - 110 - summaryX,
-          },
-          { text: fmtDate(entry.at), x: CONTENT_W - 16, align: "right", size: 8, gray: 0.5 },
-        ],
-        spaceBefore: 9,
-        dot: { x: -dotX - 13, radius: dotR, color: TIMELINE_DOT },
-        vline: segmentLength > 0 ? { x: -dotX - 13, length: segmentLength, color: TIMELINE_DOT, width: 1.5 } : undefined,
-      });
-      if (entry.detail) {
-        lines.push({ text: entry.detail, size: 9, gray: 0.45, indent: 24 });
-      }
-    });
-  }
-
-  // --- Conditional note when the status was manually overridden ---------
-  if (auditEntries.some((e) => e.action === "invoice.admin_override_status")) {
-    const noteText =
-      "Note for reviewers: This invoice's status was changed manually by an admin, outside the normal approval flow. Please review the timeline above before relying on the approval log alone.";
-    const size = 9.5;
-    const indent = 16;
-    const lineH = Math.round(size * 1.35);
-    const wrapped = wrapLine(noteText, size);
-    const boxH = wrapped.length * lineH + 16;
-    wrapped.forEach((text, i) => {
-      lines.push({
-        text,
-        size,
-        indent,
-        spaceBefore: i === 0 ? 20 : 0,
-        box: i === 0 ? { x: -indent, width: CONTENT_W, height: boxH, fill: RED_FILL } : undefined,
-        vline: i === 0 ? { x: -indent, length: boxH - 2, color: RED_ACCENT, width: 3 } : undefined,
-      });
-    });
-  }
+  const pdf = await renderToBuffer(doc);
 
   return {
     filename: `audit-trail-${invoiceFileBase(invoice)}.pdf`,
-    pdf: buildPdf(lines),
+    pdf,
   };
 }
