@@ -6,6 +6,9 @@ import Image from "next/image";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { completeSelfSignup } from "@/lib/auth-actions";
+import { TurnstileWidget } from "@/components/TurnstileWidget";
+
+const TURNSTILE_SITE_KEY = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
 
 // Sign in has two ways in, one form visible at a time: password is the
 // default (the common path for a returning user), one-time email link is a
@@ -41,6 +44,7 @@ export default function LoginPage() {
   const [passwordPending, setPasswordPending] = useState(false);
   const [signupPending, setSignupPending] = useState(false);
   const [oauthPending, setOauthPending] = useState<OAuthProvider | null>(null);
+  const [turnstileToken, setTurnstileToken] = useState("");
   const pending = magicLinkPending || passwordPending || signupPending || oauthPending !== null;
 
   async function continueWithProvider(provider: OAuthProvider) {
@@ -131,6 +135,11 @@ export default function LoginPage() {
             company_name: companyName.trim() || undefined,
             marketing_opt_in: marketingOptIn,
           },
+          // Verified inside Supabase's own Auth server (Authentication ->
+          // Settings -> CAPTCHA protection) — undefined until that's
+          // configured there, in which case Supabase just skips the check
+          // rather than rejecting the signup.
+          captchaToken: turnstileToken || undefined,
         },
       });
       if (error) {
@@ -434,7 +443,14 @@ export default function LoginPage() {
                       </Link>
                       .
                     </p>
-                    <button type="submit" disabled={pending} className={primaryBtnCls(signupPending)}>
+                    {TURNSTILE_SITE_KEY && (
+                      <TurnstileWidget siteKey={TURNSTILE_SITE_KEY} onToken={setTurnstileToken} />
+                    )}
+                    <button
+                      type="submit"
+                      disabled={pending || (!!TURNSTILE_SITE_KEY && !turnstileToken)}
+                      className={primaryBtnCls(signupPending)}
+                    >
                       {signupPending && <Spinner />}
                       {signupPending ? "Creating account…" : "Create account"}
                     </button>
