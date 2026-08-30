@@ -500,6 +500,7 @@ export default function LoginPage() {
                         <label className={labelCls + " mb-0"}>Password</label>
                         <button
                           type="button"
+                          tabIndex={-1}
                           onClick={() => switchSignInMode("magic")}
                           className="text-xs font-medium text-brand-green-dark hover:underline"
                         >
