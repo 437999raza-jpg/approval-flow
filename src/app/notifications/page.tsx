@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentOrg } from "@/lib/current-org";
+import { BackToDashboardButton } from "@/components/BackToDashboardButton";
 
 export default async function NotificationsPage() {
   const supabase = createClient();
@@ -44,9 +45,7 @@ export default async function NotificationsPage() {
 
   return (
     <main className="mx-auto max-w-2xl p-8">
-      <Link href="/dashboard" className="text-sm text-slate-500 hover:underline">
-        ← Back to dashboard
-      </Link>
+      <BackToDashboardButton />
       <h1 className="mt-2 text-xl font-semibold">Notifications</h1>
       <p className="mt-1 text-sm text-slate-500">
         @mentions in Discussion, and invoices that just became yours to review.

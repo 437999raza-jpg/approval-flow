@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { BackToDashboardButton } from "@/components/BackToDashboardButton";
 import { revalidatePath, revalidateTag } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -482,12 +483,30 @@ export default async function SettingsPage({
           </div>
         </div>
         <nav className="flex-1 space-y-0.5 p-2">
-          <Link
-            href="/dashboard"
-            className="block rounded-md px-3 py-2 text-sm text-slate-600 hover:bg-slate-100"
-          >
-            ← Back to dashboard
-          </Link>
+          <BackToDashboardButton className="w-full justify-center" />
+          <div className="my-2 border-t border-slate-100" />
+          <a href="#profile" className="block rounded-md px-3 py-2 text-sm text-slate-600 hover:bg-slate-100">
+            My profile
+          </a>
+          <a href="#security" className="block rounded-md px-3 py-2 text-sm text-slate-600 hover:bg-slate-100">
+            Security
+          </a>
+          {showOrgSettings && (
+            <>
+              <a href="#integrations" className="block rounded-md px-3 py-2 text-sm text-slate-600 hover:bg-slate-100">
+                Integrations
+              </a>
+              <a href="#invoice-email" className="block rounded-md px-3 py-2 text-sm text-slate-600 hover:bg-slate-100">
+                Invoice email
+              </a>
+              <a href="#billing" className="block rounded-md px-3 py-2 text-sm text-slate-600 hover:bg-slate-100">
+                Billing &amp; usage
+              </a>
+              <a href="#members" className="block rounded-md px-3 py-2 text-sm text-slate-600 hover:bg-slate-100">
+                Members
+              </a>
+            </>
+          )}
         </nav>
         <div className="flex items-center justify-between border-t border-slate-200 p-4">
           <span className="truncate text-xs text-slate-500">{user.email}</span>
@@ -522,7 +541,7 @@ export default async function SettingsPage({
           )}
 
           {/* My profile */}
-          <section className="mt-8">
+          <section id="profile" className="mt-8 scroll-mt-6">
             <h2 className="text-lg font-semibold">My profile</h2>
             <div className="mt-3 flex items-center gap-4 rounded-lg border border-slate-200 bg-white p-4">
               <Avatar name={myName || user.email || "?"} photoUrl={myAvatar} size="lg" />
@@ -543,7 +562,7 @@ export default async function SettingsPage({
           {/* Security — per-user opt-in, set up under your own login (not
               admin-assignable; an admin can only see the status below in
               the Members table and remind someone directly). */}
-          <section className="mt-8">
+          <section id="security" className="mt-8 scroll-mt-6">
             <h2 className="text-lg font-semibold">Security</h2>
             <p className="mt-1 text-sm text-slate-500">
               Two-factor authentication for your own account.
@@ -554,7 +573,7 @@ export default async function SettingsPage({
           {showOrgSettings && (
           <>
           {/* Integrations */}
-          <section className="mt-8">
+          <section id="integrations" className="mt-8 scroll-mt-6">
             <h2 className="text-lg font-semibold">Integrations</h2>
             <p className="mt-1 text-sm text-slate-500">
               Connect external apps here — connection details stay out of the
@@ -981,7 +1000,7 @@ export default async function SettingsPage({
             {/* Invoice email — inbound capture address on our domain
                 (ApprovalMax/Dext model: {companyname}@ourdomain, clients
                 change nothing) */}
-            <div className="mt-3 rounded-lg border border-slate-200 bg-white p-4 text-sm">
+            <div id="invoice-email" className="mt-3 scroll-mt-6 rounded-lg border border-slate-200 bg-white p-4 text-sm">
               <div className="text-xs font-bold uppercase tracking-wide text-slate-400">
                 Invoice email
               </div>
@@ -1034,7 +1053,7 @@ export default async function SettingsPage({
           </section>
 
           {/* Billing & usage — lives on its own page now */}
-          <section className="mt-8">
+          <section id="billing" className="mt-8 scroll-mt-6">
             <h2 className="text-lg font-semibold">Billing &amp; usage</h2>
             <p className="mt-1 text-sm text-slate-500">
               Documents processed, the suggested charge at your per-document
@@ -1049,7 +1068,7 @@ export default async function SettingsPage({
           </section>
 
           {/* Members */}
-          <section className="mt-10">
+          <section id="members" className="mt-10 scroll-mt-6">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <h2 className="text-lg font-semibold">Members</h2>
               {isAdmin && (
