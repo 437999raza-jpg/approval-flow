@@ -3603,7 +3603,7 @@ alter publication supabase_realtime add table invoice_comments;
 -- and DB-side matching agree. Additive only — vendor_name/
 -- vendor_name_normalized stay exactly as they are everywhere; no columns
 -- dropped, no existing behavior removed.
-create table suppliers (
+create table if not exists suppliers (
   id uuid primary key default gen_random_uuid(),
   organization_id uuid not null references organizations(id) on delete cascade,
   name text not null,
@@ -3616,8 +3616,10 @@ create table suppliers (
 );
 
 alter table suppliers enable row level security;
+drop policy if exists "suppliers: members can read" on suppliers;
 create policy "suppliers: members can read" on suppliers
   for select using (is_org_member(organization_id));
+drop policy if exists "suppliers: members can insert" on suppliers;
 create policy "suppliers: members can insert" on suppliers
   for insert with check (
     is_org_member(organization_id) and not is_org_auditor(organization_id)
