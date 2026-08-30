@@ -14,6 +14,7 @@ import { RejectReasonModal } from "./RejectReasonModal";
 import { useToast } from "./ToastContext";
 import { InvoiceStatusBadge } from "./InvoiceStatusBadge";
 import type { Database } from "@/lib/supabase/types";
+import { createClient } from "@/lib/supabase/client";
 import { computeLineItemTotals } from "@/lib/invoice-totals";
 import { evaluateFormula } from "@/lib/formula";
 import type { AuditTimelineEntry } from "@/lib/audit-timeline";
@@ -252,6 +253,59 @@ export function BillPanel({
   useEffect(() => {
     scrollerRef.current?.scrollTo({ top: 0 });
   }, [resetScrollKey]);
+
+  // Discussion previously only updated for the tab that posted (the
+  // addComment server action's revalidatePath/revalidateTag) — anyone
+  // else needed a manual refresh to see a new comment. liveComments
+  // starts from the server-rendered prop and resyncs whenever it changes
+  // (a fresh server round trip, including this tab's own posts); a
+  // Realtime subscription appends anyone ELSE's new comments in between.
+  const [liveComments, setLiveComments] = useState<Comment[]>(comments);
+  useEffect(() => {
+    setLiveComments(comments);
+  }, [comments]);
+
+  useEffect(() => {
+    const supabase = createClient();
+    let channel: ReturnType<typeof supabase.channel> | null = null;
+    let cancelled = false;
+
+    (async () => {
+      // Resolved before subscribing (not raced against it) so an INSERT
+      // arriving right after mount can't slip past the "it's my own
+      // comment, already rendered" check below.
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (cancelled) return;
+      const currentUserId = user?.id ?? null;
+
+      channel = supabase
+        .channel(`invoice-comments-${invoice.id}`)
+        .on(
+          "postgres_changes",
+          {
+            event: "INSERT",
+            schema: "public",
+            table: "invoice_comments",
+            filter: `invoice_id=eq.${invoice.id}`,
+          },
+          (payload) => {
+            const newComment = payload.new as Comment;
+            if (newComment.author_id === currentUserId) return;
+            setLiveComments((prev) =>
+              prev.some((c) => c.id === newComment.id) ? prev : [...prev, newComment]
+            );
+          }
+        )
+        .subscribe();
+    })();
+
+    return () => {
+      cancelled = true;
+      if (channel) supabase.removeChannel(channel);
+    };
+  }, [invoice.id]);
 
   const { showToast } = useToast();
   // For floating confirmation toasts (Approve/Reject/Hold) — the invoice
@@ -1327,15 +1381,15 @@ export function BillPanel({
         <div className="border-t border-slate-100 px-6 py-3">
           <CollapsibleSection
             title="Discussion / Notes"
-            badge={comments.length > 0 ? comments.length : undefined}
+            badge={liveComments.length > 0 ? liveComments.length : undefined}
           >
             <div className="mt-3 space-y-3">
-              {comments.length === 0 ? (
+              {liveComments.length === 0 ? (
                 <p className="text-sm text-slate-400">
                   No comments yet. Chat with your team about this invoice here.
                 </p>
               ) : (
-                comments.map((comment) => (
+                liveComments.map((comment) => (
                   <div key={comment.id} className="rounded-md bg-slate-50 px-3 py-2">
                     <div className="flex items-baseline justify-between gap-2">
                       <span className="text-xs font-medium text-slate-700">
