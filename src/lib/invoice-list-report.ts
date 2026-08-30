@@ -95,6 +95,28 @@ export async function buildInvoiceListReport(
     lineItemsByInvoice.set(li.invoice_id, list);
   }
 
+  // Every project each invoice touches (its own project_id UNION every
+  // line item's) — built from the line items already fetched above rather
+  // than a second query. filterInvoicesForReport no longer checks
+  // project_id itself (a split bill should match a filter on ANY project
+  // it touches, which needs this per-invoice data it doesn't have), so
+  // this is applied here explicitly, same as waiting_for/approved_by
+  // below.
+  const projectIdsByInvoice = new Map<string, Set<string>>();
+  for (const inv of invoices) {
+    const ids = new Set<string>();
+    if (inv.project_id) ids.add(inv.project_id);
+    for (const li of lineItemsByInvoice.get(inv.id) ?? []) {
+      if (li.project_id) ids.add(li.project_id);
+    }
+    projectIdsByInvoice.set(inv.id, ids);
+  }
+  if (filters.project_id) {
+    const wantedId = filters.project_id;
+    invoices = invoices.filter((inv) => projectIdsByInvoice.get(inv.id)?.has(wantedId));
+    if (invoices.length === 0) return [];
+  }
+
   const waitingIdsByInvoice = await computeWaitingForIds(supabase, invoices);
 
   if (filters.waiting_for_user_id) {
@@ -124,11 +146,7 @@ export async function buildInvoiceListReport(
 
   const now = Date.now();
   const rows: InvoiceListRow[] = invoices.map((inv) => {
-    const customerIds = new Set<string>();
-    if (inv.project_id) customerIds.add(inv.project_id);
-    for (const li of lineItemsByInvoice.get(inv.id) ?? []) {
-      if (li.project_id) customerIds.add(li.project_id);
-    }
+    const customerIds = projectIdsByInvoice.get(inv.id) ?? new Set<string>();
     const approvedIds = approvedIdsByInvoice.get(inv.id);
     const waitingIds = waitingIdsByInvoice.get(inv.id) ?? [];
     return {

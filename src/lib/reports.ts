@@ -55,6 +55,14 @@ export interface ReportResult {
 // (individual rows, sorted by customer then supplier) — same filter
 // semantics for both, so "filter, then either summarize or list" stays
 // consistent no matter which view someone's looking at.
+//
+// project_id is deliberately NOT checked here, unlike every other filter
+// — a bill can split across multiple projects via invoice_line_items
+// (migration 0019), not just the single invoices.project_id column, so
+// matching it needs per-invoice line-item data this generic function
+// doesn't have. Same reason waiting_for_user_id/approved_by_user_id are
+// applied as a separate post-filter step by each caller instead of living
+// in here — see computeProjectIdsByInvoice below.
 export function filterInvoicesForReport<
   T extends {
     status: string;
@@ -77,7 +85,6 @@ export function filterInvoicesForReport<
     ) {
       return false;
     }
-    if (f.project_id && i.project_id !== f.project_id) return false;
     if (f.amount_over != null && (i.amount ?? 0) < f.amount_over) return false;
     if (f.amount_under != null && (i.amount ?? 0) > f.amount_under) return false;
     if (f.submitted_by_user_id && i.submitted_by !== f.submitted_by_user_id) return false;
@@ -86,6 +93,37 @@ export function filterInvoicesForReport<
     if (toMs != null && created > toMs) return false;
     return true;
   });
+}
+
+// Every project an invoice touches — the invoice's own project_id (old
+// data, or a simple single-project bill) UNION every line item's
+// project_id (a bill split across several — migration 0019). Shared by
+// runReport (which has no other reason to fetch line items) so both the
+// project filter and "group by project" see the same real picture
+// invoice-list-report.ts's own per-row "Customers" column already does.
+export async function computeProjectIdsByInvoice(
+  supabase: SupabaseClient<Database>,
+  invoices: { id: string; project_id: string | null }[]
+): Promise<Map<string, Set<string>>> {
+  const map = new Map<string, Set<string>>();
+  for (const i of invoices) {
+    if (i.project_id) map.set(i.id, new Set([i.project_id]));
+  }
+  if (invoices.length === 0) return map;
+  const { data: lineItems } = await supabase
+    .from("invoice_line_items")
+    .select("invoice_id, project_id")
+    .in(
+      "invoice_id",
+      invoices.map((i) => i.id)
+    );
+  for (const li of lineItems ?? []) {
+    if (!li.project_id) continue;
+    const set = map.get(li.invoice_id) ?? new Set<string>();
+    set.add(li.project_id);
+    map.set(li.invoice_id, set);
+  }
+  return map;
 }
 
 // Who actually approved each invoice (decision = 'approved' rows in
@@ -149,6 +187,15 @@ export async function runReport(
     list = list.filter((i) => approvedIdsByInvoice.get(i.id)?.has(wantedId));
   }
 
+  // Needed either way "project" comes up: to filter by it (a bill split
+  // across several projects should match a filter on any of them, not
+  // just whichever one sits on the invoice row) and to group by it below.
+  const projectIdsByInvoice = await computeProjectIdsByInvoice(supabase, list);
+  if (config.filters.project_id) {
+    const wantedId = config.filters.project_id;
+    list = list.filter((i) => projectIdsByInvoice.get(i.id)?.has(wantedId));
+  }
+
   const keyOf = (i: (typeof list)[number]): string => {
     switch (config.groupBy) {
       case "month":
@@ -157,10 +204,6 @@ export async function runReport(
         return i.vendor_name ?? "Unknown";
       case "status":
         return i.status;
-      case "project":
-        return i.project_id
-          ? (projectName.get(i.project_id) ?? "Unknown")
-          : "No project";
       default:
         return "All";
     }
@@ -170,12 +213,27 @@ export async function runReport(
   const totals: ReportRow = { key: "Total", count: 0, amount: 0, tax: 0 };
 
   for (const i of list) {
-    const key = keyOf(i);
-    const row = rows.get(key) ?? { key, count: 0, amount: 0, tax: 0 };
-    row.count += 1;
-    row.amount += i.amount ?? 0;
-    row.tax += i.tax_amount ?? 0;
-    rows.set(key, row);
+    // A split invoice contributes to EVERY project it touches (the
+    // standard way a split bill gets attributed in a real accounting
+    // report), not just whichever project happens to sit on the invoice
+    // row — but only ever counts ONCE toward the totals below.
+    const keys =
+      config.groupBy === "project"
+        ? (() => {
+            const ids = projectIdsByInvoice.get(i.id);
+            return ids && ids.size > 0
+              ? [...ids].map((pid) => projectName.get(pid) ?? "Unknown")
+              : ["No project"];
+          })()
+        : [keyOf(i)];
+
+    for (const key of keys) {
+      const row = rows.get(key) ?? { key, count: 0, amount: 0, tax: 0 };
+      row.count += 1;
+      row.amount += i.amount ?? 0;
+      row.tax += i.tax_amount ?? 0;
+      rows.set(key, row);
+    }
 
     totals.count += 1;
     totals.amount += i.amount ?? 0;
