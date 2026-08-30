@@ -78,20 +78,17 @@ export async function buildInvoiceListReport(
     await Promise.all([
       supabase
         .from("invoice_line_items")
-        .select("invoice_id, class, category, project_id")
+        .select("invoice_id, project_id")
         .in("invoice_id", invoiceIds),
       computeApprovedByIds(supabase, invoiceIds),
       supabase.from("projects").select("id, name").eq("organization_id", organizationId),
     ]);
 
   const projectName = new Map((projects ?? []).map((p) => [p.id, p.name]));
-  const lineItemsByInvoice = new Map<
-    string,
-    { class: string | null; category: string | null; project_id: string | null }[]
-  >();
+  const lineItemsByInvoice = new Map<string, { project_id: string | null }[]>();
   for (const li of lineItems ?? []) {
     const list = lineItemsByInvoice.get(li.invoice_id) ?? [];
-    list.push({ class: li.class, category: li.category, project_id: li.project_id });
+    list.push({ project_id: li.project_id });
     lineItemsByInvoice.set(li.invoice_id, list);
   }
 

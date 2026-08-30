@@ -433,26 +433,24 @@ export default async function SettingsPage({
   const avatarById = new Map((profiles ?? []).map((p) => [p.id, p.avatar_url]));
 
   const admin = createAdminClient();
-  const { data: authUsers } = await admin.auth.admin.listUsers({
-    page: 1,
-    perPage: 1000,
-  });
-  const emailById = new Map(
-    (authUsers?.users ?? []).map((u) => [u.id, u.email ?? null])
-  );
-  // Real MFA status, not a placeholder — but GoTrue's bulk listUsers()
-  // does NOT include each user's enrolled factors (confirmed live: the
-  // field is simply absent from that response, unlike the single-user
-  // endpoint) — every user showed "Disabled" here regardless of actual
-  // status until this was caught. getUserById per member is the one that
-  // actually returns `factors`; org membership lists are small enough
-  // that N individual calls here is a non-issue.
-  const mfaStatuses = await Promise.all(
+  // One per-member getUserById pass covers both email AND MFA status — not
+  // a bulk listUsers({ perPage: 1000 }) for email plus a SEPARATE per-user
+  // pass for MFA. GoTrue's bulk listUsers() doesn't include each user's
+  // enrolled factors at all (confirmed live: every member showed
+  // "Disabled" regardless of actual status until this was caught) — only
+  // the single-user endpoint returns `factors`, and its response already
+  // carries `.email` too, so the bulk call was pure redundant work. Org
+  // membership lists are small enough that N individual calls is a
+  // non-issue.
+  const userDetails = await Promise.all(
     userIds.map((id) => admin.auth.admin.getUserById(id))
+  );
+  const emailById = new Map(
+    userIds.map((id, i) => [id, userDetails[i].data.user?.email ?? null])
   );
   const mfaEnabledById = new Map(
     userIds.map((id, i) => {
-      const u = mfaStatuses[i].data.user;
+      const u = userDetails[i].data.user;
       return [
         id,
         Array.isArray(u?.factors) && u.factors.some((f) => f.status === "verified"),

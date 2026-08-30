@@ -155,17 +155,15 @@ export async function runReport(
   organizationId: string,
   config: ReportConfig
 ): Promise<ReportResult> {
-  const { data: invoices } = await supabase
-    .from("invoices")
-    .select(
-      "id, status, vendor_name, project_id, amount, tax_amount, submitted_by, created_at, workflow_id, current_step_order, step_override_approver_id"
-    )
-    .eq("organization_id", organizationId);
-
-  const { data: projects } = await supabase
-    .from("projects")
-    .select("id, name")
-    .eq("organization_id", organizationId);
+  const [{ data: invoices }, { data: projects }] = await Promise.all([
+    supabase
+      .from("invoices")
+      .select(
+        "id, status, vendor_name, project_id, amount, tax_amount, submitted_by, created_at, workflow_id, current_step_order, step_override_approver_id"
+      )
+      .eq("organization_id", organizationId),
+    supabase.from("projects").select("id, name").eq("organization_id", organizationId),
+  ]);
   const projectName = new Map(
     (projects ?? []).map((p) => [p.id, p.name])
   );
@@ -187,10 +185,14 @@ export async function runReport(
     list = list.filter((i) => approvedIdsByInvoice.get(i.id)?.has(wantedId));
   }
 
-  // Needed either way "project" comes up: to filter by it (a bill split
-  // across several projects should match a filter on any of them, not
-  // just whichever one sits on the invoice row) and to group by it below.
-  const projectIdsByInvoice = await computeProjectIdsByInvoice(supabase, list);
+  // Only fetched when actually needed (filtering OR grouping by project) —
+  // a full invoice_line_items query on every single report run, even a
+  // plain "group by status" report with no project involved at all, was
+  // wasted work.
+  const needsProjectIds = !!config.filters.project_id || config.groupBy === "project";
+  const projectIdsByInvoice = needsProjectIds
+    ? await computeProjectIdsByInvoice(supabase, list)
+    : new Map<string, Set<string>>();
   if (config.filters.project_id) {
     const wantedId = config.filters.project_id;
     list = list.filter((i) => projectIdsByInvoice.get(i.id)?.has(wantedId));

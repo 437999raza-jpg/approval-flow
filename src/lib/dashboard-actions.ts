@@ -12,7 +12,7 @@ import {
 } from "@/lib/extract-invoice";
 import { selectWorkflowForInvoice } from "@/lib/workflow-routing";
 import { computeLineItemTotals } from "@/lib/invoice-totals";
-import { holdbackCategoryFor, getSupplierDefaults, taxCodeIdFor, buildSimpleLineItem } from "@/lib/invoices";
+import { holdbackCategoryFor, getSupplierDefaults, taxCodeIdFor, buildSimpleLineItem, addDays } from "@/lib/invoices";
 import { resolveSupplier } from "@/lib/suppliers";
 import {
   effectiveApproversForStep,
@@ -860,11 +860,21 @@ export async function saveBill(invoiceId: string, formData: FormData) {
   // still-unmatched name keeps it flagged so the bill can't sync wrongly.
   const vendorChanged = next.vendor_name !== (before.vendor_name ?? null);
   let qboVendorMatched: boolean | undefined;
+  let supplierId: string | null | undefined;
   if (vendorChanged && next.vendor_name) {
     const suppliers = await fetchAllQboSuppliers(supabase, before.organization_id);
     qboVendorMatched = matchSupplier(suppliers, next.vendor_name) !== null;
+    // Re-resolve supplier_id alongside vendor_name so the two can never
+    // disagree — the same guarantee ingestion and re-extraction already
+    // give; a manual vendor-name correction here was the one write path
+    // that didn't, silently orphaning supplier_id (duplicate detection,
+    // supplier-rule matching, and statement reconciliation are all keyed
+    // off it) at whatever vendor it pointed to before the edit.
+    const supplier = await resolveSupplier(supabase, before.organization_id, next.vendor_name);
+    supplierId = supplier?.id ?? null;
   } else if (vendorChanged && !next.vendor_name) {
     qboVendorMatched = false;
+    supplierId = null;
   }
 
   await supabase
@@ -872,6 +882,7 @@ export async function saveBill(invoiceId: string, formData: FormData) {
     .update({
       ...next,
       ...(qboVendorMatched !== undefined ? { qbo_vendor_matched: qboVendorMatched } : {}),
+      ...(supplierId !== undefined ? { supplier_id: supplierId } : {}),
       updated_at: new Date().toISOString(),
     })
     .eq("id", invoiceId);
@@ -2288,11 +2299,27 @@ async function reExtractInvoiceCore(
   // same update and can never disagree — mapExtractionToInvoice sets
   // vendor_name from this same extracted value.
   const supplier = await resolveSupplier(supabase, invoice.organization_id, extracted.vendor_name);
+  const supplierDefaultsForInvoice = await getSupplierDefaults(
+    supabase,
+    invoice.organization_id,
+    supplier?.id ?? null
+  );
 
+  const mapped = mapExtractionToInvoice(extracted);
+  // Same "supplier rule wins" precedence ingestion uses (invoices.ts) —
+  // mapExtractionToInvoice only knows the raw extraction, so without this
+  // a re-extract silently reverted a configured Currency/Payment-terms
+  // rule back to whatever's freshly OCR'd, discarding it with no warning.
+  const billDate = (mapped.bill_date as string | null) ?? null;
   await supabase
     .from("invoices")
     .update({
-      ...mapExtractionToInvoice(extracted),
+      ...mapped,
+      currency: supplierDefaultsForInvoice?.currency ?? extracted.currency ?? "USD",
+      due_date:
+        supplierDefaultsForInvoice?.payment_terms_days != null && billDate
+          ? addDays(billDate, supplierDefaultsForInvoice.payment_terms_days)
+          : (mapped.due_date as string | null),
       supplier_id: supplier?.id ?? null,
       updated_at: new Date().toISOString(),
     })
@@ -2326,11 +2353,7 @@ async function reExtractInvoiceCore(
     .select("default_tax_rate, default_tax_code_id, plan, trial_ends_at")
     .eq("id", invoice.organization_id)
     .single();
-  const supplierDefaults = await getSupplierDefaults(
-    supabase,
-    invoice.organization_id,
-    supplier?.id ?? null
-  );
+  const supplierDefaults = supplierDefaultsForInvoice;
   const orgDefaultTaxRate = orgDefault?.default_tax_rate ?? null;
   const orgDefaultTaxCodeId = orgDefault?.default_tax_code_id ?? null;
   if (extractionModeForOrg(orgDefault?.plan, orgDefault?.trial_ends_at) === "simple") {
@@ -3376,14 +3399,26 @@ export async function syncQboSuppliers() {
         .eq("id", org.id)
         .single();
       if (orgRow?.default_tax_rate != null) {
-        const { error: seedError } = await supabase.from("supplier_defaults").upsert(
-          suppliers.map((s) => ({
-            organization_id: org.id,
-            vendor_name: s.name,
-            tax_rate: orgRow.default_tax_rate,
-          })),
-          { onConflict: "organization_id,vendor_name_normalized", ignoreDuplicates: true }
+        // supplier_id must be set here too, not just vendor_name —
+        // getSupplierDefaults() (invoices.ts) looks up rules by supplier_id
+        // only now, with no text-matching fallback. A row seeded without it
+        // was invisible to ingestion: a brand-new vendor would get no tax
+        // rate at all despite this seed appearing to have configured one.
+        const resolved = await Promise.all(
+          suppliers.map((s) => resolveSupplier(supabase, org.id, s.name))
         );
+        const seedRows = suppliers
+          .map((s, i) => ({ supplier: resolved[i], name: s.name }))
+          .filter((r): r is { supplier: { id: string; name: string }; name: string } => !!r.supplier)
+          .map(({ supplier, name }) => ({
+            organization_id: org.id,
+            vendor_name: name,
+            supplier_id: supplier.id,
+            tax_rate: orgRow.default_tax_rate,
+          }));
+        const { error: seedError } = await supabase
+          .from("supplier_defaults")
+          .upsert(seedRows, { onConflict: "organization_id,vendor_name_normalized", ignoreDuplicates: true });
         if (seedError) console.error("syncQboSuppliers: default tax seed failed:", seedError);
       }
     }

@@ -884,12 +884,20 @@ export default async function DashboardPage({
 
     if (selected.vendor_name) {
       const [{ data: sd }, { data: matchedSupplier }] = await Promise.all([
-        supabase
-          .from("supplier_defaults")
-          .select("*")
-          .eq("organization_id", org.id)
-          .eq("vendor_name_normalized", normalizeForMatching(selected.vendor_name))
-          .maybeSingle(),
+        // Keyed by supplier_id (migration 0092), same as getSupplierDefaults
+        // (invoices.ts) — a text-based lookup here could show a DIFFERENT
+        // rule than the one ingestion/re-extraction would actually apply.
+        selected.supplier_id
+          ? supabase
+              .from("supplier_defaults")
+              .select("*")
+              .eq("organization_id", org.id)
+              .eq("supplier_id", selected.supplier_id)
+              .maybeSingle()
+          : Promise.resolve({ data: null }),
+        // qbo_suppliers is a separate, unrelated identity space (QBO's own
+        // read-only vendor mirror) — deliberately still text-matched, not
+        // part of the Supplier entity migration's scope.
         supabase
           .from("qbo_suppliers")
           .select("qbo_vendor_id")

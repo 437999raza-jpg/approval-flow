@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentOrg } from "@/lib/current-org";
 import { sendStatementEmail, updateStatementDetails, updateStatementSupplier, reconcileStatementAgain } from "@/lib/dashboard-actions";
 import { SubmitButton } from "@/components/SubmitButton";
@@ -66,18 +67,37 @@ export default async function StatementDetailPage({
   // Matched by supplier_id, not a raw ILIKE on vendor_name text — the
   // latter missed a punctuation-only difference between the statement's
   // supplier name and an invoice's OCR'd vendor name.
-  const supplier = await resolveSupplier(supabase, org.id, statement.supplier_name);
+  // Admin client — this page is viewable by admins AND auditors (line 30
+  // only excludes "user"), but the suppliers table's insert policy
+  // excludes auditors. A find-or-create denied by RLS silently returned
+  // null, which made the outstanding-balance section below fall back to
+  // an empty result — a wrong $0 balance shown specifically to the role
+  // whose job is reviewing these numbers, for no reason but which viewer
+  // happened to load the page first for a brand-new vendor.
+  const supplier = await resolveSupplier(createAdminClient(), org.id, statement.supplier_name);
 
-  // Flow's own outstanding balance for this vendor: every invoice not yet
-  // marked paid — same "still owed" semantics runQboPaymentSync (src/lib/
-  // qbo.ts) uses to decide which bills still need checking.
-  const { data: vendorInvoices } = supplier
-    ? await supabase
-        .from("invoices")
-        .select("amount, qbo_payment_status")
-        .eq("organization_id", org.id)
-        .eq("supplier_id", supplier.id)
-    : { data: [] };
+  // Flow's own outstanding balance for this vendor (every invoice not yet
+  // marked paid — same "still owed" semantics runQboPaymentSync, src/lib/
+  // qbo.ts, uses) and the vendor's own email (OCR'd off any recent
+  // invoice — there's no dedicated per-supplier email field, see the same
+  // reasoning in BillPanel.tsx) are independent reads, fetched together.
+  const [{ data: vendorInvoices }, { data: recentInvoice }] = supplier
+    ? await Promise.all([
+        supabase
+          .from("invoices")
+          .select("amount, qbo_payment_status")
+          .eq("organization_id", org.id)
+          .eq("supplier_id", supplier.id),
+        supabase
+          .from("invoices")
+          .select("extraction")
+          .eq("organization_id", org.id)
+          .eq("supplier_id", supplier.id)
+          .not("extraction", "is", null)
+          .order("created_at", { ascending: false })
+          .limit(20),
+      ])
+    : [{ data: [] }, { data: [] }];
   // .neq() on a nullable column drops NULL rows entirely (NULL != 'paid'
   // is NULL, not true, in SQL) — filtering in JS instead so an invoice
   // that hasn't been checked against QBO yet still counts as outstanding,
@@ -90,20 +110,6 @@ export default async function StatementDetailPage({
   const balanceDiff = hasBothBalances ? statement.statement_balance! - flowBalance : null;
   const balanceMismatch = balanceDiff != null && Math.abs(balanceDiff) > 0.01;
 
-  // Best-effort default "To" — the vendor's own email, as OCR'd off any
-  // recent invoice from them (there's no dedicated per-supplier email
-  // field — see the same reasoning in BillPanel.tsx). Empty if none found;
-  // the admin can always type it in.
-  const { data: recentInvoice } = supplier
-    ? await supabase
-        .from("invoices")
-        .select("extraction")
-        .eq("organization_id", org.id)
-        .eq("supplier_id", supplier.id)
-        .not("extraction", "is", null)
-        .order("created_at", { ascending: false })
-        .limit(20)
-    : { data: [] };
   const defaultTo =
     (recentInvoice ?? [])
       .map((i) => (i.extraction as Record<string, unknown> | null)?.vendor_email)

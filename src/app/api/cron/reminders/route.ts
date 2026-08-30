@@ -30,8 +30,21 @@ export async function GET(request: NextRequest) {
   const appUrl = getAppUrl();
 
   const { data: orgs } = await admin.from("organizations").select("id");
-  const { data: authUsers } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 });
-  const emailById = new Map((authUsers?.users ?? []).map((u) => [u.id, u.email ?? null]));
+  // Per-user lookups (cached, not re-fetched for the same person across
+  // orgs), not a bulk listUsers({ perPage: 1000 }) — that silently
+  // truncates past 1000 users platform-wide, meaning any approver beyond
+  // the first page got no email and was skipped with no error, every
+  // day, indefinitely. Same anti-pattern already found and fixed
+  // elsewhere this session (support chat, @mentions, "it's your turn",
+  // rejections, /workflows).
+  const emailById = new Map<string, string | null>();
+  const getEmail = async (userId: string): Promise<string | null> => {
+    if (emailById.has(userId)) return emailById.get(userId)!;
+    const { data } = await admin.auth.admin.getUserById(userId);
+    const email = data.user?.email ?? null;
+    emailById.set(userId, email);
+    return email;
+  };
 
   let digestsSent = 0;
   let escalationsSent = 0;
@@ -40,7 +53,7 @@ export async function GET(request: NextRequest) {
     const { byApprover, escalations } = await computeOrgPending(org.id);
 
     for (const [userId, items] of byApprover) {
-      const email = emailById.get(userId);
+      const email = await getEmail(userId);
       if (!email) continue;
       await sendDigestEmail({
         to: email,
@@ -61,9 +74,9 @@ export async function GET(request: NextRequest) {
         .select("user_id")
         .eq("organization_id", org.id)
         .eq("role", "admin");
-      const adminEmails = (admins ?? [])
-        .map((a) => emailById.get(a.user_id))
-        .filter((e): e is string => !!e);
+      const adminEmails = (
+        await Promise.all((admins ?? []).map((a) => getEmail(a.user_id)))
+      ).filter((e): e is string => !!e);
 
       const { data: profiles } = await admin
         .from("profiles")
