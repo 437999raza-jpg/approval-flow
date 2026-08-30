@@ -4,15 +4,17 @@ Invoice approval workflows (ApprovalMax-style), built on Next.js, deployed on
 Vercel, with Supabase for Postgres, Auth, and Storage, and an OpenRouter
 model for invoice field extraction.
 
-Status: **early-stage groundwork**, not a finished product. Auth, invoice
-ingestion (manual + email, with multi-invoice split detection), a
-workflow-selection routing engine, ApprovalMax-style conditional per-step
-approval routing (multiple approvers per step, each eligible only when an
-invoice's Class/Category/Supplier/Customer matches their own conditions),
-role-scoped visibility, a review queue, per-supplier default rules,
-@mention notifications, and a master-detail dashboard UI are all working
-end to end. See [What's not built yet](#whats-not-built-yet) for the real
-gaps.
+Status: **early-stage groundwork**, not a finished product. Auth
+(including self-serve signup with a 14-day trial, and per-user TOTP
+two-factor), invoice ingestion (manual + email, with multi-invoice split
+detection), a workflow-selection routing engine, ApprovalMax-style
+conditional per-step approval routing (multiple approvers per step, each
+eligible only when an invoice's Class/Category/Supplier/Customer matches
+their own conditions), role-scoped visibility, a review queue,
+per-supplier default rules, @mention notifications, QuickBooks Online
+sync, Statement Reconciliation, plan-based billing, and a master-detail
+dashboard UI are all working end to end. See [What's not built
+yet](#whats-not-built-yet) for the real gaps.
 
 ---
 
@@ -76,9 +78,18 @@ lifecycle](#invoice-lifecycle--statuses)).
 
 ## Data model
 
-Full schema: [`supabase/migrations/`](supabase/migrations/) (30 migrations,
-`0001` → `0030`; see [Migration history](#migration-history) for what each
-one added).
+Full schema: [`supabase/migrations/`](supabase/migrations/) — numbered
+through `0089` as of 2026-08-30 (a few numbers were added then reverted for
+a shipped-then-reverted feature, e.g. 0043/0044, 0087/0088→0089 — see the
+table below and each session log for why). [`supabase/full_schema.sql`](supabase/full_schema.sql)
+is every migration concatenated in order into one file — the fast path for
+a fresh Supabase project (see [Local development](#local-development))
+instead of pasting 89 files one at a time; it's kept in sync by hand
+whenever a new migration lands, so treat the individual files under
+`migrations/` as the source of truth if the two ever disagree. See
+[Migration history](#migration-history) for what `0001`–`0056` added in
+detail; everything after that is documented inline in its own section
+(linked from the table's closing note) rather than re-listed row by row.
 
 | Table | Purpose |
 |---|---|
@@ -198,6 +209,15 @@ written to be idempotent (safe to re-run). Roughly:
 | 0054 | `upload_log` — durable record of every manual upload (outcome, invoice/split link, error, `created_at → processed_at` timing) for the Recent uploads list and future OCR/queue reporting; 90-day auto-cleanup. |
 | 0055 | `ingest_jobs` — async ingestion queue (staging file, status, 3-try retry); `upload_log` gains `queued`/`processing` statuses; `inbound_email_log.processing` for in-flight display. |
 | 0056 | Storage UPDATE policy on the `invoices` bucket — fixes "new row violates row-level security policy" when Reorder pages replaces the stored PDF in place. |
+
+**0057 onward** (`0057`–`0089`) aren't re-listed row by row here — each is
+documented in the session log or feature section it belongs to: QBO
+payment status (0079), deadlines/reminders (0073), the ops dashboard
+(0077), self-serve signup + trial (0085/0086, [session log —
+2026-08-29 to 2026-08-30](#session-log--2026-08-29-to-2026-08-30)), Statement
+Reconciliation (0081–0084), and the plan-derived extraction mode saga
+(0088 added a column, 0089 dropped it again — same session log). Check
+`supabase/migrations/` directly for the exhaustive list.
 
 ---
 
@@ -1040,6 +1060,63 @@ instead of the whole app going down.
 
 ---
 
+## Session log — 2026-08-29 to 2026-08-30
+
+Another long session (user + AI pair). Full detail on each substantial
+piece lives in its own section (linked below) rather than repeated here —
+this is the connecting narrative plus the smaller fixes that didn't earn
+a dedicated section of their own.
+
+- **Statement Reconciliation matching bug** — fixed, plus a "Reconcile
+  again" button and open-in-new-tab links. See [Statement
+  Reconciliation](#statement-reconciliation-migrations-0081-0084).
+- **Self-serve signup + 14-day trial**, shared `bootstrapOrganization()`
+  helper, soft-lock on trial expiry, platform-admin trial extension. See
+  [Billing & usage](#billing--usage) and
+  [Authentication](#authentication).
+- **Terms & Privacy pages** (`/terms`, `/privacy`) — public, branded,
+  drafted with real content specific to Flow's actual product/plans/trial
+  and sub-processors (Supabase, OpenRouter, Resend, Stripe, QuickBooks
+  Online), structurally informed by researching ApprovalMax's own public
+  terms/policy pages but not copied from them. Company/jurisdiction
+  details: UFIRST LLC, Wyoming, USA; support contact `support@ufirst.co`.
+  **Not reviewed by counsel** — flagging that explicitly since these are
+  live, linked-from-signup pages.
+- **Per-user self-service MFA (TOTP)**. See [Two-factor authentication
+  (TOTP)](#two-factor-authentication-totp).
+- **Plan-derived Simple vs Complex extraction mode**, plus the manual
+  "Convert to one line" action. See [Simple vs Complex extraction
+  mode](#simple-vs-complex-extraction-mode).
+- **Starter and Growth's included-document counts raised** (50→100,
+  150→200; prices unchanged) — see [Billing & usage](#billing--usage).
+- **Ingest queue no longer flashes "Failed" during a retryable attempt.**
+  `fail()` in [`src/lib/ingest-queue.ts`](src/lib/ingest-queue.ts) used to
+  mark `upload_log`/`inbound_email_log` as errored on **every** failed
+  attempt, even ones that go on to succeed on the next automatic retry
+  (found live: a real invoice's ingest job failed once, auto-retried, and
+  succeeded seconds later — but the Queue briefly showed it as "Failed"
+  in between, and the eventual "done" row kept the stale error message
+  since nothing ever cleared it). Now only reflects a failure in those
+  display tables once retries are actually exhausted (`terminal`), and
+  clears any leftover `error` on success.
+- **Diagnosed overall ingest health** (see [the "no true background
+  worker" gap in What's not built
+  yet](#whats-not-built-yet) for the real finding — jobs can sit queued
+  for hours with nobody noticing, purely because nothing drives the queue
+  except an open browser tab).
+- **`PLATFORM_ADMIN_EMAILS` production gotcha** — this env var
+  (`.env.local`) had never actually been set on Vercel's **production**
+  environment, only locally, so `/admin/organizations` (and its nav link)
+  was invisible when logged into the real production app as its intended
+  platform admin. Not a code bug — an env var genuinely has to be added
+  in Vercel's own dashboard and a fresh deploy triggered; existing
+  running deployments don't pick up a newly-added env var on their own.
+  **If a platform-admin-only page/link seems to not exist for someone who
+  should have access, check this first** before assuming a code/RLS
+  issue.
+
+---
+
 ## Environment variables
 
 Copy `.env.example` → `.env.local` and fill in:
@@ -1058,7 +1135,7 @@ Copy `.env.example` → `.env.local` and fill in:
 | `QBO_REDIRECT_URI` | For QBO sync | Must match the app's registered Redirect URI exactly, e.g. `http://localhost:3210/api/qbo/callback` |
 | `RESEND_API_KEY` | Yes (for email ingestion + mentions) | resend.com — required for inbound attachments and for @mention notification emails; without it, inbound ingestion can't fetch attachments and mentions still create the in-app `notifications` row, just no email |
 | `RESEND_FROM_EMAIL` | No (required if `RESEND_API_KEY` is set) | Must be a verified sender/domain in your Resend account |
-| `PLATFORM_ADMIN_EMAILS` | No | Comma-separated emails allowed to create new organizations at `/admin/organizations` (see [Multi-tenant onboarding tool](#multi-tenant-onboarding-tool-adminorganizations)). Leave unset to hide that page entirely. |
+| `PLATFORM_ADMIN_EMAILS` | No | Comma-separated emails allowed to create/manage organizations at `/admin/organizations` (see [Multi-tenant onboarding tool](#multi-tenant-onboarding-tool-adminorganizations)). Leave unset to hide that page entirely. **Must be set separately in each environment** — a value in `.env.local` has no effect on Vercel; set it there too (Project Settings → Environment Variables → Production) and trigger a fresh deploy, or the page/nav-link stays invisible in production even for the right email. |
 | `CRON_SECRET` | Recommended | Any random string you choose; Vercel sends it as `Authorization: Bearer $CRON_SECRET` on cron-triggered requests to `/api/cron/reminders` (see [Deadlines, reminders & escalation](#deadlines-reminders--escalation-migration-0073)). Unset = the route runs unauthenticated. |
 | `STRIPE_SECRET_KEY` | For billing | dashboard.stripe.com → Developers → API keys. Powers `/billing`'s "Pay now" and "Manage billing" (see [Billing & usage](#billing--usage)). No publishable key needed — the app only redirects to Stripe-hosted pages, never loads Stripe.js client-side. |
 | `OPS_APP_URL` | No | Base URL of the separate "Ufirst Ops" internal app (see [Ufirst Ops](#ufirst-ops-separate-internal-app)). Only used to link out to it from `/admin/organizations`'s "Support chat" button. Leave unset to hide that button. |
@@ -1080,10 +1157,14 @@ cp .env.example .env.local   # then fill in the values above
 ```
 
 1. **Create a Supabase project** at supabase.com.
-2. **Run all 30 migrations**, in order — paste each file in
-   [`supabase/migrations/`](supabase/migrations/) into the SQL editor and
-   run it (`0001` through `0030`), or `supabase db push` if you have the CLI
-   linked. All of them are idempotent — safe to re-run.
+2. **Run the schema** — paste
+   [`supabase/full_schema.sql`](supabase/full_schema.sql) (every migration,
+   concatenated in order) into the SQL editor and run it once, or
+   `supabase db push` if you have the CLI linked against
+   [`supabase/migrations/`](supabase/migrations/) directly. Both are
+   idempotent — safe to re-run. Only fall back to pasting individual
+   migration files one at a time if you need to stop partway through for
+   some reason; there's no need to otherwise.
 3. **Create the storage buckets**: Storage → New bucket → `invoices`
    (Public **off**) and `avatars` (Public **on**) — or let migration 0016
    create `avatars` for you via the SQL editor; `invoices` needs the same
@@ -1166,13 +1247,27 @@ Find your `auth.users` id in Supabase → Authentication → Users, or via
 2. **Sign up** (`signUp`) — self-serve: anyone can create an account.
    Unlike everything else in this app (invite-only via
    `organization_members`), a brand-new signup gets its **own new
-   organization**, as its admin — see
+   organization**, as its admin, plus a **14-day free trial** (see
+   [Billing & usage](#billing--usage)) — see
    [`src/lib/onboarding.ts`](src/lib/onboarding.ts)'s `ensureOrgForNewUser`,
    called from both `/auth/callback` and `/auth/confirm` right after a
    session is established. Idempotent (checks for an existing membership
    first), so it's safe to call on every auth completion, not just a
    user's first — an existing invited user completing a magic-link sign-in
-   is a no-op.
+   is a no-op. Both `ensureOrgForNewUser` and the platform-admin
+   `createOrganizationAction` (`/admin/organizations`) now share one
+   `bootstrapOrganization()` helper (`src/lib/admin-actions.ts`) for the
+   actual org-insert + membership + default-workflow bootstrap — a real
+   gap this closed: `ensureOrgForNewUser` used to have its own duplicated,
+   incomplete version of this with no default-workflow step at all, which
+   would have left a self-signed-up org's Approve/Reject silently broken
+   forever (`decide()` no-ops when `invoice.workflow_id` is null — same
+   failure mode already documented in [Multi-tenant onboarding
+   tool](#multi-tenant-onboarding-tool-adminorganizations) for the
+   admin-provisioned path, just never fixed on this one). The signup form
+   collects a company name (`company_name` in `user_metadata`) and an
+   ApprovalMax-style marketing opt-in checkbox
+   (`profiles.marketing_opt_in`, migration 0086).
 3. **Google, Microsoft, or Apple** (`signInWithOAuth({ provider })` —
    Supabase's provider keys are `google`, `azure` (Microsoft/Office 365 —
    Azure AD/Entra ID under the hood, covers both work/school and personal
@@ -1241,6 +1336,32 @@ exceeded" quickly while iterating. Options:
   `/auth/confirm` has a fallback that treats an already-established session
   as success if the token itself fails, which helps but doesn't fully
   eliminate this.
+
+### Two-factor authentication (TOTP)
+
+Per-user, self-service, opt-in — **not** admin-mandated. Built entirely on
+Supabase Auth's own `auth.mfa.*` API (no third-party service): a
+**Security** section on `/settings` ([`SecurityMfaSection.tsx`](src/components/SecurityMfaSection.tsx))
+lets anyone enroll a TOTP factor (any authenticator app — Google
+Authenticator, Authy, 1Password, …), shown as a QR code + manual-entry
+secret, confirmed with a 6-digit code before it turns on. Once enrolled,
+`middleware.ts` enforces it on every request: `getAuthenticatorAssuranceLevel()`
+compares the session's current level against what the account actually
+requires, and a mismatch (password/OAuth succeeded, but the 6-digit step
+hasn't happened yet) redirects to `/login/mfa` — same 5-second timeout
+guard as the existing `getUser()` call in that file, so a slow Auth call
+never hangs every request. An admin can only see the Members table's
+"2FA" status column (Enabled/Disabled) and remind someone directly — they
+cannot enroll, disable, or bypass 2FA on another user's account.
+
+**Real pre-existing bug found and fixed while building this**: the
+Members table's "2FA" column had silently shown "Disabled" for *everyone*
+since it was originally built — `admin.auth.admin.listUsers()` (the bulk
+endpoint `/settings` already used) doesn't return a `factors` field per
+user at all, confirmed by diffing its raw response against the
+single-user `admin.auth.admin.getUserById()` endpoint, which does.
+`settings/page.tsx` now fetches each member's status individually via
+`getUserById` instead.
 
 ---
 
@@ -1967,7 +2088,7 @@ anything links to the old URL shape.
 
 ## Billing & usage
 
-`/billing` — Flow's own billing: three fixed monthly plans
+`/billing` — Flow's own billing: four fixed monthly plans
 ([`src/lib/plans.ts`](src/lib/plans.ts)), not an admin-editable
 $/document rate (that model — `organizations.usage_rate_usd`,
 `saveUsageRate`, `UsageRateForm` — is gone; the column stays on the table,
@@ -1975,16 +2096,43 @@ just unread now).
 
 | Plan | Price/mo | Docs included | Overage/doc |
 |---|---|---|---|
-| Starter | $49 | 50 | $0.45 |
-| Growth | $99 | 150 | $0.35 |
+| Starter | $49 | 100 | $0.45 |
+| Growth | $99 | 200 | $0.35 |
 | Scale | $199 | 400 | $0.25 |
+| Detailed | $299 | 700 | $0.20 |
 
 Priced against comparables actually researched: ApprovalMax's old flat
 tiers ($59.40/$95/$133.10/mo, before they too moved to usage-based
 pricing in Aug 2026) and Dext's per-user-bundle pricing (~$25–31/mo for 5
 users + 250 docs). The pitch: Flow combines what ApprovalMax (approval
 routing) and Dext (invoice OCR/extraction) do as two separate products
-into one, priced below buying both.
+into one, priced below buying both. `includedDocs` on each `Plan` is the
+single source of truth read live by the Billing page's display, its
+overage calculation, and the actual Stripe overage-invoice line items
+(`dashboard-actions.ts`) — changing a plan's doc count is a one-line edit
+in `plans.ts`, nothing else to update.
+
+**Detailed is also the plan that decides extraction depth, not just
+price/volume** — see [Simple vs Complex extraction
+mode](#simple-vs-complex-extraction-mode) below: an org on the Detailed
+plan (or in an active trial) gets today's full line-by-line extraction;
+every other plan (or no plan at all) gets one line item per invoice.
+There's no separate switch for this — changing an org's plan is the only
+lever, on purpose, so billing and features can't drift apart.
+
+**14-day free trial** (self-serve signup only — see [Authentication →
+self-serve signup](#authentication)): `organizations.trial_ends_at`
+(migration 0085) grants full access to every feature, including
+Statement Reconciliation and Complex extraction, with no plan chosen yet.
+`isTrialActive`/`isOrgLocked` (`plans.ts`) soft-lock the org to read-only
+(`decide()` and manual upload both refuse; everything else, including
+inbound email, still works) once the trial lapses with no plan ever
+picked — `TrialBanner.tsx` shows the countdown, then the "choose a plan"
+prompt. A platform admin can push a trial's expiry out from
+`/admin/organizations` ("+14 days", `extendTrialAction`). An org
+provisioned the old way (via `/admin/organizations`'s "Create
+organization" form) has no trial clock at all — `trial_ends_at` stays
+null forever, always billed by hand.
 
 - One `usage_events` row per document accepted into the pipeline: an
   inbound-email attachment (after the signature-image filter) or a manual
@@ -2034,6 +2182,111 @@ into one, priced below buying both.
   the same `brand-*` Tailwind tokens as [the rest of the ufirst brand
   work](#brand-ufirst) — no new dependency for the chart, just a row of
   divs sized by `height: %`.
+
+---
+
+## Simple vs Complex extraction mode
+
+Two extraction depths, controlled by **plan alone** — not a separate
+switch anywhere:
+
+- **Complex** (today's default behavior) — full line-by-line extraction,
+  as documented in [Field extraction](#field-extraction-openrouter-model-agnostic):
+  one `invoice_line_items` row per line the model finds on the document.
+- **Simple** — Dext-style: exactly **one** line item per invoice, using
+  the document's own printed **subtotal** as the amount (not the total —
+  that would double-count tax once the existing tax-rate math applies),
+  tax auto-derived from the extracted rate (or a saved [supplier
+  default](#supplier-default-rules)'s rate, which still wins), and
+  category from the vendor's saved supplier default — landing blank for a
+  brand-new vendor, same one-time "set it and it's remembered" flow
+  supplier rules already provide for Complex mode.
+
+`extractionModeForOrg(plan, trialEndsAt)` in
+[`src/lib/plans.ts`](src/lib/plans.ts) is the single source of truth:
+**Complex** only for the **Detailed** plan or an active trial, **Simple**
+for every other plan (or no plan at all). The model still extracts the
+whole document exactly the same way either way — same `extractInvoiceFields`
+call, same OpenRouter cost — the only difference is which line item(s)
+[`buildSimpleLineItem`](src/lib/invoices.ts) vs. the normal per-line
+mapping build from that extraction, in both ingestion
+(`createInvoiceFromFile`) and re-extraction (`reExtractInvoiceCore` in
+`dashboard-actions.ts`).
+
+**This started as an independent per-org toggle (`organizations.extraction_mode`,
+migration 0088), then was deliberately redesigned to derive from plan
+instead** (migration 0089 drops that column again) — explicit ask: "if I
+change the plan, everything changes" so a customer always gets exactly
+what their plan promises, with no possibility of an org ending up on a
+plan/extraction combination nobody actually chose. **Do not re-add a
+separate `extraction_mode` switch** — if a customer needs a different
+extraction depth, that's a plan change, made either by them
+(`selectPlan()` on `/billing`) or a platform admin (the **Plan** column on
+`/admin/organizations`, `setOrgPlanAction` — replaced what used to be a
+Simple/Detailed toggle there, since a raw mode label didn't say anything
+about what the org was actually being billed).
+
+**Manual "Convert to one line"** — a per-invoice escape hatch, independent
+of plan/mode: in the Bill panel's Category-details table, checking two or
+more line items reveals **"Convert to one line"** in the same toolbar as
+Save/Clear/Delete selected. It merges only the **checked** lines — any
+line left unselected is untouched — and the **first selected line (by
+line order) wins outright**: its category/class/project/tax_rate are used
+exactly as they already are, no blending, no supplier-default override;
+only the amount becomes the sum of the selected lines' amounts (a null
+rate on that first line still falls back to the org's default rate, same
+as everywhere else). `recomputeInvoiceTotals` already sums across
+whatever line items exist after any edit, so leaving the untouched lines
+alone needs no special-casing in the totals math.
+
+**Real bug found and fixed via a post-ship audit**: `buildSimpleLineItem`
+originally used only the extracted `subtotal`, with no fallback — a
+document where OCR found a total but no separately-printed subtotal
+produced a **$0 line item** (a null amount is treated as `0` by
+`computeLineItemTotals`). Fixed to fall back to `total_amount`, matching
+the same fallback the Complex-mode "no line items extracted" path already
+used.
+
+---
+
+## Statement Reconciliation (migrations 0081-0084)
+
+Plan-gated (`hasStatementReconciliation()` in `plans.ts` — Detailed plan
+or an active trial, same trial-time-full-access rule as everything else):
+upload a vendor's own account statement PDF, and Flow matches its listed
+invoices/amounts against what's actually in the system for that vendor,
+surfacing which ones are missing so the office can chase the vendor for
+copies before month-end close.
+
+- **Upload** (`/statements`, `uploadAndReconcileStatement`) — the
+  statement is extracted the same mupdf+OpenRouter way invoices are
+  (`src/lib/extract-statement.ts`, a lean sibling of `extract-invoice.ts`:
+  just line date/reference/amount, no full invoice shape needed), stored
+  as `vendor_statement_lines`, then matched against this org's own
+  invoices from the same supplier by invoice number + amount.
+- **Detail page** (`/statements/[id]`) shows matched lines (linking
+  straight to the invoice, opening in a **new tab** — fixed after being
+  reported as disruptive to lose the statement view on every click) and
+  missing ones, with a one-click **"Email vendor"** draft to chase the
+  gaps.
+- **"Reconcile again"** button re-runs the matching for the statement's
+  current supplier without re-uploading — added after a real bug: a
+  statement showed a real, already-in-Flow invoice as "missing" purely
+  because the vendor's name had since been corrected/normalized
+  differently. Root cause was migration 0081 only ever adding
+  SELECT/INSERT RLS policies on `vendor_statement_lines`, never an UPDATE
+  one — Postgres RLS defaults to deny with no matching policy, so the
+  re-match's write silently touched zero rows, with no error surfaced
+  anywhere. Migration 0084 adds the missing policy. **If a future
+  statement-matching change silently doesn't seem to "take," check for
+  exactly this shape of gap first** — it's happened at least twice now in
+  this codebase (see 0023/0025/0050 in the migration history above for
+  the earlier instances).
+- The upload form also has an **X** to clear a chosen file before
+  submitting, instead of it being stuck showing the old filename until a
+  new one is picked.
+
+---
 
 ## Support chat (migration 0071)
 
@@ -2296,10 +2549,6 @@ be a per-report download:
 
 This is groundwork, not a finished product. In priority-ish order:
 
-- **Org signup/invite flow for the very first admin** — once one admin
-  exists, [Settings](#settings) can invite everyone else; bootstrapping
-  that first admin is still a manual SQL insert (see [First org
-  setup](#first-org-setup)).
 - **Real Supplier entity** — supplier defaults, duplicate detection, and
   the Document Search Supplier filter all match on normalized vendor-name
   text rather than a proper linked entity. Works, but fragile if the same
@@ -2318,9 +2567,22 @@ This is groundwork, not a finished product. In priority-ish order:
   final push to QBO is still a manual admin button per bill (no queue /
   scheduled auto-sync yet). This is also a deliberate hard rule, not just a
   gap: nothing reaches QBO until an admin presses the final button.
-- **Async extraction** — uploads/emails still wait inline on the 20–60s
-  OpenRouter call; moving that to a background queue is the planned "item
-  #1" (see the [session log](#session-log--2026-08-24-handoff-notes)).
+- **Ingestion has no true background worker.** Async extraction itself IS
+  built (migration 0055, [session log — 2026-08-24](#session-log--2026-08-24-handoff-notes))
+  — uploads/emails return instantly and a queued job does the real
+  OpenRouter work. But nothing drives that queue except the browser's own
+  poller (`/api/ingest/process`, called while the dashboard/Queue page is
+  open) — there's no Vercel Cron (or similar) picking up queued jobs on a
+  schedule. Confirmed live on 2026-08-30: several jobs sat `queued` for
+  **up to ~19 hours** overnight, simply because nobody had the app open,
+  before finally processing in a burst once someone did. Nothing is lost
+  or duplicated while waiting (the queue itself is durable — see 0066/0070
+  below), but "how fast does an invoice get processed" currently depends
+  on someone having Flow open, not on when it arrived. The app already
+  runs two other real Vercel Cron jobs (`/api/cron/reminders`,
+  `/api/cron/qbo-payment-sync`, both in `vercel.json`) — adding a third
+  that calls `runNextIngestJob` (`src/lib/ingest-queue.ts`) for every org
+  every few minutes is the straightforward fix, not yet built.
 
 ---
 
