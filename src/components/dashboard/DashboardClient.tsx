@@ -336,6 +336,29 @@ export function DashboardClient({ initialListData }: { initialListData: Dashboar
       : null;
   const nextInvoiceIdAfterDelete = nextInvoice?.id ?? prevInvoice?.id ?? null;
 
+  // Background prefetch: whenever a row actually scrolls into view in the
+  // invoice list, warm its detail so clicking it later feels the same as
+  // revisiting an already-cached one — same idea as Gmail preloading the
+  // next email. Scoped to real visibility (wired up in
+  // InvoiceSelectionList via IntersectionObserver) rather than a fixed
+  // guess at how many rows are nearby: it matches whatever actually fits
+  // the viewport, extends naturally as the user scrolls, and — unlike a
+  // fixed "distance from the selected row" — doesn't need to track
+  // anything across a list reorder, since visibility is just
+  // re-evaluated fresh each time. prefetchQuery itself already no-ops
+  // for a key that's already fresh or in flight, so calling this
+  // repeatedly for the same id as it re-enters view is harmless.
+  const handleRowVisible = useCallback(
+    (id: string) => {
+      queryClient.prefetchQuery({
+        queryKey: ["invoice-detail", id],
+        queryFn: () => fetchInvoiceDetail(id),
+        staleTime: 30 * 1000,
+      });
+    },
+    [queryClient]
+  );
+
   const possibleDuplicates = useMemo(() => {
     if (!selected) return [];
     const key = duplicateGroupKey(selected);
@@ -578,6 +601,7 @@ export function DashboardClient({ initialListData }: { initialListData: Dashboar
                     setSelectedId(id);
                     setDocOpen(false);
                   }}
+                  onRowVisible={handleRowVisible}
                 />
               </CollapsiblePane>
 
