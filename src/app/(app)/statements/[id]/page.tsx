@@ -30,43 +30,27 @@ export default async function StatementDetailPage({
   if (!org) redirect("/dashboard");
   if (org.role === "user") redirect("/dashboard");
 
-  const { data: statement } = await supabase
-    .from("vendor_statements")
-    .select(
-      "id, supplier_name, file_path, file_name, status, error_message, statement_date, statement_balance, note, created_at"
-    )
-    .eq("id", params.id)
-    .eq("organization_id", org.id)
-    .single();
+  // suppliers only needs org.id, not the statement — fetched alongside it
+  // instead of after.
+  const [{ data: statement }, suppliers] = await Promise.all([
+    supabase
+      .from("vendor_statements")
+      .select(
+        "id, supplier_name, file_path, file_name, status, error_message, statement_date, statement_balance, note, created_at"
+      )
+      .eq("id", params.id)
+      .eq("organization_id", org.id)
+      .single(),
+    fetchAllQboSuppliers(supabase, org.id),
+  ]);
   if (!statement) notFound();
 
-  const { data: signed } = await supabase.storage
-    .from(STATEMENT_BUCKET)
-    .createSignedUrl(statement.file_path, 60 * 10);
-  const fileUrl = signed?.signedUrl ?? null;
-
-  const suppliers = await fetchAllQboSuppliers(supabase, org.id);
-
-  const { data: lines } = await supabase
-    .from("vendor_statement_lines")
-    .select("id, invoice_number, statement_date, amount, match_status, matched_invoice_id, created_at")
-    .eq("statement_id", statement.id)
-    .order("created_at", { ascending: true });
-
-  const matchedIds = (lines ?? [])
-    .map((l) => l.matched_invoice_id)
-    .filter((id): id is string => id != null);
-  const { data: matchedInvoices } = matchedIds.length
-    ? await supabase
-        .from("invoices")
-        .select("id, status, qbo_sync_status, qbo_bill_id")
-        .in("id", matchedIds)
-    : { data: [] };
-  const invoiceById = new Map((matchedInvoices ?? []).map((i) => [i.id, i]));
-
-  // Matched by supplier_id, not a raw ILIKE on vendor_name text — the
-  // latter missed a punctuation-only difference between the statement's
-  // supplier name and an invoice's OCR'd vendor name.
+  // signed/lines/supplier each only depend on `statement` above, not on
+  // each other — three round trips in parallel instead of in series.
+  //
+  // supplier: matched by supplier_id, not a raw ILIKE on vendor_name text
+  // — the latter missed a punctuation-only difference between the
+  // statement's supplier name and an invoice's OCR'd vendor name.
   // Admin client — this page is viewable by admins AND auditors (line 30
   // only excludes "user"), but the suppliers table's insert policy
   // excludes auditors. A find-or-create denied by RLS silently returned
@@ -74,30 +58,52 @@ export default async function StatementDetailPage({
   // an empty result — a wrong $0 balance shown specifically to the role
   // whose job is reviewing these numbers, for no reason but which viewer
   // happened to load the page first for a brand-new vendor.
-  const supplier = await resolveSupplier(createAdminClient(), org.id, statement.supplier_name);
+  const [{ data: signed }, { data: lines }, supplier] = await Promise.all([
+    supabase.storage.from(STATEMENT_BUCKET).createSignedUrl(statement.file_path, 60 * 10),
+    supabase
+      .from("vendor_statement_lines")
+      .select("id, invoice_number, statement_date, amount, match_status, matched_invoice_id, created_at")
+      .eq("statement_id", statement.id)
+      .order("created_at", { ascending: true }),
+    resolveSupplier(createAdminClient(), org.id, statement.supplier_name),
+  ]);
+  const fileUrl = signed?.signedUrl ?? null;
 
-  // Flow's own outstanding balance for this vendor (every invoice not yet
-  // marked paid — same "still owed" semantics runQboPaymentSync, src/lib/
-  // qbo.ts, uses) and the vendor's own email (OCR'd off any recent
-  // invoice — there's no dedicated per-supplier email field, see the same
-  // reasoning in BillPanel.tsx) are independent reads, fetched together.
-  const [{ data: vendorInvoices }, { data: recentInvoice }] = supplier
-    ? await Promise.all([
-        supabase
-          .from("invoices")
-          .select("amount, qbo_payment_status")
-          .eq("organization_id", org.id)
-          .eq("supplier_id", supplier.id),
-        supabase
-          .from("invoices")
-          .select("extraction")
-          .eq("organization_id", org.id)
-          .eq("supplier_id", supplier.id)
-          .not("extraction", "is", null)
-          .order("created_at", { ascending: false })
-          .limit(20),
-      ])
-    : [{ data: [] }, { data: [] }];
+  const matchedIds = (lines ?? [])
+    .map((l) => l.matched_invoice_id)
+    .filter((id): id is string => id != null);
+
+  // matchedInvoices only needs matchedIds (from lines above); the vendor-
+  // balance pair only needs supplier — independent of each other, so both
+  // go out together rather than one after the other.
+  const [{ data: matchedInvoices }, [{ data: vendorInvoices }, { data: recentInvoice }]] = await Promise.all([
+    matchedIds.length
+      ? supabase.from("invoices").select("id, status, qbo_sync_status, qbo_bill_id").in("id", matchedIds)
+      : Promise.resolve({ data: [] }),
+    // Flow's own outstanding balance for this vendor (every invoice not
+    // yet marked paid — same "still owed" semantics runQboPaymentSync,
+    // src/lib/qbo.ts, uses) and the vendor's own email (OCR'd off any
+    // recent invoice — there's no dedicated per-supplier email field, see
+    // the same reasoning in BillPanel.tsx) are independent reads too.
+    supplier
+      ? Promise.all([
+          supabase
+            .from("invoices")
+            .select("amount, qbo_payment_status")
+            .eq("organization_id", org.id)
+            .eq("supplier_id", supplier.id),
+          supabase
+            .from("invoices")
+            .select("extraction")
+            .eq("organization_id", org.id)
+            .eq("supplier_id", supplier.id)
+            .not("extraction", "is", null)
+            .order("created_at", { ascending: false })
+            .limit(20),
+        ])
+      : Promise.resolve([{ data: [] }, { data: [] }]),
+  ]);
+  const invoiceById = new Map((matchedInvoices ?? []).map((i) => [i.id, i]));
   // .neq() on a nullable column drops NULL rows entirely (NULL != 'paid'
   // is NULL, not true, in SQL) — filtering in JS instead so an invoice
   // that hasn't been checked against QBO yet still counts as outstanding,

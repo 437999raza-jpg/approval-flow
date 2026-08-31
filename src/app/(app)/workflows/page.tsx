@@ -25,6 +25,8 @@ import {
 } from "@/lib/workflow-impact";
 
 type RuleRow = Database["public"]["Tables"]["approval_workflow_rules"]["Row"];
+type StepRow = Database["public"]["Tables"]["approval_workflow_steps"]["Row"];
+type WorkflowChangeImpactRow = Database["public"]["Tables"]["workflow_change_impacts"]["Row"];
 
 // Parses the class/supplier/customer/category condition fields a
 // StepApproverMatrixRow form submits (see components/StepApproverMatrixRow.tsx
@@ -489,40 +491,113 @@ export default async function WorkflowsPage() {
   // no read-only mirror here, unlike auditor's full-app visibility.
   if (org.role === "user") redirect("/dashboard");
 
-  const { data: pendingImpacts } = isAdmin
-    ? await supabase
-        .from("workflow_change_impacts")
-        .select("*")
-        .eq("organization_id", org.id)
-        .is("dismissed_at", null)
-        .order("created_at", { ascending: false })
-        .limit(5)
-    : { data: [] };
+  // Tier 1: every query here only needs org.id — none depend on another's
+  // result, so they all go out on the wire together instead of one round
+  // trip each. (Previously sequential: pendingImpacts, then workflows,
+  // then projects one at a time, then the QBO trio, then members —
+  // 6+ round trips before any of the real dependency chain below even
+  // started.)
+  const [
+    { data: pendingImpacts },
+    { data: workflows },
+    { data: projects },
+    { data: qboClassRows },
+    { data: qboCategoryRows },
+    qboSupplierRows,
+    { data: members },
+  ] = await Promise.all([
+    isAdmin
+      ? supabase
+          .from("workflow_change_impacts")
+          .select("*")
+          .eq("organization_id", org.id)
+          .is("dismissed_at", null)
+          .order("created_at", { ascending: false })
+          .limit(5)
+      : Promise.resolve({ data: [] as WorkflowChangeImpactRow[] }),
+    supabase
+      .from("approval_workflows")
+      .select("*")
+      .eq("organization_id", org.id)
+      .order("created_at", { ascending: true }),
+    supabase
+      .from("projects")
+      .select("id, name")
+      .eq("organization_id", org.id)
+      .order("name", { ascending: true }),
+    // QBO mirrors feed the matrix cells so approvers pick from the real
+    // lists (hundreds of projects/categories/suppliers/classes) instead of
+    // free-typing. The stored value is the display string — exactly what
+    // an invoice's class/category/supplier holds, so conditions match at
+    // runtime.
+    supabase
+      .from("qbo_classes")
+      .select("name")
+      .eq("organization_id", org.id)
+      .eq("active", true)
+      .order("name", { ascending: true }),
+    supabase
+      .from("qbo_categories")
+      .select("name, acct_num")
+      .eq("organization_id", org.id)
+      .eq("active", true)
+      .order("name", { ascending: true }),
+    fetchAllQboSuppliers(supabase, org.id),
+    // Org members for the approver selects (auditors can't be approvers).
+    supabase.from("organization_members").select("user_id, role").eq("organization_id", org.id),
+  ]);
 
-  const { data: workflows } = await supabase
-    .from("approval_workflows")
-    .select("*")
-    .eq("organization_id", org.id)
-    .order("created_at", { ascending: true });
+  const projectOptions = (projects ?? []).map((p) => ({ id: p.id, label: p.name }));
+  const classOptions = (qboClassRows ?? []).map((c) => ({
+    id: c.name,
+    label: c.name,
+  }));
+  const categoryOptions = (qboCategoryRows ?? []).map((c) => {
+    const label = c.acct_num ? `${c.acct_num} - ${c.name}` : c.name;
+    return { id: label, label };
+  });
+  const supplierOptions = (qboSupplierRows ?? []).map((s) => ({
+    id: s.name,
+    label: s.name,
+  }));
+  const memberIds = [...new Set((members ?? []).map((m) => m.user_id))];
+  const memberRoleById = new Map(
+    (members ?? []).map((m) => [m.user_id, m.role])
+  );
 
   const workflowIds = (workflows ?? []).map((w) => w.id);
+  const admin = createAdminClient();
 
-  const { data: steps } =
-    workflowIds.length > 0
-      ? await supabase
-          .from("approval_workflow_steps")
-          .select("*")
-          .in("workflow_id", workflowIds)
-          .order("step_order", { ascending: true })
-      : { data: [] };
-  const { data: rules } =
-    workflowIds.length > 0
-      ? await supabase
-          .from("approval_workflow_rules")
-          .select("*")
-          .in("workflow_id", workflowIds)
-          .order("rule_order", { ascending: true })
-      : { data: [] };
+  // Tier 2: steps/rules only need workflowIds (tier 1); profiles/
+  // memberUserResults only need memberIds (tier 1) — two independent
+  // dependency branches, so both run together rather than four more
+  // round trips in series.
+  const [{ data: steps }, { data: rules }, { data: profiles }, memberUserResults] =
+    await Promise.all([
+      workflowIds.length > 0
+        ? supabase
+            .from("approval_workflow_steps")
+            .select("*")
+            .in("workflow_id", workflowIds)
+            .order("step_order", { ascending: true })
+        : Promise.resolve({ data: [] as StepRow[] }),
+      workflowIds.length > 0
+        ? supabase
+            .from("approval_workflow_rules")
+            .select("*")
+            .in("workflow_id", workflowIds)
+            .order("rule_order", { ascending: true })
+        : Promise.resolve({ data: [] as RuleRow[] }),
+      memberIds.length > 0
+        ? supabase.from("profiles").select("id, full_name").in("id", memberIds)
+        : Promise.resolve({ data: [] as { id: string; full_name: string | null }[] }),
+      // Per-member lookups, not a bulk listUsers({ perPage: 1000 }) — this
+      // page's own org has a bounded member list, so fetching up to 1000
+      // users platform-wide on every page load was pure waste (same
+      // pattern found and fixed on the @mention/assignment/support-chat
+      // paths).
+      Promise.all(memberIds.map((id) => admin.auth.admin.getUserById(id))),
+    ]);
 
   const stepIds = (steps ?? []).map((s) => s.id);
   const { data: stepApprovers } =
@@ -541,69 +616,6 @@ export default async function WorkflowsPage() {
           .select("*")
           .in("step_approver_id", stepApproverIds)
       : { data: [] };
-  const { data: projects } = await supabase
-    .from("projects")
-    .select("id, name")
-    .eq("organization_id", org.id)
-    .order("name", { ascending: true });
-  const projectOptions = (projects ?? []).map((p) => ({ id: p.id, label: p.name }));
-
-  // QBO mirrors feed the matrix cells so approvers pick from the real
-  // lists (hundreds of projects/categories/suppliers/classes) instead of
-  // free-typing. The stored value is the display string — exactly what an
-  // invoice's class/category/supplier holds, so conditions match at runtime.
-  const [{ data: qboClassRows }, { data: qboCategoryRows }, qboSupplierRows] =
-    await Promise.all([
-      supabase
-        .from("qbo_classes")
-        .select("name")
-        .eq("organization_id", org.id)
-        .eq("active", true)
-        .order("name", { ascending: true }),
-      supabase
-        .from("qbo_categories")
-        .select("name, acct_num")
-        .eq("organization_id", org.id)
-        .eq("active", true)
-        .order("name", { ascending: true }),
-      fetchAllQboSuppliers(supabase, org.id),
-    ]);
-  const classOptions = (qboClassRows ?? []).map((c) => ({
-    id: c.name,
-    label: c.name,
-  }));
-  const categoryOptions = (qboCategoryRows ?? []).map((c) => {
-    const label = c.acct_num ? `${c.acct_num} - ${c.name}` : c.name;
-    return { id: label, label };
-  });
-  const supplierOptions = (qboSupplierRows ?? []).map((s) => ({
-    id: s.name,
-    label: s.name,
-  }));
-  // Org members for the approver selects (auditors can't be approvers).
-  const { data: members } = await supabase
-    .from("organization_members")
-    .select("user_id, role")
-    .eq("organization_id", org.id);
-  const memberIds = [...new Set((members ?? []).map((m) => m.user_id))];
-  const memberRoleById = new Map(
-    (members ?? []).map((m) => [m.user_id, m.role])
-  );
-  const { data: profiles } =
-    memberIds.length > 0
-      ? await supabase
-          .from("profiles")
-          .select("id, full_name")
-          .in("id", memberIds)
-      : { data: [] };
-  // Per-member lookups, not a bulk listUsers({ perPage: 1000 }) — this
-  // page's own org has a bounded member list, so fetching up to 1000
-  // users platform-wide on every page load was pure waste (same pattern
-  // found and fixed on the @mention/assignment/support-chat paths).
-  const admin = createAdminClient();
-  const memberUserResults = await Promise.all(
-    memberIds.map((id) => admin.auth.admin.getUserById(id))
-  );
   const emailById = new Map(
     memberIds.map((id, i) => [id, memberUserResults[i].data.user?.email ?? null])
   );

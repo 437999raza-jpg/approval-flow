@@ -203,14 +203,9 @@ export default async function ReportsPage({
   const org = await getCurrentOrg(supabase);
   if (!org) redirect("/dashboard");
 
-  const { data: trialOrgRow } = await supabase
-    .from("organizations")
-    .select("plan, trial_ends_at")
-    .eq("id", org.id)
-    .single();
-
-  const [{ data: reports }, { data: projects }, { memberUserIds, profileRows }] =
+  const [{ data: trialOrgRow }, { data: reports }, { data: projects }, { memberUserIds, profileRows }] =
     await Promise.all([
+      supabase.from("organizations").select("plan, trial_ends_at").eq("id", org.id).single(),
       supabase
         .from("saved_reports")
         .select("*")
