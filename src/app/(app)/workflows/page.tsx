@@ -5,12 +5,10 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentOrg } from "@/lib/current-org";
 import { fetchAllQboSuppliers } from "@/lib/qbo-all";
-import { SignOutButton } from "@/components/SignOutButton";
 import { WorkflowRuleRow } from "@/components/WorkflowRuleRow";
 import { StepApproversManager } from "@/components/StepApproversManager";
 import { CollapsibleWorkflowSection } from "@/components/CollapsibleWorkflowSection";
 import { SubmitButton } from "@/components/SubmitButton";
-import { BackToDashboardButton } from "@/components/BackToDashboardButton";
 import type { RowCondition as StepApproverCondition } from "@/components/StepApproverMatrixRow";
 import {
   RULE_TYPE_VALUES,
@@ -481,18 +479,10 @@ export default async function WorkflowsPage() {
   } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
+  // The shared layout ((app)/layout.tsx) already redirects to /dashboard
+  // when there's no org — this is only a type-narrowing guard.
   const org = await getCurrentOrg(supabase);
-  if (!org) {
-    return (
-      <main className="mx-auto max-w-3xl p-8">
-        <h1 className="text-xl font-semibold">No organization yet</h1>
-        <p className="mt-2 text-slate-600">
-          Your account isn&apos;t attached to an organization yet. See the
-          README first-org-setup steps.
-        </p>
-      </main>
-    );
-  }
+  if (!org) redirect("/dashboard");
 
   const isAdmin = org.role === "admin";
   // Plain "user" members work invoices, not the workflow that routes them —
@@ -654,32 +644,8 @@ export default async function WorkflowsPage() {
     "rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none";
 
   return (
-    <div className="flex h-screen bg-slate-50 text-slate-900">
-      <aside className="flex w-60 flex-none flex-col border-r border-slate-200 bg-white">
-        <div className="border-b border-slate-200 p-4">
-          <div className="text-sm font-semibold">{org.name}</div>
-          <div className="mt-0.5 truncate text-xs text-slate-400">
-            Approval workflows
-          </div>
-        </div>
-        <nav className="flex-1 space-y-0.5 p-2">
-          <BackToDashboardButton className="w-full justify-center" />
-          <Link
-            href="/settings"
-            className="block rounded-md px-3 py-2 text-sm text-slate-600 hover:bg-slate-100"
-          >
-            Settings
-          </Link>
-        </nav>
-        <div className="flex items-center justify-between border-t border-slate-200 p-4">
-          <span className="truncate text-xs text-slate-500">{user.email}</span>
-          <SignOutButton />
-        </div>
-      </aside>
-
-      <main className="min-w-0 flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-4xl p-8">
-          <h1 className="text-2xl font-semibold">Approval workflows</h1>
+    <main className="mx-auto max-w-4xl p-8">
+      <h1 className="text-2xl font-semibold">Approval workflows</h1>
           <p className="mt-1 text-sm text-slate-500">
             Each workflow has ordered approval steps. A step can have several
             approvers, each eligible only when an invoice&apos;s Class,
@@ -1031,8 +997,6 @@ export default async function WorkflowsPage() {
               </div>
             )}
           </div>
-        </div>
-      </main>
-    </div>
+    </main>
   );
 }

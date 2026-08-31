@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { cookies } from "next/headers";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/types";
@@ -8,7 +9,15 @@ import type { Database } from "@/lib/supabase/types";
 // pick which one they're viewing. Everyone else has exactly one membership,
 // so this never comes into play for them — same effective behavior as the
 // old "just pick their first membership" MVP logic.
-export async function getCurrentOrg(supabase: SupabaseClient<Database>) {
+//
+// cache()'d: a shared layout and the page it wraps both call this
+// independently, and without memoizing, that's the auth check plus two
+// more round trips duplicated on every single navigation. Dedupes
+// correctly because createClient() (lib/supabase/server.ts) is cache()'d
+// too, so both callers pass the same client instance — cache()'s key.
+export const getCurrentOrg = cache(async function getCurrentOrg(
+  supabase: SupabaseClient<Database>
+) {
   const {
     data: { user },
   } = await supabase.auth.getUser();
@@ -53,4 +62,4 @@ export async function getCurrentOrg(supabase: SupabaseClient<Database>) {
   if (!organization) return null;
 
   return { ...organization, role: membership.role };
-}
+});

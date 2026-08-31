@@ -225,13 +225,15 @@ export function AppSidebar({
     <SupportChatProvider initialOpen={initialSupportOpen}>
       <aside style={{ width }} className="flex flex-none flex-col border-r border-brand-line bg-white">
         <div className="flex items-center justify-between bg-brand-ink px-4 py-3">
-          <Image
-            src="/brand/ufirst-wordmark-white.png"
-            alt="ufirst"
-            width={2400}
-            height={878}
-            className="h-4 w-auto"
-          />
+          <Link href="/dashboard" title="Go to dashboard">
+            <Image
+              src="/brand/ufirst-wordmark-white.png"
+              alt="ufirst"
+              width={2400}
+              height={878}
+              className="h-4 w-auto"
+            />
+          </Link>
           <button
             type="button"
             onClick={() => setCollapsed(true)}

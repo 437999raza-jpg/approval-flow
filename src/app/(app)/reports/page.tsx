@@ -3,11 +3,9 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentOrg } from "@/lib/current-org";
-import { SignOutButton } from "@/components/SignOutButton";
 import { SubmitButton } from "@/components/SubmitButton";
 import { ConfirmSubmitButton } from "@/components/ConfirmSubmitButton";
 import { FilterCombobox } from "@/components/FilterCombobox";
-import { BackToDashboardButton } from "@/components/BackToDashboardButton";
 import { runReport, type ReportConfig } from "@/lib/reports";
 import {
   buildInvoiceListReport,
@@ -200,17 +198,10 @@ export default async function ReportsPage({
   } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
+  // The shared layout ((app)/layout.tsx) already redirects to /dashboard
+  // when there's no org — this is only a type-narrowing guard.
   const org = await getCurrentOrg(supabase);
-  if (!org) {
-    return (
-      <main className="mx-auto max-w-3xl p-8">
-        <h1 className="text-xl font-semibold">No organization yet</h1>
-        <p className="mt-2 text-slate-600">
-          Your account isn&apos;t attached to an organization yet.
-        </p>
-      </main>
-    );
-  }
+  if (!org) redirect("/dashboard");
 
   const { data: trialOrgRow } = await supabase
     .from("organizations")
@@ -313,36 +304,8 @@ export default async function ReportsPage({
   const labelCls = "block text-[10px] font-semibold uppercase tracking-wide text-slate-400";
 
   return (
-    <div className="flex h-screen bg-slate-50 text-slate-900">
-      <aside className="flex w-60 flex-none flex-col border-r border-slate-200 bg-white">
-        <div className="border-b border-slate-200 p-4">
-          <div className="text-sm font-semibold">{org.name}</div>
-          <div className="mt-0.5 truncate text-xs text-slate-400">Reports</div>
-        </div>
-        <nav className="flex-1 space-y-0.5 p-2">
-          <BackToDashboardButton className="w-full justify-center" />
-          <Link
-            href="/workflows"
-            className="block rounded-md px-3 py-2 text-sm text-slate-600 hover:bg-slate-100"
-          >
-            Workflows
-          </Link>
-          <Link
-            href="/settings"
-            className="block rounded-md px-3 py-2 text-sm text-slate-600 hover:bg-slate-100"
-          >
-            Settings
-          </Link>
-        </nav>
-        <div className="flex items-center justify-between border-t border-slate-200 p-4">
-          <span className="truncate text-xs text-slate-500">{user.email}</span>
-          <SignOutButton />
-        </div>
-      </aside>
-
-      <main className="min-w-0 flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-5xl p-8">
-          <TrialBanner plan={trialOrgRow?.plan ?? null} trialEndsAt={trialOrgRow?.trial_ends_at ?? null} />
+    <main className="mx-auto max-w-5xl p-8">
+      <TrialBanner plan={trialOrgRow?.plan ?? null} trialEndsAt={trialOrgRow?.trial_ends_at ?? null} />
           <h1 className="text-2xl font-semibold">Reports</h1>
           <p className="mt-1 text-sm text-slate-500">
             Build and save your own reports. Every report runs against
@@ -785,8 +748,6 @@ export default async function ReportsPage({
               )}
             </div>
           )}
-        </div>
-      </main>
-    </div>
+    </main>
   );
 }
