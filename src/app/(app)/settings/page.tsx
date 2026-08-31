@@ -75,7 +75,7 @@ async function inviteMember(orgId: string, formData: FormData) {
       listed?.users.find((u) => u.email?.toLowerCase() === email)?.id ?? null;
   }
 
-  if (!userId) redirect("/settings?error=invite-failed");
+  if (!userId) redirect("/settings?error=invite-failed#members");
 
   // Ensure a profile row exists (admin client bypasses RLS). Only sets the
   // name on first creation — never overwrites a name the user set themselves.
@@ -87,11 +87,11 @@ async function inviteMember(orgId: string, formData: FormData) {
   const { error: memberError } = await supabase
     .from("organization_members")
     .insert({ organization_id: orgId, user_id: userId, role });
-  if (memberError) redirect("/settings?error=already-member");
+  if (memberError) redirect("/settings?error=already-member#members");
 
   revalidateTag(membersTag(orgId)); // cached member roster changed
   revalidatePath("/settings");
-  redirect("/settings");
+  redirect("/settings#members");
 }
 
 // Update the signed-in user's own display name (any member may edit this).
@@ -515,6 +515,21 @@ export default async function SettingsPage({
         )}
       </nav>
 
+      {/* Only one section shows at a time now — pure CSS via :target, no
+          client JS needed. .settings-panel defaults to hidden; the one
+          matching the URL's #hash (or containing the matching sub-anchor,
+          e.g. #invoice-email inside Integrations) is shown; with no hash
+          anywhere on the page, the first panel (My profile) shows. Every
+          redirect that lands back on this page after an action now carries
+          the right #hash (see ScrollPreserveForm for the ones that can't
+          set it server-side, e.g. the QBO sync buttons). */}
+      <style>{`
+        .settings-tabs .settings-panel { display: none; }
+        .settings-tabs .settings-panel:target,
+        .settings-tabs .settings-panel:has(:target) { display: block; }
+        .settings-tabs:not(:has(:target)) .settings-panel:first-of-type { display: block; }
+      `}</style>
+
           {/* Puts the page back where you were after a sync/save button
               press (those redirect, and redirects scroll to the top). */}
           <ScrollRestorer />
@@ -534,8 +549,10 @@ export default async function SettingsPage({
             </div>
           )}
 
+          <div className="settings-tabs">
+
           {/* My profile */}
-          <section id="profile" className="mt-8 scroll-mt-20">
+          <section id="profile" className="settings-panel mt-8 scroll-mt-20">
             <h2 className="text-lg font-semibold">My profile</h2>
             <div className="mt-3 flex items-center gap-4 rounded-lg border border-slate-200 bg-white p-4">
               <Avatar name={myName || user.email || "?"} photoUrl={myAvatar} size="lg" />
@@ -556,7 +573,7 @@ export default async function SettingsPage({
           {/* Security — per-user opt-in, set up under your own login (not
               admin-assignable; an admin can only see the status below in
               the Members table and remind someone directly). */}
-          <section id="security" className="mt-8 scroll-mt-20">
+          <section id="security" className="settings-panel mt-8 scroll-mt-20">
             <h2 className="text-lg font-semibold">Security</h2>
             <p className="mt-1 text-sm text-slate-500">
               Two-factor authentication for your own account.
@@ -567,7 +584,7 @@ export default async function SettingsPage({
           {showOrgSettings && (
           <>
           {/* Integrations */}
-          <section id="integrations" className="mt-8 scroll-mt-20">
+          <section id="integrations" className="settings-panel mt-8 scroll-mt-20">
             <h2 className="text-lg font-semibold">Integrations</h2>
             <p className="mt-1 text-sm text-slate-500">
               Connect external apps here — connection details stay out of the
@@ -1047,7 +1064,7 @@ export default async function SettingsPage({
           </section>
 
           {/* Billing & usage — lives on its own page now */}
-          <section id="billing" className="mt-8 scroll-mt-20">
+          <section id="billing" className="settings-panel mt-8 scroll-mt-20">
             <h2 className="text-lg font-semibold">Billing &amp; usage</h2>
             <p className="mt-1 text-sm text-slate-500">
               Documents processed, the suggested charge at your per-document
@@ -1062,7 +1079,7 @@ export default async function SettingsPage({
           </section>
 
           {/* Members */}
-          <section id="members" className="mt-10 scroll-mt-20">
+          <section id="members" className="settings-panel mt-10 scroll-mt-20">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <h2 className="text-lg font-semibold">Members</h2>
               {isAdmin && (
@@ -1184,6 +1201,8 @@ export default async function SettingsPage({
 
           </>
           )}
+
+          </div>
     </main>
   );
 }

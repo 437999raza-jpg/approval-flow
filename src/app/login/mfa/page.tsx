@@ -90,7 +90,7 @@ function MfaChallengeInner() {
         setError(result.error ?? "That recovery code didn't work.");
         return;
       }
-      router.push("/settings?mfa=reset");
+      router.push("/settings?mfa=reset#security");
       router.refresh();
     } finally {
       setBusy(false);

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { clsx } from "clsx";
+import { saveScrollPosition } from "./ScrollPreserveForm";
 
 // Default tax for new invoices (Settings → Data from QuickBooks). Stored as
 // a specific QBO tax CODE (e.g. H 13%), because H and "M&E (ON)" are both
@@ -40,9 +41,10 @@ export function DefaultTaxRateForm({
   return (
     <form
       className="mt-2 flex flex-wrap items-center gap-2"
-      onSubmit={(e) => {
-        // The server action redirects; nothing to restore.
-        void e;
+      onSubmit={() => {
+        // The server action redirects, dropping the active #integrations
+        // tab — ScrollRestorer (mounted once on the page) puts it back.
+        saveScrollPosition();
       }}
       action={async (formData) => {
         setSaving(true);

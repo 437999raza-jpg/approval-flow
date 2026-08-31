@@ -24,7 +24,7 @@ export async function GET(request: Request) {
 
   if (error || !code || !state) {
     return NextResponse.redirect(
-      new URL("/settings?qbo=error", url.origin)
+      new URL("/settings?qbo=error#integrations", url.origin)
     );
   }
 
@@ -41,7 +41,7 @@ export async function GET(request: Request) {
     const realmId = urlRealmId ?? tokens.realmId;
     if (!realmId) {
       console.error("QBO callback: no realmId in callback URL or token response");
-      return NextResponse.redirect(new URL("/settings?qbo=error", url.origin));
+      return NextResponse.redirect(new URL("/settings?qbo=error#integrations", url.origin));
     }
     const admin = createAdminClient();
     await admin
@@ -60,12 +60,12 @@ export async function GET(request: Request) {
         { onConflict: "organization_id" }
       );
     return NextResponse.redirect(
-      new URL("/settings?qbo=connected", url.origin)
+      new URL("/settings?qbo=connected#integrations", url.origin)
     );
   } catch (e) {
     console.error("QBO callback failed:", e instanceof Error ? e.message : e);
     return NextResponse.redirect(
-      new URL("/settings?qbo=error", url.origin)
+      new URL("/settings?qbo=error#integrations", url.origin)
     );
   }
 }
