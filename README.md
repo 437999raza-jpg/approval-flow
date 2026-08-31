@@ -358,18 +358,6 @@ Extraction moved OFF the request path:
 - **Still sync (noted follow-ups):** split-confirmation and the manual
   Re-extract / Reorder-pages actions still run extraction inline.
 
-### Pending / next (in rough order)
-
-1. Invoice-list pagination/virtualization once past a few thousand rows.
-2. Settings page could use the org-cache getters too (it still fetches tax
-   codes fresh).
-3. Make split-confirmation + Re-extract/Reorder async through the same
-   ingest_jobs queue.
-
-(The "re-extract should recompute totals_note" item that used to be here is
-done — `recomputeInvoiceTotals` in `dashboard-actions.ts` now reruns the
-note logic after every line-item add/edit/delete, not just at ingest.)
-
 ---
 
 ## Session log — 2026-08-26 (QBO sync + Suppliers + UI fixes)
@@ -555,37 +543,19 @@ Description, e.g. "MR6010 FENCE, 6' X 10' TEMP./FT"):
   actual input/idle-div handles its own click) focuses the field. Amount
   (a plain `<input>`, not a `Combobox`) gets the identical treatment by
   hand via an explicit wrapper + ref.
-- Separately (unconfirmed): picking a Combobox option by mouse click,
-  then immediately pressing Tab, was reported to sometimes not land on
-  the next field. Root cause unconfirmed — no reproduction found by
-  reading the code (focus should already survive the pick via the
-  existing `preventDefault()` on the dropdown option's `onMouseDown`).
-  Best-effort mitigation added: `justPickedRef` in `Combobox.tsx` restores
-  focus to the field once its own autosave round-trip lands, in case the
-  page-wide `revalidatePath("/dashboard", "layout")` triggered by that
-  save is what's knocking focus away.
-
-### Pending / worth knowing
-
-1. `qbo_suppliers.integration` is stored but not yet used anywhere else (no
-   second accounting-platform connection) — see its migration comment (0046)
-   before building on it. `product_service` was fully wired end-to-end and
-   then explicitly reverted, app layer AND its DB columns both removed
-   (migration 0064) — see the Settings → Suppliers section above; **do not
-   re-add it.**
-2. The Combobox truncation-save bug (fixed above) may have corrupted
-   Category/Class/vendor-name values saved before the fix — an audit across
-   this org's live data found only the one already-known instance (already
-   corrected by hand), but it's worth a periodic glance if something looks
-   like a truncated search string instead of a real value.
-3. Neither the document 50/50 split nor the Combobox `wrapWhenIdle` mode nor
-   the scroll fixes were click-tested in a live browser — no login
-   credentials were available in that working environment. Verified via
-   `tsc`/`lint`/build + careful reasoning about the exact DOM/layout
-   mechanics only. (The line-item cell alignment/hover fix above is the
-   exception — that one was confirmed live by the user.)
-4. The Tab-after-pick mitigation (above) is unconfirmed — flag it if it
-   turns out not to be the actual cause next time it's reported.
+- Separately (unconfirmed at the time): picking a Combobox option by mouse
+  click, then immediately pressing Tab, was reported to sometimes not land
+  on the next field. Best-effort mitigation added: `justPickedRef` in
+  `Combobox.tsx` restores focus to the field once its own autosave
+  round-trip lands, in case the page-wide `revalidatePath("/dashboard",
+  "layout")` triggered by that save is what's knocking focus away. **That
+  suspicion turned out to be exactly right** — see [Session log —
+  2026-08-31](#session-log--2026-08-31-dashboard-rewrite-goes-client-cached-scroll-prefetch-settings-navigation-fixes):
+  that same `revalidatePath` call was confirmed (by reading Next's own
+  router source) to force a full remount of the Dashboard's client tree on
+  every mutation, and has since been removed from every action in
+  `dashboard-actions.ts`. `justPickedRef` is left in place as a harmless
+  safety net, not because the original cause is still active.
 
 ### Totals: line items win, not the document (reversed, then re-reversed)
 
@@ -1408,6 +1378,67 @@ error/success banners), so the existing `ScrollPreserveForm`/
 `ScrollRestorer` session-storage handoff — already used to survive a
 redirect without losing scroll position — was extended to also save and
 restore the active hash.
+
+### Every non-Dashboard page was slow — middleware, not the pages themselves
+
+Reported live: Settings/Workflows/Billing/Statements/Reports/
+`/admin/organizations` all felt slow (3+ seconds) next to the
+now-instant Dashboard. Root cause was [`src/middleware.ts`](src/middleware.ts),
+which runs on every request site-wide: it made two independent Supabase
+Auth calls — `getUser()` (refreshes the session cookie as a side effect)
+and `getAuthenticatorAssuranceLevel()` (the per-request MFA gate) — one
+after the other, each with its own 5s timeout guard, even though neither
+result depends on the other. Every non-Dashboard navigation is a real
+Next.js page load that pays this double round-trip again; the Dashboard
+only pays it once, since its client-cached clicks never hit the server
+(or this middleware) again after the first load. Now fired together via
+`Promise.all` — same timeout guards, same redirect behavior, same
+`/login*` exclusion, just concurrent instead of sequential.
+
+### Settings' sticky header: three iterations to actually get right
+
+Fixing this properly took three passes — worth recording exactly why
+each intermediate attempt still wasn't "static," since the failure mode
+changed each time:
+
+1. **First pass**: only the pill nav was sticky, not the heading above
+   it. Switching to a section taller than the viewport (Integrations)
+   scrolled the "Settings" heading itself out of view, while a short
+   section (My profile) never moved — because the browser's native
+   `:target` scroll-into-view is clamped by how much scrollable room a
+   section actually has, so short and tall sections behaved
+   inconsistently under the exact same navigation. Fix: wrap heading +
+   subtitle + nav in one sticky block instead of just the nav.
+2. **Second pass**: that fixed the big jump, but a few-pixel drift
+   remained. `<main>` carried its own top padding (`p-8`), so the
+   sticky block's natural, unscrolled position sat 32px down from the
+   scroll container's top — sticky positioning only clamps to `top: 0`
+   once the natural position would cross that threshold, so any scroll
+   smaller than 32px just moved the block along with everything else.
+   Fix: move that padding inside the sticky block itself (`pt-8`;
+   `<main>` drops to `px-8`/`pb-8`), so its natural position is 0 and
+   there's no threshold left to drift through.
+3. **Third pass**: fixing #2 made the sticky header taller (the `pt-8`
+   moved inside it), which silently broke the hand-tuned
+   `scroll-mt-36` every panel used to clear the header — "Integrations"
+   ended up with its own heading clipped behind the now-taller header.
+   This is exactly the failure mode of a magic number that has to be
+   kept in sync with something else by hand. Real fix:
+   [`StickyHeader.tsx`](src/components/StickyHeader.tsx) — measures its
+   own rendered height via `ResizeObserver` and applies it as
+   `scroll-padding-top` on the scrolling pane, so every section clears
+   the header by exactly the right amount automatically, permanently,
+   no matter how the header's content changes later. `scroll-mt-36` was
+   removed from every panel.
+
+**Also fixed in the same pass**: "Invoice email" showed all of
+Integrations' QuickBooks content above it. That pill pointed at a
+sub-anchor (`#invoice-email`) nested *inside* the Integrations
+`<section>`, so opening it correctly showed the whole containing
+section per the `:target` rule — just not what a user expects from a
+tab. Promoted Invoice email (and Vendor email reply-to) out to their
+own independent top-level panel; every pill is now a direct, exclusive
+tab target, none of them nested inside another.
 
 ---
 
@@ -2765,8 +2796,10 @@ silently alongside the schema work above.
 `/settings` (member management is admin-only; everyone can edit their own
 name/photo). Sections (My profile / Security / Integrations / Invoice
 email / Billing & usage / Members) show one at a time — the pill nav at
-the top is a real tab switcher (pure CSS `:target`, no client JS), not a
-jump-to-anchor list; see [Session log —
+the top is a real tab switcher (CSS `:target` decides which panel shows;
+the only client JS, `StickyHeader.tsx`, just keeps the heading/nav
+pinned and correctly offsets each panel's scroll target), not a
+jump-to-anchor list into one long page; see [Session log —
 2026-08-31](#session-log--2026-08-31-dashboard-rewrite-goes-client-cached-scroll-prefetch-settings-navigation-fixes):
 - **My profile** — display name, photo upload (`avatars` bucket, 0016).
 - **Members** — a real table (avatar, name, email, role, status, 2FA —
@@ -2942,6 +2975,15 @@ This is groundwork, not a finished product. In priority-ish order:
   `NEXT_PUBLIC_SENTRY_DSN` and `NEXT_PUBLIC_TURNSTILE_SITE_KEY`
   respectively (see [Environment variables](#environment-variables)).
   Neither needs more code, just those two accounts.
+- **Invoice-list pagination/virtualization** once past a few thousand
+  rows — the Dashboard's list query fetches everything for the org in
+  one go.
+- **Settings still fetches QBO tax codes fresh** on every page load
+  instead of through the org-cache getters the rest of the page's QBO
+  reads use.
+- **Split-confirmation and the manual Re-extract/Reorder-pages actions
+  still run extraction inline** rather than through the async
+  `ingest_jobs` queue everything else uses.
 
 ---
 
@@ -3096,9 +3138,9 @@ end-to-end vision:
    invoice documents** (primary + any added pages)
    ([`src/lib/qbo-attachments.ts`](src/lib/qbo-attachments.ts)).
 
-A production domain/brand is coming; `INBOUND_EMAIL_DOMAIN` and the org
-inbound addresses already flow from env vars, so rebranding is config, not
-code.
+Live in production today as **Flow by UFIRST** at flow.ufirst.co.
+`INBOUND_EMAIL_DOMAIN` and the org inbound addresses flow from env vars,
+so a future white-label/rebrand for another customer is config, not code.
 
 ---
 
