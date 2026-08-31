@@ -37,9 +37,9 @@ import { switchOrgAction } from "@/lib/admin-actions";
 import { buildAuditTimeline } from "@/lib/audit-timeline";
 import {
   fetchDashboardListData,
-  fetchInvoiceDetail,
   markNotificationReadForDashboard,
   type DashboardListData,
+  type InvoiceDetailData,
 } from "@/lib/dashboard-data";
 import {
   VIEWS,
@@ -175,6 +175,17 @@ function parseFilterUrl(url: string): { q: string; advanced: AdvancedFilters } {
   };
 }
 
+// A plain fetch() to a Route Handler, not a direct call to the
+// "use server" fetchInvoiceDetail — see api/dashboard/invoice/[id]/route.ts
+// for why: this is called at high volume (every row that scrolls into
+// view) and a Server Action call, even a pure read, makes Next's router
+// refetch/remount whatever route it still thinks is mounted.
+async function fetchInvoiceDetailViaApi(id: string): Promise<InvoiceDetailData> {
+  const res = await fetch(`/api/dashboard/invoice/${id}`);
+  if (!res.ok) throw new Error(`Failed to load invoice ${id}`);
+  return res.json();
+}
+
 export function DashboardClient({ initialListData }: { initialListData: DashboardListData }) {
   const queryClient = useQueryClient();
   const orgId = initialListData.org.id;
@@ -257,7 +268,7 @@ export function DashboardClient({ initialListData }: { initialListData: Dashboar
 
   const detailQuery = useQuery({
     queryKey: ["invoice-detail", effectiveSelectedId],
-    queryFn: () => fetchInvoiceDetail(effectiveSelectedId!),
+    queryFn: () => fetchInvoiceDetailViaApi(effectiveSelectedId!),
     enabled: !!effectiveSelectedId,
     staleTime: 30 * 1000,
   });
@@ -352,7 +363,7 @@ export function DashboardClient({ initialListData }: { initialListData: Dashboar
     (id: string) => {
       queryClient.prefetchQuery({
         queryKey: ["invoice-detail", id],
-        queryFn: () => fetchInvoiceDetail(id),
+        queryFn: () => fetchInvoiceDetailViaApi(id),
         staleTime: 30 * 1000,
       });
     },
