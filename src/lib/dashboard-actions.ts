@@ -1,5 +1,22 @@
 "use server";
 
+// Note: none of the actions here call revalidatePath("/dashboard", ...)
+// on purpose — do not add it back. Next.js automatically triggers a
+// client-side router refresh of whatever route is currently mounted
+// whenever a Server Action calls revalidatePath/revalidateTag, regardless
+// of whether the client asked for one. The Dashboard route is now a
+// client-driven page (DashboardClient.tsx) that owns its own selection,
+// filters, and URL via TanStack Query + window.history — it neither
+// needs nor wants Next re-rendering that tree from the server on every
+// mutation. When it happened anyway (every single action here used to
+// revalidate "/dashboard"), it silently reset all of that client state on
+// every approve/comment/reassign/etc., which surfaced as the open invoice
+// randomly jumping to a different one — sometimes one that had merely
+// been link-prefetched, never actually clicked — or the detail pane
+// getting stuck on "Loading…" indefinitely. revalidateTag(INVOICES_TAG)
+// stays: that's what actually keeps other, still server-rendered
+// consumers (Queue, invoice detail pages) correctly reflecting a
+// mutation made from the Dashboard.
 import { redirect } from "next/navigation";
 import { revalidatePath, revalidateTag } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
@@ -388,7 +405,6 @@ export async function decide(
         });
       }
       revalidateTag(INVOICES_TAG);
-      revalidatePath("/dashboard", "layout");
       return;
     }
     redirect(`/dashboard/${invoiceId}?error=already-decided`);
@@ -480,8 +496,6 @@ export async function decide(
   });
 
   revalidateTag(INVOICES_TAG);
-
-  revalidatePath("/dashboard", "layout");
 }
 
 // Reject requires a reason — typed into a required field in a popup
@@ -687,8 +701,6 @@ export async function addComment(invoiceId: string, formData: FormData) {
   }
 
   revalidateTag(INVOICES_TAG);
-
-  revalidatePath("/dashboard", "layout");
 }
 
 // Add an extra document page to an invoice (multi-document support,
@@ -738,8 +750,6 @@ export async function addDocument(invoiceId: string, formData: FormData) {
   });
 
   revalidateTag(INVOICES_TAG);
-
-  revalidatePath("/dashboard", "layout");
 }
 
 // Save the accounting instructions for an invoice (migration 0004). On QBO
@@ -782,8 +792,6 @@ export async function saveAccountingInstructions(
   });
 
   revalidateTag(INVOICES_TAG);
-
-  revalidatePath("/dashboard", "layout");
 }
 
 // Parse the Bill panel form into an invoices update object.
@@ -937,8 +945,6 @@ export async function saveBill(invoiceId: string, formData: FormData) {
   }
 
   revalidateTag(INVOICES_TAG);
-
-  revalidatePath("/dashboard", "layout");
 }
 
 // Dext/ApprovalMax-style supplier rules: save (upsert, keyed by normalized
@@ -1080,7 +1086,6 @@ export async function saveSupplierDefaults(
 
   revalidateTag(INVOICES_TAG);
 
-  revalidatePath("/dashboard", "layout");
   revalidatePath("/settings/suppliers");
 }
 
@@ -1236,8 +1241,6 @@ export async function reviewComplete(invoiceId: string) {
   });
 
   revalidateTag(INVOICES_TAG);
-
-  revalidatePath("/dashboard", "layout");
 }
 
 // Hold: the current-step approver puts an in-flight invoice on hold (a
@@ -1283,8 +1286,6 @@ export async function holdInvoice(invoiceId: string) {
   });
 
   revalidateTag(INVOICES_TAG);
-
-  revalidatePath("/dashboard", "layout");
 }
 
 // Unhold: the approver who put an invoice on hold resumes it — back to
@@ -1335,8 +1336,6 @@ export async function unholdInvoice(invoiceId: string) {
   });
 
   revalidateTag(INVOICES_TAG);
-
-  revalidatePath("/dashboard", "layout");
 }
 
 // Back to Review: return a non-approved invoice to the Pending Review
@@ -1387,8 +1386,6 @@ export async function backToReview(invoiceId: string) {
   });
 
   revalidateTag(INVOICES_TAG);
-
-  revalidatePath("/dashboard", "layout");
 }
 
 // Cancel: the person who submitted the invoice, or an admin, withdraws it
@@ -1433,8 +1430,6 @@ export async function cancelInvoice(invoiceId: string) {
   });
 
   revalidateTag(INVOICES_TAG);
-
-  revalidatePath("/dashboard", "layout");
 }
 
 // Admin-only: permanently delete an invoice — the record, its line items,
@@ -1496,7 +1491,6 @@ export async function deleteInvoiceAction(
 
   revalidateTag(INVOICES_TAG);
 
-  revalidatePath("/dashboard", "layout");
   redirect(nextInvoiceId ? `/dashboard/${nextInvoiceId}${qs}` : "/dashboard");
 }
 
@@ -1550,7 +1544,6 @@ export async function deleteInvoicesAction(invoiceIds: string[]) {
   await supabase.storage.from("invoices").remove(filePaths);
 
   revalidateTag(INVOICES_TAG);
-  revalidatePath("/dashboard", "layout");
 
   // The deleted invoices may include the one currently open in the URL
   // (/dashboard/<id>) — the page treats "selected invoice not found" as a
@@ -1607,7 +1600,6 @@ export async function clearQboPublishDataAction(invoiceIds: string[]) {
     .in("id", invoiceIds);
 
   revalidateTag(INVOICES_TAG);
-  revalidatePath("/dashboard", "layout");
 }
 
 // Batch email: merge the selected invoices' documents into one PDF and send
@@ -1760,8 +1752,6 @@ export async function reassignApprover(invoiceId: string, formData: FormData) {
   });
 
   revalidateTag(INVOICES_TAG);
-
-  revalidatePath("/dashboard", "layout");
 }
 
 // Admin-only: send the invoice to a specific workflow stage directly,
@@ -1858,8 +1848,6 @@ export async function setInvoiceStage(invoiceId: string, formData: FormData) {
   });
 
   revalidateTag(INVOICES_TAG);
-
-  revalidatePath("/dashboard", "layout");
 }
 
 // Admin-only: force the invoice to any status directly, bypassing the
@@ -1949,8 +1937,6 @@ export async function overrideStatus(invoiceId: string, formData: FormData) {
   });
 
   revalidateTag(INVOICES_TAG);
-
-  revalidatePath("/dashboard", "layout");
 }
 
 // Create or update one category-details line item.
@@ -2098,8 +2084,6 @@ export async function saveLineItem(
   }
 
   revalidateTag(INVOICES_TAG);
-
-  revalidatePath("/dashboard", "layout");
 }
 
 export async function deleteLineItem(invoiceId: string, lineItemId: string) {
@@ -2140,8 +2124,6 @@ export async function deleteLineItem(invoiceId: string, lineItemId: string) {
   });
 
   revalidateTag(INVOICES_TAG);
-
-  revalidatePath("/dashboard", "layout");
 }
 
 // Duplicate a line item exactly (same category/description/tax/class/
@@ -2205,8 +2187,6 @@ export async function cloneLineItem(invoiceId: string, lineItemId: string) {
   });
 
   revalidateTag(INVOICES_TAG);
-
-  revalidatePath("/dashboard", "layout");
 }
 
 // Manual escape hatch for an invoice that came in fully line-by-line but
@@ -2280,7 +2260,6 @@ export async function collapseInvoiceToOneLine(invoiceId: string, lineItemIds: s
   });
 
   revalidateTag(INVOICES_TAG);
-  revalidatePath("/dashboard", "layout");
 }
 
 // Shared core of re-extraction: downloads the invoice's primary document,
@@ -2477,7 +2456,6 @@ export async function reExtract(invoiceId: string) {
 
   await reExtractInvoiceCore(supabase, invoiceId, user.id);
   revalidateTag(INVOICES_TAG);
-  revalidatePath("/dashboard", "layout");
 }
 
 // How many pages the invoice's primary document has (for the Reorder pages
@@ -2601,7 +2579,6 @@ export async function reorderInvoicePages(
 
   revalidateTag(INVOICES_TAG);
 
-  revalidatePath("/dashboard", "layout");
   return { ok: true };
 }
 
@@ -2996,7 +2973,6 @@ export async function saveInboundEmailLocal(
 
   revalidatePath("/settings");
   revalidateTag(INVOICES_TAG);
-  revalidatePath("/dashboard", "layout");
   return { ok: true };
 }
 
@@ -3781,7 +3757,6 @@ export async function syncToQbo(invoiceId: string) {
       "This bill cannot sync to QuickBooks yet — it must complete every step of the approval workflow and be released by an admin."
     );
     revalidateTag(INVOICES_TAG);
-    revalidatePath("/dashboard", "layout");
     revalidatePath("/settings");
     return;
   }
@@ -3790,7 +3765,6 @@ export async function syncToQbo(invoiceId: string) {
   if (!conn) {
     await fail("QuickBooks is not connected — connect it in Settings.");
     revalidateTag(INVOICES_TAG);
-    revalidatePath("/dashboard", "layout");
     revalidatePath("/settings");
     return;
   }
@@ -3810,7 +3784,6 @@ export async function syncToQbo(invoiceId: string) {
         `Vendor "${inv.vendor_name}" does not exactly match any QuickBooks supplier. Pick the correct supplier from the Vendor list on the bill (or add it in QuickBooks and run Refresh data in Settings), then try again.`
       );
       revalidateTag(INVOICES_TAG);
-      revalidatePath("/dashboard", "layout");
       revalidatePath("/settings");
       return;
     }
@@ -3823,7 +3796,6 @@ export async function syncToQbo(invoiceId: string) {
     if (!matchedVendor) {
       await fail(`Could not resolve the QBO supplier id for "${matchedName}".`);
       revalidateTag(INVOICES_TAG);
-      revalidatePath("/dashboard", "layout");
       revalidatePath("/settings");
       return;
     }
@@ -3983,7 +3955,6 @@ export async function syncToQbo(invoiceId: string) {
 
   revalidateTag(INVOICES_TAG);
 
-  revalidatePath("/dashboard", "layout");
   revalidatePath("/settings");
 }
 
@@ -4016,7 +3987,6 @@ export async function clearQboError(invoiceId: string) {
 
   revalidateTag(INVOICES_TAG);
 
-  revalidatePath("/dashboard", "layout");
   revalidatePath("/settings");
 }
 
@@ -4070,7 +4040,6 @@ export async function clearQboSync(invoiceId: string) {
 
   revalidateTag(INVOICES_TAG);
 
-  revalidatePath("/dashboard", "layout");
   revalidatePath("/settings");
 }
 
