@@ -203,14 +203,24 @@ async function notifyNewApprovers(
   if (targets.length === 0) return;
 
   try {
-    await supabase.from("notifications").insert(
-      targets.map((uid) => ({
-        organization_id: params.organizationId,
-        user_id: uid,
-        actor_id: params.excludeUserId,
-        invoice_id: params.invoiceId,
-        type: "assigned" as const,
-      }))
+    const { data: insertedNotifications } = await supabase
+      .from("notifications")
+      .insert(
+        targets.map((uid) => ({
+          organization_id: params.organizationId,
+          user_id: uid,
+          actor_id: params.excludeUserId,
+          invoice_id: params.invoiceId,
+          type: "assigned" as const,
+        }))
+      )
+      .select("id, user_id");
+    // ?n=<notificationId> on the email link marks THIS notification read
+    // when it's opened (see the Dashboard page) — never every notification
+    // on the invoice, so visiting it later for an unrelated reason can't
+    // silently dismiss someone else's still-unaddressed one.
+    const notificationIdByUser = new Map(
+      (insertedNotifications ?? []).map((n) => [n.user_id, n.id])
     );
 
     const { data: invoice } = await supabase
@@ -238,13 +248,14 @@ async function notifyNewApprovers(
     await Promise.all(
       targets.map((uid) => {
         const email = emailById.get(uid);
+        const notificationId = notificationIdByUser.get(uid);
         return email
           ? sendAssignedEmail({
               to: email,
               invoiceLabel,
               reason: params.reason,
               stepName: params.stepName,
-              invoiceUrl,
+              invoiceUrl: notificationId ? `${invoiceUrl}?n=${notificationId}` : invoiceUrl,
             })
           : Promise.resolve();
       })
@@ -516,13 +527,17 @@ export async function rejectWithReason(invoiceId: string, formData: FormData) {
       .eq("id", invoiceId)
       .maybeSingle();
     if (inv?.submitted_by && inv.submitted_by !== user.id) {
-      await supabase.from("notifications").insert({
-        organization_id: inv.organization_id,
-        user_id: inv.submitted_by,
-        actor_id: user.id,
-        invoice_id: invoiceId,
-        type: "rejected" as const,
-      });
+      const { data: insertedNotification } = await supabase
+        .from("notifications")
+        .insert({
+          organization_id: inv.organization_id,
+          user_id: inv.submitted_by,
+          actor_id: user.id,
+          invoice_id: invoiceId,
+          type: "rejected" as const,
+        })
+        .select("id")
+        .single();
 
       // One targeted lookup (the submitter), not a bulk
       // listUsers({ perPage: 1000 }) — same needless-latency pattern
@@ -534,6 +549,11 @@ export async function rejectWithReason(invoiceId: string, formData: FormData) {
       ]);
       const submitterEmail = submitterUser.data.user?.email;
       if (submitterEmail) {
+        // ?n=<notificationId> marks THIS notification read when opened —
+        // see the matching comment on notifyNewApprovers above.
+        const invoiceUrl = `${getAppUrl()}/dashboard/${invoiceId}${
+          insertedNotification ? `?n=${insertedNotification.id}` : ""
+        }`;
         await sendRejectedEmail({
           to: submitterEmail,
           invoiceLabel: `${inv.vendor_name ?? inv.file_name}${
@@ -541,7 +561,7 @@ export async function rejectWithReason(invoiceId: string, formData: FormData) {
           }`,
           actorName: actorProfile?.full_name ?? "A teammate",
           reason,
-          invoiceUrl: `${getAppUrl()}/dashboard/${invoiceId}`,
+          invoiceUrl,
         });
       }
     }
@@ -615,15 +635,23 @@ export async function addComment(invoiceId: string, formData: FormData) {
     .single();
 
   if (comment && mentionedIds.length > 0) {
-    await supabase.from("notifications").insert(
-      mentionedIds.map((uid) => ({
-        organization_id: invoice.organization_id,
-        user_id: uid,
-        actor_id: user.id,
-        invoice_id: invoiceId,
-        comment_id: comment.id,
-        type: "mention" as const,
-      }))
+    const { data: insertedNotifications } = await supabase
+      .from("notifications")
+      .insert(
+        mentionedIds.map((uid) => ({
+          organization_id: invoice.organization_id,
+          user_id: uid,
+          actor_id: user.id,
+          invoice_id: invoiceId,
+          comment_id: comment.id,
+          type: "mention" as const,
+        }))
+      )
+      .select("id, user_id");
+    // ?n=<notificationId> marks THIS notification read when opened — see
+    // the matching comment on notifyNewApprovers above.
+    const notificationIdByUser = new Map(
+      (insertedNotifications ?? []).map((n) => [n.user_id, n.id])
     );
 
     // Per-mention lookups, not a bulk listUsers({ perPage: 1000 }) — only
@@ -649,8 +677,10 @@ export async function addComment(invoiceId: string, formData: FormData) {
     await Promise.all(
       mentionedIds.map((uid) => {
         const email = emailById.get(uid);
+        const notificationId = notificationIdByUser.get(uid);
+        const url = notificationId ? `${invoiceUrl}?n=${notificationId}` : invoiceUrl;
         return email
-          ? sendMentionEmail({ to: email, actorName, invoiceLabel, commentBody: body, invoiceUrl })
+          ? sendMentionEmail({ to: email, actorName, invoiceLabel, commentBody: body, invoiceUrl: url })
           : Promise.resolve();
       })
     );

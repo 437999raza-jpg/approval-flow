@@ -1,11 +1,9 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { BackToDashboardButton } from "@/components/BackToDashboardButton";
 import { revalidatePath, revalidateTag } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentOrg } from "@/lib/current-org";
-import { SignOutButton } from "@/components/SignOutButton";
 import { CollapsibleSection } from "@/components/CollapsibleSection";
 import { disconnectQbo, refreshQboData, saveDefaultTaxRate, saveInboundEmailLocal, saveStatementReplyTo, syncQboTaxes, syncQboClasses, syncQboCategories, syncQboSuppliers, syncQboProjects, syncQboPaymentStatus } from "@/lib/dashboard-actions";
 import { StatementReplyToForm } from "@/components/StatementReplyToForm";
@@ -268,25 +266,12 @@ export default async function SettingsPage({
   } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
+  // The shared layout ((app)/layout.tsx) already redirects to /dashboard
+  // when there's no org — Dashboard has the canonical "no organization
+  // yet" screen — so this is only a type-narrowing guard, never actually
+  // reachable in practice.
   const org = await getCurrentOrg(supabase);
-  if (!org) {
-    return (
-      <main className="mx-auto max-w-3xl p-8">
-        <h1 className="text-xl font-semibold">No organization yet</h1>
-        <p className="mt-2 text-slate-600">
-          Your account isn&apos;t attached to an organization yet. See the
-          README first-org-setup steps.
-        </p>
-        <div className="mt-4 flex items-center gap-3 rounded-md border border-slate-200 bg-white px-4 py-3 text-sm">
-          <span className="truncate text-slate-600">
-            Signed in as <strong>{user.email}</strong>
-          </span>
-          <span className="flex-1" />
-          <SignOutButton />
-        </div>
-      </main>
-    );
-  }
+  if (!org) redirect("/dashboard");
 
   const isAdmin = org.role === "admin";
   // Plain "user" members only ever see their own profile here — Integrations/
@@ -294,62 +279,50 @@ export default async function SettingsPage({
   // its existing full-app read-only visibility; this only narrows "user").
   const showOrgSettings = org.role !== "user";
 
-  const { data: orgReplyToRow } = await supabase
-    .from("organizations")
-    .select("statement_reply_to")
-    .eq("id", org.id)
-    .single();
-
-  // QBO connection (RLS: admins only — everyone else sees nothing).
-  const { data: qboConnection } = await supabase
-    .from("qbo_connections")
-    .select("realm_id, company_name, connected_at")
-    .eq("organization_id", org.id)
-    .maybeSingle();
-
-  // Tax codes with resolved rates pulled from QBO (read-only mirror) — the
-  // codes are what the bill's Tax field offers, exactly like Dext. Only
-  // codes with a usable rate are listed (H 13%, M&E 13%, Out of Scope 0%).
-  const { data: qboTaxCodes } = await supabase
-    .from("qbo_tax_codes")
-    .select("qbo_tax_code_id, name, rate_value")
-    .eq("organization_id", org.id)
-    .not("rate_value", "is", null)
-    .order("name", { ascending: true })
-    .limit(50);
-
-  // Default-tax choices = the synced tax CODES (H 13%, M&E (ON) 13%…).
-  // Stored as a code so ingest puts the exact code on new lines — two codes
-  // can share a rate and the QBO sync refuses to guess between them.
-  const defaultTaxCodes = (qboTaxCodes ?? []).map((c) => ({
-    id: c.qbo_tax_code_id,
-    name: c.name,
-    rate: c.rate_value,
-  }));
-
-  // Per-section sync log (migration 0049): when each QBO mirror was last
-  // synced, so sections can show "N on File. Last synced on <time>".
-  const { data: qboSyncLog } = await supabase
-    .from("qbo_sync_log")
-    .select("section, synced_at")
-    .eq("organization_id", org.id);
-  const lastSyncBySection = new Map(
-    (qboSyncLog ?? []).map((r) => [r.section, r.synced_at])
-  );
-  const classesLastSync = lastSyncBySection.get("classes");
-  const categoriesLastSync = lastSyncBySection.get("categories");
-  const suppliersLastSync = lastSyncBySection.get("suppliers");
-  const projectsLastSync = lastSyncBySection.get("projects");
-  const paymentStatusLastSync = lastSyncBySection.get("payment_status");
-
-  // Exact "on file" counts — PostgREST caps row responses at 1000 rows, so
-  // use head + count=exact rather than fetching the lists.
+  // Everything here is independent of everything else in this batch (all
+  // scoped only by org.id) — one Promise.all instead of ~9 sequential
+  // round trips, same fix as the Dashboard page's per-navigation queries.
   const [
+    { data: orgReplyToRow },
+    { data: qboConnection },
+    { data: qboTaxCodes },
+    { data: qboSyncLog },
     { count: classesCount },
     { count: categoriesCount },
     { count: suppliersCount },
     { count: projectsCount },
+    { data: members },
   ] = await Promise.all([
+    supabase
+      .from("organizations")
+      .select("statement_reply_to")
+      .eq("id", org.id)
+      .single(),
+    // QBO connection (RLS: admins only — everyone else sees nothing).
+    supabase
+      .from("qbo_connections")
+      .select("realm_id, company_name, connected_at")
+      .eq("organization_id", org.id)
+      .maybeSingle(),
+    // Tax codes with resolved rates pulled from QBO (read-only mirror) —
+    // the codes are what the bill's Tax field offers, exactly like Dext.
+    // Only codes with a usable rate are listed (H 13%, M&E 13%, Out of
+    // Scope 0%).
+    supabase
+      .from("qbo_tax_codes")
+      .select("qbo_tax_code_id, name, rate_value")
+      .eq("organization_id", org.id)
+      .not("rate_value", "is", null)
+      .order("name", { ascending: true })
+      .limit(50),
+    // Per-section sync log (migration 0049): when each QBO mirror was last
+    // synced, so sections can show "N on File. Last synced on <time>".
+    supabase
+      .from("qbo_sync_log")
+      .select("section, synced_at")
+      .eq("organization_id", org.id),
+    // Exact "on file" counts — PostgREST caps row responses at 1000 rows,
+    // so use head + count=exact rather than fetching the lists.
     supabase
       .from("qbo_classes")
       .select("id", { count: "exact", head: true })
@@ -367,67 +340,95 @@ export default async function SettingsPage({
       .select("id", { count: "exact", head: true })
       .eq("organization_id", org.id)
       .eq("source", "qbo"),
+    supabase
+      .from("organization_members")
+      .select("id, user_id, role")
+      .eq("organization_id", org.id)
+      .order("created_at", { ascending: true }),
   ]);
 
-  // ONLY the items that are NEW in the most recent sync run get listed in
-  // each section (first_seen_at >= that run's log timestamp). Blank when
-  // nothing new — the section never synced shows nothing either.
-  const newClasses = classesLastSync
-    ? (await supabase
-        .from("qbo_classes")
-        .select("id, name")
-        .eq("organization_id", org.id)
-        .gte("first_seen_at", classesLastSync)
-        .order("name", { ascending: true })
-        .limit(100)).data ?? []
-    : [];
-  const newCategories = categoriesLastSync
-    ? (await supabase
-        .from("qbo_categories")
-        .select("id, name, acct_num, account_type, account_sub_type")
-        .eq("organization_id", org.id)
-        .gte("first_seen_at", categoriesLastSync)
-        .order("name", { ascending: true })
-        .limit(100)).data ?? []
-    : [];
-  const newSuppliers = suppliersLastSync
-    ? (await supabase
-        .from("qbo_suppliers")
-        .select("id, name")
-        .eq("organization_id", org.id)
-        .gte("first_seen_at", suppliersLastSync)
-        .order("name", { ascending: true })
-        .limit(100)).data ?? []
-    : [];
-  const newProjects = projectsLastSync
-    ? (await supabase
-        .from("projects")
-        .select("id, name")
-        .eq("organization_id", org.id)
-        .eq("source", "qbo")
-        .gte("first_seen_at", projectsLastSync)
-        .order("name", { ascending: true })
-        .limit(100)).data ?? []
-    : [];
+  // Default-tax choices = the synced tax CODES (H 13%, M&E (ON) 13%…).
+  // Stored as a code so ingest puts the exact code on new lines — two codes
+  // can share a rate and the QBO sync refuses to guess between them.
+  const defaultTaxCodes = (qboTaxCodes ?? []).map((c) => ({
+    id: c.qbo_tax_code_id,
+    name: c.name,
+    rate: c.rate_value,
+  }));
+
+  const lastSyncBySection = new Map(
+    (qboSyncLog ?? []).map((r) => [r.section, r.synced_at])
+  );
+  const classesLastSync = lastSyncBySection.get("classes");
+  const categoriesLastSync = lastSyncBySection.get("categories");
+  const suppliersLastSync = lastSyncBySection.get("suppliers");
+  const projectsLastSync = lastSyncBySection.get("projects");
+  const paymentStatusLastSync = lastSyncBySection.get("payment_status");
 
   const inboundEmailDomain =
     process.env.INBOUND_EMAIL_DOMAIN ?? "invoices.example.com";
 
-  const { data: members } = await supabase
-    .from("organization_members")
-    .select("id, user_id, role")
-    .eq("organization_id", org.id)
-    .order("created_at", { ascending: true });
-
-  // Names + photos from profiles, emails + 2FA status from auth (admin client).
+  // Names + photos from profiles, emails + 2FA status from auth (admin
+  // client) — depends on `members` above, but not on any of the "new
+  // since last sync" queries below, so both run as one more parallel
+  // batch rather than two more sequential round trips.
   const userIds = [...new Set((members ?? []).map((m) => m.user_id))];
-  const { data: profiles } =
+
+  // ONLY the items that are NEW in the most recent sync run get listed in
+  // each section (first_seen_at >= that run's log timestamp). Blank when
+  // nothing new — the section never synced shows nothing either.
+  const [
+    { data: newClassesData },
+    { data: newCategoriesData },
+    { data: newSuppliersData },
+    { data: newProjectsData },
+    { data: profiles },
+  ] = await Promise.all([
+    classesLastSync
+      ? supabase
+          .from("qbo_classes")
+          .select("id, name")
+          .eq("organization_id", org.id)
+          .gte("first_seen_at", classesLastSync)
+          .order("name", { ascending: true })
+          .limit(100)
+      : Promise.resolve({ data: [] }),
+    categoriesLastSync
+      ? supabase
+          .from("qbo_categories")
+          .select("id, name, acct_num, account_type, account_sub_type")
+          .eq("organization_id", org.id)
+          .gte("first_seen_at", categoriesLastSync)
+          .order("name", { ascending: true })
+          .limit(100)
+      : Promise.resolve({ data: [] }),
+    suppliersLastSync
+      ? supabase
+          .from("qbo_suppliers")
+          .select("id, name")
+          .eq("organization_id", org.id)
+          .gte("first_seen_at", suppliersLastSync)
+          .order("name", { ascending: true })
+          .limit(100)
+      : Promise.resolve({ data: [] }),
+    projectsLastSync
+      ? supabase
+          .from("projects")
+          .select("id, name")
+          .eq("organization_id", org.id)
+          .eq("source", "qbo")
+          .gte("first_seen_at", projectsLastSync)
+          .order("name", { ascending: true })
+          .limit(100)
+      : Promise.resolve({ data: [] }),
     userIds.length > 0
-      ? await supabase
-          .from("profiles")
-          .select("id, full_name, avatar_url")
-          .in("id", userIds)
-      : { data: [] };
+      ? supabase.from("profiles").select("id, full_name, avatar_url").in("id", userIds)
+      : Promise.resolve({ data: [] }),
+  ]);
+  const newClasses = newClassesData ?? [];
+  const newCategories = newCategoriesData ?? [];
+  const newSuppliers = newSuppliersData ?? [];
+  const newProjects = newProjectsData ?? [];
   const nameById = new Map(
     (profiles ?? []).map((p) => [p.id, p.full_name ?? "Team member"])
   );
@@ -474,52 +475,39 @@ export default async function SettingsPage({
     "rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none";
 
   return (
-    <div className="flex h-screen bg-slate-50 text-slate-900">
-      <aside className="flex w-60 flex-none flex-col border-r border-slate-200 bg-white">
-        <div className="border-b border-slate-200 p-4">
-          <div className="text-sm font-semibold">{org.name}</div>
-          <div className="mt-0.5 truncate text-xs text-slate-400">
-            Settings
-          </div>
-        </div>
-        <nav className="flex-1 space-y-0.5 p-2">
-          <BackToDashboardButton className="w-full justify-center" />
-          <div className="my-2 border-t border-slate-100" />
-          <a href="#profile" className="block rounded-md px-3 py-2 text-sm text-slate-600 hover:bg-slate-100">
-            My profile
-          </a>
-          <a href="#security" className="block rounded-md px-3 py-2 text-sm text-slate-600 hover:bg-slate-100">
-            Security
-          </a>
-          {showOrgSettings && (
-            <>
-              <a href="#integrations" className="block rounded-md px-3 py-2 text-sm text-slate-600 hover:bg-slate-100">
-                Integrations
-              </a>
-              <a href="#invoice-email" className="block rounded-md px-3 py-2 text-sm text-slate-600 hover:bg-slate-100">
-                Invoice email
-              </a>
-              <a href="#billing" className="block rounded-md px-3 py-2 text-sm text-slate-600 hover:bg-slate-100">
-                Billing &amp; usage
-              </a>
-              <a href="#members" className="block rounded-md px-3 py-2 text-sm text-slate-600 hover:bg-slate-100">
-                Members
-              </a>
-            </>
-          )}
-        </nav>
-        <div className="flex items-center justify-between border-t border-slate-200 p-4">
-          <span className="truncate text-xs text-slate-500">{user.email}</span>
-          <SignOutButton />
-        </div>
-      </aside>
+    <main className="mx-auto max-w-6xl p-8">
+      <h1 className="text-2xl font-semibold">Settings</h1>
+      <p className="mt-1 text-sm text-slate-500">
+        {org.name} · you are {ROLE_LABELS[org.role]}
+      </p>
 
-      <main className="min-w-0 flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-6xl p-8">
-          <h1 className="text-2xl font-semibold">Settings</h1>
-          <p className="mt-1 text-sm text-slate-500">
-            {org.name} · you are {ROLE_LABELS[org.role]}
-          </p>
+      {/* In-page section jump-nav — the app-wide sidebar (AppSidebar, via
+          the shared layout) covers cross-page navigation now; this is
+          purely for finding a section on THIS page without scrolling. */}
+      <nav className="mt-4 flex flex-wrap gap-1.5 border-b border-slate-200 pb-4">
+        <a href="#profile" className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600 hover:bg-slate-200">
+          My profile
+        </a>
+        <a href="#security" className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600 hover:bg-slate-200">
+          Security
+        </a>
+        {showOrgSettings && (
+          <>
+            <a href="#integrations" className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600 hover:bg-slate-200">
+              Integrations
+            </a>
+            <a href="#invoice-email" className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600 hover:bg-slate-200">
+              Invoice email
+            </a>
+            <a href="#billing" className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600 hover:bg-slate-200">
+              Billing &amp; usage
+            </a>
+            <a href="#members" className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600 hover:bg-slate-200">
+              Members
+            </a>
+          </>
+        )}
+      </nav>
 
           {/* Puts the page back where you were after a sync/save button
               press (those redirect, and redirects scroll to the top). */}
@@ -1190,8 +1178,6 @@ export default async function SettingsPage({
 
           </>
           )}
-        </div>
-      </main>
-    </div>
+    </main>
   );
 }
