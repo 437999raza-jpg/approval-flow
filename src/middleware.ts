@@ -34,10 +34,7 @@ export async function middleware(request: NextRequest) {
   // via the setAll callback above — so giving up after a few seconds and
   // serving the request anyway just risks one request seeing a stale
   // session, which self-corrects on the next one, instead of a full outage.
-  const authPromise = supabase.auth.getUser().catch(() => {});
-  const timeout = new Promise<void>((resolve) => setTimeout(resolve, 5000));
-  await Promise.race([authPromise, timeout]);
-
+  //
   // Per-user opt-in MFA (see SecurityMfaSection.tsx): once someone has
   // enrolled a verified TOTP factor, every session must complete that
   // second step before it counts as fully signed in — this is the one
@@ -46,20 +43,42 @@ export async function middleware(request: NextRequest) {
   // this session's current level against what the account actually
   // requires; a mismatch (aal1 but aal2 required) means the password/
   // magic-link/OAuth step succeeded but the 6-digit code hasn't been
-  // entered yet. Same 5s-timeout guard as getUser() above — never let a
-  // slow Auth call hang every request. Excludes /login* (the challenge
-  // page itself lives at /login/mfa) and /api/webhooks (already excluded
-  // via the matcher, but /api/* generally still needs this same gate).
+  // entered yet.
+  //
+  // These two Auth calls are independent (neither's result feeds the
+  // other) but used to run one after the other — doubling this
+  // middleware's own latency on every single request across the whole
+  // site, since it's not just an initial-load cost: every non-Dashboard
+  // navigation (Settings, Workflows, Billing, Statements, Reports,
+  // Queue, /admin/organizations, ...) is a real Next.js page load that
+  // pays this tax again, unlike the Dashboard's client-cached clicks,
+  // which skip a server round trip (and this middleware) entirely after
+  // the first load. Reported live as "every page except the Dashboard
+  // feels slow." Now fired together; each still gets its own 5s timeout
+  // guard so a slow/hung Supabase Auth call still can't take the whole
+  // site down.
   const pathname = request.nextUrl.pathname;
-  if (!pathname.startsWith("/login")) {
-    const aalPromise = supabase.auth.mfa.getAuthenticatorAssuranceLevel().catch(() => null);
-    const aalTimeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), 5000));
-    const aal = await Promise.race([aalPromise, aalTimeout]);
-    if (aal?.data && aal.data.currentLevel === "aal1" && aal.data.nextLevel === "aal2") {
-      const redirectUrl = new URL("/login/mfa", request.url);
-      redirectUrl.searchParams.set("next", pathname + request.nextUrl.search);
-      return NextResponse.redirect(redirectUrl);
-    }
+  const authPromise = supabase.auth.getUser().catch(() => {});
+  const aalPromise = !pathname.startsWith("/login")
+    ? supabase.auth.mfa.getAuthenticatorAssuranceLevel().catch(() => null)
+    : Promise.resolve(null);
+  const timeout = new Promise<void>((resolve) => setTimeout(resolve, 5000));
+  const aalTimeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), 5000));
+
+  const [, aal] = await Promise.all([
+    Promise.race([authPromise, timeout]),
+    Promise.race([aalPromise, aalTimeout]),
+  ]);
+
+  if (
+    !pathname.startsWith("/login") &&
+    aal?.data &&
+    aal.data.currentLevel === "aal1" &&
+    aal.data.nextLevel === "aal2"
+  ) {
+    const redirectUrl = new URL("/login/mfa", request.url);
+    redirectUrl.searchParams.set("next", pathname + request.nextUrl.search);
+    return NextResponse.redirect(redirectUrl);
   }
 
   return response;
