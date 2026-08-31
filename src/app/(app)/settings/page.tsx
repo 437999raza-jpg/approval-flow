@@ -475,7 +475,7 @@ export default async function SettingsPage({
     "rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none";
 
   return (
-    <main className="mx-auto w-full max-w-6xl p-8">
+    <main className="mx-auto w-full max-w-6xl px-8 pb-8">
       {/* Heading + subtitle + the section jump-nav are one sticky unit,
           not just the nav on its own. Reported live: switching to a
           section taller than the viewport (Integrations) scrolled the
@@ -485,8 +485,18 @@ export default async function SettingsPage({
           section actually has, so tall and short sections behaved
           differently even though it's the same navigation. Sticking the
           whole header block keeps it visible no matter which section is
-          open or how tall it is, instead of chasing the scroll amount. */}
-      <div className="sticky top-0 z-10 bg-slate-50 pb-4">
+          open or how tall it is, instead of chasing the scroll amount.
+          Still drifted a little on the very first scroll, though: <main>
+          used to carry its own top padding (p-8), so the sticky block's
+          natural (unscrolled) position sat 32px down from the container's
+          top — any scroll smaller than that just moved it along with
+          everything else instead of snapping to top:0 immediately, since
+          sticky only clamps once the natural position would cross the
+          threshold. Moving that padding INTO the sticky block (pt-8, and
+          <main> drops to px-8/pb-8) puts its natural position at 0 — the
+          same visual spacing when unscrolled, but sticky engages the
+          instant any scroll happens at all, with zero drift to close. */}
+      <div className="sticky top-0 z-10 bg-slate-50 pb-4 pt-8">
         <h1 className="text-2xl font-semibold">Settings</h1>
         <p className="mt-1 text-sm text-slate-500">
           {org.name} · you are {ROLE_LABELS[org.role]}
