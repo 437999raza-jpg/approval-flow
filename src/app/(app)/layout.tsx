@@ -4,6 +4,7 @@ import { getCurrentOrg } from "@/lib/current-org";
 import { isPlatformAdmin } from "@/lib/platform-admin";
 import { switchOrgAction } from "@/lib/admin-actions";
 import { AppSidebar } from "@/components/AppSidebar";
+import { QueryProvider } from "@/components/QueryProvider";
 
 // Shared shell for every non-Dashboard authenticated page (Settings,
 // Workflows, Reports, Billing, Statements, Queue, Notifications, Add
@@ -63,21 +64,23 @@ export default async function AppLayout({
   }
 
   return (
-    <div className="flex h-screen bg-slate-50 text-slate-900">
-      <AppSidebar
-        org={org}
-        user={user}
-        myOrgs={myOrgs}
-        switchOrgAction={switchOrgAction}
-        isPlatformAdmin={isPlatformAdmin(user.email)}
-        counts={{
-          mentions: unreadNotificationsRes.count ?? 0,
-          pendingSplits: pendingSplitsRes.count ?? 0,
-        }}
-      />
-      <div className="flex min-w-0 flex-1 flex-col overflow-y-auto">
-        {children}
+    <QueryProvider>
+      <div className="flex h-screen bg-slate-50 text-slate-900">
+        <AppSidebar
+          org={org}
+          user={user}
+          myOrgs={myOrgs}
+          switchOrgAction={switchOrgAction}
+          isPlatformAdmin={isPlatformAdmin(user.email)}
+          counts={{
+            mentions: unreadNotificationsRes.count ?? 0,
+            pendingSplits: pendingSplitsRes.count ?? 0,
+          }}
+        />
+        <div className="flex min-w-0 flex-1 flex-col overflow-y-auto">
+          {children}
+        </div>
       </div>
-    </div>
+    </QueryProvider>
   );
 }

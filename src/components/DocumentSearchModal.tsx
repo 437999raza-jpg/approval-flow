@@ -27,6 +27,10 @@ interface DocumentSearchModalProps {
   classes: MultiSelectOption[];
   initial: DocumentSearchFilters;
   activeCount: number;
+  // Phase 2: when provided, "Search" hands the resulting relative URL
+  // (path + query string) to this callback instead of a real Next.js
+  // navigation — same pattern as SearchInput's onNavigate.
+  onNavigate?: (url: string) => void;
 }
 
 const EMPTY: DocumentSearchFilters = {
@@ -56,8 +60,10 @@ export function DocumentSearchModal({
   classes,
   initial,
   activeCount,
+  onNavigate,
 }: DocumentSearchModalProps) {
   const router = useRouter();
+  const go = (url: string) => (onNavigate ? onNavigate(url) : router.push(url));
   const [open, setOpen] = useState(false);
   const [filters, setFilters] = useState<DocumentSearchFilters>(initial);
 
@@ -79,7 +85,7 @@ export function DocumentSearchModal({
     if (filters.dateTo) params.set("dateTo", filters.dateTo);
     if (filters.amountFrom) params.set("amountFrom", filters.amountFrom);
     if (filters.amountTo) params.set("amountTo", filters.amountTo);
-    router.push(`/dashboard${params.toString() ? `?${params.toString()}` : ""}`);
+    go(`/dashboard${params.toString() ? `?${params.toString()}` : ""}`);
     setOpen(false);
   }
 

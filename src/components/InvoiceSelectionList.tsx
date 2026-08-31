@@ -33,6 +33,7 @@ export function InvoiceSelectionList({
   deleteInvoicesAction,
   clearQboPublishDataAction,
   emailInvoicesAction,
+  onSelect,
 }: {
   rows: SelectableInvoice[];
   pinnedCount: number;
@@ -45,6 +46,13 @@ export function InvoiceSelectionList({
     to: string,
     note: string
   ) => Promise<{ ok: boolean; error?: string }>;
+  // Phase 2: when provided, a plain left-click selects the invoice via
+  // client state (instant — no server round trip) instead of a real Next
+  // navigation. The href stays real underneath, so modified clicks
+  // (Cmd/Ctrl/middle-click — "open in new tab") still work normally via
+  // the browser's own default handling, since preventDefault() is only
+  // called for plain clicks.
+  onSelect?: (id: string) => void;
 }) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -303,6 +311,12 @@ export function InvoiceSelectionList({
               <Link
                 href={`/dashboard/${inv.id}${qs}`}
                 scroll={false}
+                onClick={(e) => {
+                  if (!onSelect) return;
+                  if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+                  e.preventDefault();
+                  onSelect(inv.id);
+                }}
                 className={clsx(
                   "block min-w-0 flex-1 px-4 py-3",
                   inv.isDuplicate && "border-l-2 border-l-orange-300",
