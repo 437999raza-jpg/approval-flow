@@ -21,6 +21,7 @@ import { DefaultTaxRateForm } from "@/components/DefaultTaxRateForm";
 import { InboundEmailForm } from "@/components/InboundEmailForm";
 import { ScrollPreserveForm } from "@/components/ScrollPreserveForm";
 import { ScrollRestorer } from "@/components/ScrollRestorer";
+import { StickyHeader } from "@/components/StickyHeader";
 import { LocalTime } from "@/components/LocalTime";
 import { membersTag } from "@/lib/org-cache";
 import type { Database } from "@/lib/supabase/types";
@@ -477,26 +478,16 @@ export default async function SettingsPage({
   return (
     <main className="mx-auto w-full max-w-6xl px-8 pb-8">
       {/* Heading + subtitle + the section jump-nav are one sticky unit,
-          not just the nav on its own. Reported live: switching to a
-          section taller than the viewport (Integrations) scrolled the
-          "Settings" heading itself out of view, while a short section
-          (My profile) never moved — because :target's native
-          scroll-into-view is clamped by how much scrollable room a
-          section actually has, so tall and short sections behaved
-          differently even though it's the same navigation. Sticking the
-          whole header block keeps it visible no matter which section is
-          open or how tall it is, instead of chasing the scroll amount.
-          Still drifted a little on the very first scroll, though: <main>
-          used to carry its own top padding (p-8), so the sticky block's
-          natural (unscrolled) position sat 32px down from the container's
-          top — any scroll smaller than that just moved it along with
-          everything else instead of snapping to top:0 immediately, since
-          sticky only clamps once the natural position would cross the
-          threshold. Moving that padding INTO the sticky block (pt-8, and
-          <main> drops to px-8/pb-8) puts its natural position at 0 — the
-          same visual spacing when unscrolled, but sticky engages the
-          instant any scroll happens at all, with zero drift to close. */}
-      <div className="sticky top-0 z-10 bg-slate-50 pb-4 pt-8">
+          not just the nav on its own — a section taller than the
+          viewport needs to stay reachable without ever pushing the
+          heading itself out of view. StickyHeader also measures its own
+          rendered height and applies it as scroll-padding-top on the
+          scrolling pane, so whichever section a pill jumps to always
+          clears the header by exactly the right amount — no hand-tuned
+          scroll-mt-* guess to keep in sync with the header's actual
+          height (which drifted out of sync the moment the header's own
+          height changed). */}
+      <StickyHeader>
         <h1 className="text-2xl font-semibold">Settings</h1>
         <p className="mt-1 text-sm text-slate-500">
           {org.name} · you are {ROLE_LABELS[org.role]}
@@ -529,20 +520,21 @@ export default async function SettingsPage({
             </>
           )}
         </nav>
-      </div>
+      </StickyHeader>
 
       {/* Only one section shows at a time now — pure CSS via :target, no
           client JS needed. .settings-panel defaults to hidden; the one
-          matching the URL's #hash (or containing the matching sub-anchor,
-          e.g. #invoice-email inside Integrations) is shown; with no hash
-          anywhere on the page, the first panel (My profile) shows. Every
-          redirect that lands back on this page after an action now carries
-          the right #hash (see ScrollPreserveForm for the ones that can't
-          set it server-side, e.g. the QBO sync buttons). */}
+          matching the URL's #hash is shown; with no hash anywhere on the
+          page, the first panel (My profile) shows. Every redirect that
+          lands back on this page after an action now carries the right
+          #hash (see ScrollPreserveForm for the ones that can't set it
+          server-side, e.g. the QBO sync buttons). Every panel is a
+          direct #hash target now — Invoice email used to be a sub-anchor
+          nested inside Integrations (so opening it also showed all of
+          Integrations' content above it), now it's its own panel. */}
       <style>{`
         .settings-tabs .settings-panel { display: none; }
-        .settings-tabs .settings-panel:target,
-        .settings-tabs .settings-panel:has(:target) { display: block; }
+        .settings-tabs .settings-panel:target { display: block; }
         .settings-tabs:not(:has(:target)) .settings-panel:first-of-type { display: block; }
       `}</style>
 
@@ -568,7 +560,7 @@ export default async function SettingsPage({
           <div className="settings-tabs">
 
           {/* My profile */}
-          <section id="profile" className="settings-panel mt-8 scroll-mt-36">
+          <section id="profile" className="settings-panel mt-8">
             <h2 className="text-lg font-semibold">My profile</h2>
             <div className="mt-3 flex items-center gap-4 rounded-lg border border-slate-200 bg-white p-4">
               <Avatar name={myName || user.email || "?"} photoUrl={myAvatar} size="lg" />
@@ -589,7 +581,7 @@ export default async function SettingsPage({
           {/* Security — per-user opt-in, set up under your own login (not
               admin-assignable; an admin can only see the status below in
               the Members table and remind someone directly). */}
-          <section id="security" className="settings-panel mt-8 scroll-mt-36">
+          <section id="security" className="settings-panel mt-8">
             <h2 className="text-lg font-semibold">Security</h2>
             <p className="mt-1 text-sm text-slate-500">
               Two-factor authentication for your own account.
@@ -600,7 +592,7 @@ export default async function SettingsPage({
           {showOrgSettings && (
           <>
           {/* Integrations */}
-          <section id="integrations" className="settings-panel mt-8 scroll-mt-36">
+          <section id="integrations" className="settings-panel mt-8">
             <h2 className="text-lg font-semibold">Integrations</h2>
             <p className="mt-1 text-sm text-slate-500">
               Connect external apps here — connection details stay out of the
@@ -1023,19 +1015,23 @@ export default async function SettingsPage({
                 </div>
               </div>
             </div>
+          </section>
 
-            {/* Invoice email — inbound capture address on our domain
-                (ApprovalMax/Dext model: {companyname}@ourdomain, clients
-                change nothing) */}
-            <div id="invoice-email" className="mt-3 scroll-mt-36 rounded-lg border border-slate-200 bg-white p-4 text-sm">
-              <div className="text-xs font-bold uppercase tracking-wide text-slate-400">
-                Invoice email
-              </div>
-              <p className="mt-1 text-xs text-slate-500">
-                Invoices emailed to your capture address land in the app
-                automatically. The address is on our domain — your suppliers
-                just send to it, and there is nothing to set up on your side.
-              </p>
+          {/* Invoice email — its own tab now, not nested inside
+              Integrations (it used to be a sub-anchor within that
+              section, so opening it also showed all of Integrations'
+              QBO content above it). Inbound capture address on our
+              domain (ApprovalMax/Dext model: {companyname}@ourdomain,
+              clients change nothing), plus where a vendor's Statement
+              Reconciliation reply lands. */}
+          <section id="invoice-email" className="settings-panel mt-8">
+            <h2 className="text-lg font-semibold">Invoice email</h2>
+            <p className="mt-1 text-sm text-slate-500">
+              Invoices emailed to your capture address land in the app
+              automatically. The address is on our domain — your suppliers
+              just send to it, and there is nothing to set up on your side.
+            </p>
+            <div className="mt-3 rounded-lg border border-slate-200 bg-white p-4 text-sm">
               {isAdmin ? (
                 <InboundEmailForm
                   domain={inboundEmailDomain}
@@ -1044,7 +1040,7 @@ export default async function SettingsPage({
                   action={saveInboundEmailLocal}
                 />
               ) : (
-                <p className="mt-2 text-xs text-slate-500">
+                <p className="text-xs text-slate-500">
                   Your capture address is{" "}
                   <span className="font-mono font-semibold text-slate-800">
                     {org.inbound_email_local ?? org.inbound_email_token}@
@@ -1080,7 +1076,7 @@ export default async function SettingsPage({
           </section>
 
           {/* Billing & usage — lives on its own page now */}
-          <section id="billing" className="settings-panel mt-8 scroll-mt-36">
+          <section id="billing" className="settings-panel mt-8">
             <h2 className="text-lg font-semibold">Billing &amp; usage</h2>
             <p className="mt-1 text-sm text-slate-500">
               Documents processed, the suggested charge at your per-document
@@ -1095,7 +1091,7 @@ export default async function SettingsPage({
           </section>
 
           {/* Members */}
-          <section id="members" className="settings-panel mt-10 scroll-mt-36">
+          <section id="members" className="settings-panel mt-10">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <h2 className="text-lg font-semibold">Members</h2>
               {isAdmin && (
