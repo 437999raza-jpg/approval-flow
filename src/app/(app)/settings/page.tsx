@@ -476,44 +476,50 @@ export default async function SettingsPage({
 
   return (
     <main className="mx-auto w-full max-w-6xl p-8">
-      <h1 className="text-2xl font-semibold">Settings</h1>
-      <p className="mt-1 text-sm text-slate-500">
-        {org.name} · you are {ROLE_LABELS[org.role]}
-      </p>
+      {/* Heading + subtitle + the section jump-nav are one sticky unit,
+          not just the nav on its own. Reported live: switching to a
+          section taller than the viewport (Integrations) scrolled the
+          "Settings" heading itself out of view, while a short section
+          (My profile) never moved — because :target's native
+          scroll-into-view is clamped by how much scrollable room a
+          section actually has, so tall and short sections behaved
+          differently even though it's the same navigation. Sticking the
+          whole header block keeps it visible no matter which section is
+          open or how tall it is, instead of chasing the scroll amount. */}
+      <div className="sticky top-0 z-10 bg-slate-50 pb-4">
+        <h1 className="text-2xl font-semibold">Settings</h1>
+        <p className="mt-1 text-sm text-slate-500">
+          {org.name} · you are {ROLE_LABELS[org.role]}
+        </p>
 
-      {/* In-page section jump-nav — the app-wide sidebar (AppSidebar, via
-          the shared layout) covers cross-page navigation now; this is
-          purely for finding a section on THIS page without scrolling.
-          Sticky (not just inline) so it stays put after jumping to a
-          section instead of scrolling away with the content above it.
-          No negative margins here — a full-bleed sticky bar via -mx-8
-          overflowed past <main>'s own box and forced the whole page to
-          scroll horizontally on every anchor jump. Staying inside main's
-          own padding keeps it flush with everything else on the page. */}
-      <nav className="sticky top-0 z-10 mt-4 flex flex-wrap gap-1.5 border-b border-slate-200 bg-slate-50 py-4">
-        <a href="#profile" className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600 hover:bg-slate-200">
-          My profile
-        </a>
-        <a href="#security" className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600 hover:bg-slate-200">
-          Security
-        </a>
-        {showOrgSettings && (
-          <>
-            <a href="#integrations" className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600 hover:bg-slate-200">
-              Integrations
-            </a>
-            <a href="#invoice-email" className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600 hover:bg-slate-200">
-              Invoice email
-            </a>
-            <a href="#billing" className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600 hover:bg-slate-200">
-              Billing &amp; usage
-            </a>
-            <a href="#members" className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600 hover:bg-slate-200">
-              Members
-            </a>
-          </>
-        )}
-      </nav>
+        {/* In-page section jump-nav — the app-wide sidebar (AppSidebar,
+            via the shared layout) covers cross-page navigation now; this
+            is purely for switching between sections on THIS page. */}
+        <nav className="mt-4 flex flex-wrap gap-1.5 border-b border-slate-200 pb-4">
+          <a href="#profile" className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600 hover:bg-slate-200">
+            My profile
+          </a>
+          <a href="#security" className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600 hover:bg-slate-200">
+            Security
+          </a>
+          {showOrgSettings && (
+            <>
+              <a href="#integrations" className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600 hover:bg-slate-200">
+                Integrations
+              </a>
+              <a href="#invoice-email" className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600 hover:bg-slate-200">
+                Invoice email
+              </a>
+              <a href="#billing" className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600 hover:bg-slate-200">
+                Billing &amp; usage
+              </a>
+              <a href="#members" className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600 hover:bg-slate-200">
+                Members
+              </a>
+            </>
+          )}
+        </nav>
+      </div>
 
       {/* Only one section shows at a time now — pure CSS via :target, no
           client JS needed. .settings-panel defaults to hidden; the one
@@ -552,7 +558,7 @@ export default async function SettingsPage({
           <div className="settings-tabs">
 
           {/* My profile */}
-          <section id="profile" className="settings-panel mt-8 scroll-mt-20">
+          <section id="profile" className="settings-panel mt-8 scroll-mt-36">
             <h2 className="text-lg font-semibold">My profile</h2>
             <div className="mt-3 flex items-center gap-4 rounded-lg border border-slate-200 bg-white p-4">
               <Avatar name={myName || user.email || "?"} photoUrl={myAvatar} size="lg" />
@@ -573,7 +579,7 @@ export default async function SettingsPage({
           {/* Security — per-user opt-in, set up under your own login (not
               admin-assignable; an admin can only see the status below in
               the Members table and remind someone directly). */}
-          <section id="security" className="settings-panel mt-8 scroll-mt-20">
+          <section id="security" className="settings-panel mt-8 scroll-mt-36">
             <h2 className="text-lg font-semibold">Security</h2>
             <p className="mt-1 text-sm text-slate-500">
               Two-factor authentication for your own account.
@@ -584,7 +590,7 @@ export default async function SettingsPage({
           {showOrgSettings && (
           <>
           {/* Integrations */}
-          <section id="integrations" className="settings-panel mt-8 scroll-mt-20">
+          <section id="integrations" className="settings-panel mt-8 scroll-mt-36">
             <h2 className="text-lg font-semibold">Integrations</h2>
             <p className="mt-1 text-sm text-slate-500">
               Connect external apps here — connection details stay out of the
@@ -1011,7 +1017,7 @@ export default async function SettingsPage({
             {/* Invoice email — inbound capture address on our domain
                 (ApprovalMax/Dext model: {companyname}@ourdomain, clients
                 change nothing) */}
-            <div id="invoice-email" className="mt-3 scroll-mt-20 rounded-lg border border-slate-200 bg-white p-4 text-sm">
+            <div id="invoice-email" className="mt-3 scroll-mt-36 rounded-lg border border-slate-200 bg-white p-4 text-sm">
               <div className="text-xs font-bold uppercase tracking-wide text-slate-400">
                 Invoice email
               </div>
@@ -1064,7 +1070,7 @@ export default async function SettingsPage({
           </section>
 
           {/* Billing & usage — lives on its own page now */}
-          <section id="billing" className="settings-panel mt-8 scroll-mt-20">
+          <section id="billing" className="settings-panel mt-8 scroll-mt-36">
             <h2 className="text-lg font-semibold">Billing &amp; usage</h2>
             <p className="mt-1 text-sm text-slate-500">
               Documents processed, the suggested charge at your per-document
@@ -1079,7 +1085,7 @@ export default async function SettingsPage({
           </section>
 
           {/* Members */}
-          <section id="members" className="settings-panel mt-10 scroll-mt-20">
+          <section id="members" className="settings-panel mt-10 scroll-mt-36">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <h2 className="text-lg font-semibold">Members</h2>
               {isAdmin && (
