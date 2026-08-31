@@ -218,9 +218,10 @@ payment status (0079), deadlines/reminders (0073), the ops dashboard
 Reconciliation (0081–0084), the plan-derived extraction mode saga
 (0088 added a column, 0089 dropped it again — same session log), MFA
 recovery codes (0090, [Two-factor authentication
-(TOTP)](#two-factor-authentication-totp)), and real-time Discussion
-updates (0091, same session log). Check `supabase/migrations/` directly
-for the exhaustive list.
+(TOTP)](#two-factor-authentication-totp)), real-time Discussion
+updates (0091, same session log), and the real Supplier entity (0092,
+[Session log — 2026-08-30](#session-log--2026-08-30-supplier-entity--admin-mfa-reset)).
+Check `supabase/migrations/` directly for the exhaustive list.
 
 ---
 
@@ -1225,6 +1226,191 @@ work.
 
 ---
 
+## Session log — 2026-08-30 (Supplier entity + admin MFA reset)
+
+Two items pulled off the deferred list.
+
+**Admin MFA reset**: recovery codes already solved the case that matters
+most — a lone admin can always get back in with their own saved codes.
+The remaining gap was someone who loses their device **and** never
+kept their codes. `joinOrganizationAction` already grants a platform
+admin `role: "admin"` on any org they join as support, so a single new
+admin-facing **Reset** control next to a member's 2FA status in
+Settings → Members (`resetMemberMfaAction`,
+[`src/lib/admin-actions.ts`](src/lib/admin-actions.ts)) covers both "a
+teammate is locked out" and "the whole org, including its only admin,
+is locked out" — no separate platform-admin-only action was needed.
+Verifies the caller is an admin of the target's own org and that the
+target is actually a member of it before touching anything, then uses
+`createAdminClient()`'s `auth.admin.mfa.listFactors`/`deleteFactor`
+(bypasses RLS by necessity — this is one person's admin client turning
+off *another* person's 2FA).
+
+**Real Supplier entity (v1)** — migration `0092_suppliers.sql`. Before
+this, supplier defaults, duplicate detection, and the Document Search
+Supplier filter all matched on normalized vendor-name **text**, not a
+stable id — two punctuation-variant spellings of the same vendor could
+silently diverge. Scoped first: only 9 of the 24 files touching vendor
+names actually do matching/grouping (the other 15 just display
+`invoices.vendor_name` as plain text), making a real table tractable
+instead of the multi-day full rewrite originally feared.
+
+- New `suppliers` table (`organization_id`, `name`, a generated
+  `name_normalized` column, `qbo_vendor_id`), RLS read-only for members
+  — writes only ever happen via `createAdminClient()` at
+  ingestion/resolve time, same as `supplier_defaults` already worked.
+  `invoices.supplier_id` and `supplier_defaults.supplier_id` added,
+  backfilled from whatever normalized vendor names already existed.
+- `resolveSupplier()` ([`src/lib/matching.ts`](src/lib/matching.ts)):
+  find-or-create by `(organization_id, normalizeForMatching(vendorName))`
+  — first-seen spelling becomes the canonical display name, never
+  silently renamed later.
+- Switched to `supplier_id` everywhere real matching happens: ingestion
+  (`invoices.ts`), `saveSupplierDefaults` and the "apply to all
+  in-review invoices from this supplier" rematch, the Dashboard's
+  duplicate-group key and Document Search Supplier filter, and —a real
+  correctness fix, not just internal bookkeeping — statement
+  reconciliation's vendor matching (`matchInvoicesForVendor` and
+  `/statements/[id]`), which had been a raw case-insensitive
+  `.ilike("vendor_name", …)`, already inconsistent with everywhere else.
+- Deliberately **not** touched: `workflow-conditions.ts`'s Supplier
+  condition (still plain `trim().toLowerCase()` — converting it means
+  turning an admin-typed free-text field into a supplier picker, a real
+  UX change with live behavioral stakes for existing workflows, not
+  just a backend swap); `settings/suppliers/page.tsx` (a different,
+  already-stable identity source — QBO's own vendor id); `reports.ts`'s
+  vendor filter (a deliberate loose substring search for a human typing
+  a partial name, not identity matching). No column drops —
+  `vendor_name`/`vendor_name_normalized` stay exactly as they were,
+  `supplier_id` is additive.
+- The backfill has been confirmed complete: every existing invoice and
+  `supplier_defaults` row now has a non-null `supplier_id`.
+- Known gap, flagged not fixed: `resolveSupplier`'s find-or-create has
+  no admin UI or merge tooling. It can create a real, permanent
+  supplier row as a side effect of a read-only matching path (e.g.
+  statement reconciliation falling back to a literal "Unknown vendor")
+  — worth a dedicated look if supplier data quality becomes a visible
+  problem.
+
+---
+
+## Session log — 2026-08-31 (Dashboard rewrite goes client-cached; scroll-prefetch; Settings navigation fixes)
+
+### The Dashboard's master-detail view is now client-cached, not server-rendered per click
+
+Before this, clicking between invoices was a real Next.js navigation —
+`/dashboard/[id]`, fully server-rendered on every click. Fast, but not
+"ApprovalMax fast": every click paid for a server round trip even for an
+invoice you'd already had open. [`DashboardClient.tsx`](src/components/dashboard/DashboardClient.tsx)
+now owns selection, filters, and the URL itself (`window.history.replaceState`,
+never Next's router) with two TanStack Query caches: the invoice list
+fetched once per org per session (`fetchDashboardListData`), and each
+invoice's detail cached per-id (so revisiting an already-opened invoice
+is instant, zero network request). Mutations still call the exact same
+`"use server"` actions as before; each is wrapped (`invalidateAfter`) to
+also invalidate the relevant query key on success, since a Server
+Action's own `revalidatePath()` has no way to reach a separate
+client-side query cache.
+
+**Scroll-into-view prefetch**: as invoice rows scroll into view
+(`IntersectionObserver` in [`InvoiceSelectionList.tsx`](src/components/InvoiceSelectionList.tsx),
+`rootMargin: "200px 0px"` so a row warms just before it's actually
+visible), its detail query warms in the background — clicking it later
+feels the same as revisiting an already-cached one, without eagerly
+loading every invoice in the org up front.
+
+### Two real bugs this exposed, both root-caused by reading Next's own source, not by trial and error
+
+**`revalidatePath("/dashboard", "layout")` in every mutation action**
+(`dashboard-actions.ts`) was the first, and biggest: Next.js
+automatically triggers a client-side router refresh of whatever route is
+currently mounted whenever a Server Action calls
+`revalidatePath`/`revalidateTag`, regardless of whether the client asked
+for one. Since the Dashboard manages its own selection via client state,
+that auto-refresh was silently resetting it on every single
+approve/comment/reassign — the open invoice would randomly jump to a
+different one (sometimes one that had merely been prefetched, never
+actually clicked), or the detail pane would get stuck on "Loading…"
+indefinitely. Removed from all ~31 call sites; `revalidateTag(INVOICES_TAG)`
+stays, since that's what keeps the still-server-rendered consumers
+(Queue, invoice detail pages) correctly reflecting a Dashboard mutation.
+
+**The scroll-prefetch feature itself then re-triggered a version of the
+same bug** — reproducible after 30-60 seconds of scrolling and idling,
+with zero mutations involved. Root cause, confirmed by reading
+`node_modules/next/dist/client/components/router-reducer/reducers/server-action-reducer.js`
+and `handle-mutable.js`: **every** `"use server"` function call from
+client code — a pure read like `fetchInvoiceDetail`, not just a
+mutation — is dispatched through Next's Server Actions machinery, which
+always applies a fresh RSC patch for whatever route Next's router still
+thinks is current. Because this Dashboard's URL changes never go
+through Next's router, that "current route" stays permanently frozen at
+bare `/dashboard` from the last real Next navigation — so the
+prefetch's high call volume (`fetchInvoiceDetail` used directly as a
+TanStack Query `queryFn`) was remounting `DashboardClient` and wiping
+its selection, purely from background reads. Fixed by moving that read
+off the Server Action RPC path entirely, onto a plain Route Handler
+([`/api/dashboard/invoice/[id]/route.ts`](src/app/api/dashboard/invoice/%5Bid%5D/route.ts))
+fetched with a plain `fetch()` — JSON over HTTP never enters Next's
+action-dispatch machinery, so it can't trigger the remount. Verified via
+~6.5 minutes of cumulative idle time with heavy scroll-triggered
+prefetch against a production build, monitored at the `window.history`
+API level, with zero recurrences (one earlier, unexplained reproduction
+right after a fresh server start couldn't be reproduced again — treat
+as substantially fixed, not provably zero-risk).
+
+### Shared shell: a real Dashboard link, and a page-wide horizontal-scroll bug
+
+The shared sidebar ([`AppSidebar.tsx`](src/components/AppSidebar.tsx),
+used by Settings/Billing/Workflows/Reports/Statements/Queue/etc.) had no
+explicit way back to the Dashboard — only an unlabeled logo click in the
+brand bar. Added a proper **Dashboard** nav item, first in the list.
+That made the old per-page `<BackToDashboardButton />` (Queue, Add
+invoice, Statements, Billing, Mentions, Needs split review) redundant —
+removed from all six; the platform-admin `/admin/organizations` page has
+no sidebar at all, so it keeps its own.
+
+Reported live: clicking a Settings section pill (e.g. "Members") could
+scroll the *whole page* sideways, cropping content on the left. Root
+cause: every one of these pages' `<main className="mx-auto max-w-Nxl ...">`
+is a flex item with auto horizontal margins, which — per the flexbox
+spec — disables the container's default cross-axis stretch. Instead of
+filling the visible pane's width, `<main>` fell back to shrink-to-fit
+sizing and grew to match its widest unconstrained descendant (the
+Members table), letting that table's own `overflow-x-auto` wrapper drag
+the entire page horizontally instead of scrolling only within itself.
+Added `w-full` alongside `mx-auto max-w-*` on every page carrying this
+pattern (Settings, Queue, Billing, Statements, Reports, Workflows,
+Notifications) so each page's internal overflow wrappers actually
+contain their own overflow again.
+
+### Settings: section pills are now real tabs, not a jump-to-anchor list
+
+Clicking a pill used to just scroll a very long single page down to that
+heading — everything above it stayed in the DOM, above the fold,
+confusing on a page this long. Sections now show one at a time, driven
+entirely by CSS `:target` (no client JS): `.settings-panel` is hidden by
+default, shown when its `id` matches the URL's `#hash` or *contains* the
+matching sub-anchor (`#invoice-email` lives inside Integrations,
+`:has(:target)` catches that), and the page falls back to the first
+panel (My profile) via `:not(:has(:target))` when nothing is targeted.
+
+Making sections exclusive meant every place that redirects back to
+`/settings` after an action also needed to carry (or recover) the right
+`#hash`, or it would silently dump the user on "My profile" instead of
+wherever they'd just acted: `inviteMember`'s three redirects now target
+`#members` directly; the QBO OAuth callback's three redirects now target
+`#integrations`; the MFA recovery-code sign-in flow now redirects to
+`#security` (the banner already told users to look "under Security").
+The QBO sync buttons and the default-tax-rate form can't set the hash
+server-side (their redirect targets are shared with the non-tab
+error/success banners), so the existing `ScrollPreserveForm`/
+`ScrollRestorer` session-storage handoff — already used to survive a
+redirect without losing scroll position — was extended to also save and
+restore the active hash.
+
+---
+
 ## Environment variables
 
 Copy `.env.example` → `.env.local` and fill in:
@@ -1493,10 +1679,17 @@ with a prompt to re-enroll. A code is a one-time "prove it's you, then
 start over" token, not an ongoing alternate MFA factor, same as how
 GitHub/Google backup codes work.
 
-**Deliberately not built (by explicit choice, not an oversight)**: an
-admin-facing "reset a teammate's 2FA" button, and a platform-admin
-last-resort reset for when someone loses both their device and their
-codes. Recovery codes alone already solve the case that matters most.
+**Admin reset (added 2026-08-30)** — the one remaining gap: someone who
+loses their device *and* never kept their recovery codes. An admin-only
+**Reset** control next to a member's 2FA status in Settings → Members
+(`resetMemberMfaAction`) turns off their TOTP factor via the admin
+client, after verifying the caller is an admin of that same org and the
+target is actually a member of it. No separate platform-admin action
+was needed for the "whole org, including its only admin, is locked out"
+case — `joinOrganizationAction` already grants a platform admin
+`role: "admin"` on any org they join as support, so "join as support"
+then the same Reset button covers it. See [Session log —
+2026-08-30](#session-log--2026-08-30-supplier-entity--admin-mfa-reset).
 
 ### Error monitoring and signup abuse protection
 
@@ -1904,9 +2097,11 @@ per-bill choice, so those are never auto-filled from a rule.
 - **Searchable pick-lists from the QBO mirrors**: Category (numbered QBO
   accounts — type "hvac" → "5-15450 - HVAC"), Tax (QBO codes — type "h" →
   H 13%). No free-form typing.
-- **Matched by normalized vendor name** (trim + lowercase) — there's no
-  first-class Supplier entity yet, same matching used for [duplicate
-  detection](#document-search) and the Document Search Supplier filter.
+- **Matched by `supplier_id`** (a real `suppliers` entity, resolved via
+  `resolveSupplier()` — see [Session log —
+  2026-08-30](#session-log--2026-08-30-supplier-entity--admin-mfa-reset)),
+  same identity used for [duplicate detection](#document-search) and the
+  Document Search Supplier filter.
 - **Applied automatically at ingestion**: every future invoice from that
   vendor picks up the rule the moment it's created (see [Field
   extraction](#field-extraction-openrouter-model-agnostic)) — nothing to
@@ -1936,8 +2131,8 @@ screen doesn't have (it only offers Requester and Approved by); shown both
 as a filter and directly on each invoice row/detail view.
 
 **Possible-duplicate detection**: computed live (not stored) across
-non-cancelled/rejected invoices from the same normalized vendor with the
-same invoice number. Any invoice in a duplicate group gets an orange
+non-cancelled/rejected invoices from the same supplier (`supplier_id`)
+with the same invoice number. Any invoice in a duplicate group gets an orange
 left-border marker in the list, and **every group is pinned together at
 the top of the list pane** (in front of the normal filter/sort order) so
 the matches are visible without having to hunt for them; opening one also
@@ -2137,7 +2332,12 @@ every screen:
 ## Dashboard UI
 
 `/dashboard/[[...id]]` ([`src/app/dashboard/[[...id]]/page.tsx`](src/app/dashboard/[[...id]]/page.tsx))
-is a master-detail interface, all server-rendered:
+is a master-detail interface. The server renders the initial page load;
+after that, [`DashboardClient.tsx`](src/components/dashboard/DashboardClient.tsx)
+owns selection/filters/URL client-side over two TanStack Query caches (the
+invoice list, and each invoice's detail keyed by id) — see [Session log —
+2026-08-31](#session-log--2026-08-31-dashboard-rewrite-goes-client-cached-scroll-prefetch-settings-navigation-fixes)
+for the full architecture and two real bugs it took to get there:
 
 - **Sidebar**: org name + inbound email address, and nav filters computed
   from real data — All invoices, Pending Review (admin/auditor only),
@@ -2145,9 +2345,12 @@ is a master-detail interface, all server-rendered:
   live count.
 - **Search**: a quick text box (`?q=`, vendor/file/invoice #) plus the full
   [Document search](#document-search) panel for everything else.
-- **List pane**: clicking a row navigates to `/dashboard/[id]?...` (filters
-  preserved in the query string), which server-renders the detail pane.
-  Admin users get a **checkbox per row**; with one or more selected a
+- **List pane**: clicking a row updates client state and the URL
+  (`/dashboard/[id]?...`, filters preserved) without a server round trip
+  — a previously-opened invoice renders instantly from cache, and rows
+  scrolled into view prefetch their detail in the background before
+  they're ever clicked. Admin users get a **checkbox per row**; with one
+  or more selected a
   **batch action bar** appears (sticky at the top of the list):
   - **Delete** — removes the selected invoices + their documents (two-step
     confirm; same rules as the single-invoice delete).
@@ -2560,7 +2763,11 @@ silently alongside the schema work above.
 ## Settings
 
 `/settings` (member management is admin-only; everyone can edit their own
-name/photo):
+name/photo). Sections (My profile / Security / Integrations / Invoice
+email / Billing & usage / Members) show one at a time — the pill nav at
+the top is a real tab switcher (pure CSS `:target`, no client JS), not a
+jump-to-anchor list; see [Session log —
+2026-08-31](#session-log--2026-08-31-dashboard-rewrite-goes-client-cached-scroll-prefetch-settings-navigation-fixes):
 - **My profile** — display name, photo upload (`avatars` bucket, 0016).
 - **Members** — a real table (avatar, name, email, role, status, 2FA —
   genuinely read from Supabase's enrolled-factors data, not a placeholder),
@@ -2711,31 +2918,23 @@ be a per-report download:
 
 This is groundwork, not a finished product. In priority-ish order:
 
-- **Real Supplier entity** — supplier defaults, duplicate detection, and
-  the Document Search Supplier filter all match on normalized vendor-name
-  text rather than a proper linked entity with a stable id. Scoped during
-  research and found to touch ~24 files — too large for a single pass, so
-  it's deferred as its own future migration. Two real consistency bugs
-  that surfaced during that scoping (the duplicate banner and the
-  Document Search filter each skipping the normalization everything else
-  uses) were fixed as a stopgap — see the session log above.
 - **No typing indicators** in the Discussion thread — new comments now
   push to every open tab in real time (migration 0091 — see [session log
   — 2026-08-29 to 2026-08-30](#session-log--2026-08-29-to-2026-08-30)),
   but there's no "someone is typing…" signal.
 - **Visual polish** — functional Tailwind, not a designed product, outside
-  the Bill panel's document-style pass.
+  the Bill panel's document-style pass and the shared shell/Dashboard/
+  Settings passes (see the 2026-08-31 session log).
 - **Auto-sync on approval** — bills reach QBO Ready automatically; the
   final push to QBO is still a manual admin button per bill (no queue /
   scheduled auto-sync yet). This is also a deliberate hard rule, not just a
   gap: nothing reaches QBO until an admin presses the final button.
-- **MFA account recovery is one layer deep, not three.** Recovery codes
-  exist (see [Two-factor authentication (TOTP)](#two-factor-authentication-totp))
-  and solve the case that matters most — even a lone admin can get back
-  in without anyone else's help. Not built, by explicit choice so far:
-  an admin-facing "reset a teammate's 2FA" button in Settings → Members,
-  and a platform-admin last-resort reset on `/admin/organizations` for
-  the case where someone loses both their device AND their codes.
+- **`resolveSupplier`'s find-or-create has no admin UI or merge
+  tooling** (see [Session log — 2026-08-30](#session-log--2026-08-30-supplier-entity--admin-mfa-reset)
+  for the Supplier entity itself, which IS built). It can create an
+  invisible permanent supplier row as a side effect of a read-only
+  matching path — worth a look if supplier data quality becomes a
+  visible problem.
 - **Error/uptime monitoring and signup CAPTCHA are wired but inactive.**
   Sentry (`sentry.*.config.ts`, `src/instrumentation.ts`) and Cloudflare
   Turnstile (`TurnstileWidget.tsx`) are both fully coded as no-ops until
