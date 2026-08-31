@@ -483,8 +483,10 @@ export default async function SettingsPage({
 
       {/* In-page section jump-nav — the app-wide sidebar (AppSidebar, via
           the shared layout) covers cross-page navigation now; this is
-          purely for finding a section on THIS page without scrolling. */}
-      <nav className="mt-4 flex flex-wrap gap-1.5 border-b border-slate-200 pb-4">
+          purely for finding a section on THIS page without scrolling.
+          Sticky (not just inline) so it stays put after jumping to a
+          section instead of scrolling away with the content above it. */}
+      <nav className="sticky top-0 z-10 -mx-8 mt-4 flex flex-wrap gap-1.5 border-b border-slate-200 bg-slate-50 px-8 py-4">
         <a href="#profile" className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600 hover:bg-slate-200">
           My profile
         </a>
@@ -529,7 +531,7 @@ export default async function SettingsPage({
           )}
 
           {/* My profile */}
-          <section id="profile" className="mt-8 scroll-mt-6">
+          <section id="profile" className="mt-8 scroll-mt-20">
             <h2 className="text-lg font-semibold">My profile</h2>
             <div className="mt-3 flex items-center gap-4 rounded-lg border border-slate-200 bg-white p-4">
               <Avatar name={myName || user.email || "?"} photoUrl={myAvatar} size="lg" />
@@ -550,7 +552,7 @@ export default async function SettingsPage({
           {/* Security — per-user opt-in, set up under your own login (not
               admin-assignable; an admin can only see the status below in
               the Members table and remind someone directly). */}
-          <section id="security" className="mt-8 scroll-mt-6">
+          <section id="security" className="mt-8 scroll-mt-20">
             <h2 className="text-lg font-semibold">Security</h2>
             <p className="mt-1 text-sm text-slate-500">
               Two-factor authentication for your own account.
@@ -561,7 +563,7 @@ export default async function SettingsPage({
           {showOrgSettings && (
           <>
           {/* Integrations */}
-          <section id="integrations" className="mt-8 scroll-mt-6">
+          <section id="integrations" className="mt-8 scroll-mt-20">
             <h2 className="text-lg font-semibold">Integrations</h2>
             <p className="mt-1 text-sm text-slate-500">
               Connect external apps here — connection details stay out of the
@@ -988,7 +990,7 @@ export default async function SettingsPage({
             {/* Invoice email — inbound capture address on our domain
                 (ApprovalMax/Dext model: {companyname}@ourdomain, clients
                 change nothing) */}
-            <div id="invoice-email" className="mt-3 scroll-mt-6 rounded-lg border border-slate-200 bg-white p-4 text-sm">
+            <div id="invoice-email" className="mt-3 scroll-mt-20 rounded-lg border border-slate-200 bg-white p-4 text-sm">
               <div className="text-xs font-bold uppercase tracking-wide text-slate-400">
                 Invoice email
               </div>
@@ -1041,7 +1043,7 @@ export default async function SettingsPage({
           </section>
 
           {/* Billing & usage — lives on its own page now */}
-          <section id="billing" className="mt-8 scroll-mt-6">
+          <section id="billing" className="mt-8 scroll-mt-20">
             <h2 className="text-lg font-semibold">Billing &amp; usage</h2>
             <p className="mt-1 text-sm text-slate-500">
               Documents processed, the suggested charge at your per-document
@@ -1056,7 +1058,7 @@ export default async function SettingsPage({
           </section>
 
           {/* Members */}
-          <section id="members" className="mt-10 scroll-mt-6">
+          <section id="members" className="mt-10 scroll-mt-20">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <h2 className="text-lg font-semibold">Members</h2>
               {isAdmin && (
