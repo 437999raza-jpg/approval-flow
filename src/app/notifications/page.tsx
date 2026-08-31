@@ -1,8 +1,8 @@
-import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentOrg } from "@/lib/current-org";
 import { BackToDashboardButton } from "@/components/BackToDashboardButton";
+import { NotificationRow } from "@/components/NotificationRow";
 
 export default async function NotificationsPage() {
   const supabase = createClient();
@@ -21,11 +21,6 @@ export default async function NotificationsPage() {
     .order("created_at", { ascending: false })
     .limit(50);
 
-  const unreadIds = (notifications ?? []).filter((n) => !n.read).map((n) => n.id);
-  if (unreadIds.length > 0) {
-    await supabase.from("notifications").update({ read: true }).in("id", unreadIds);
-  }
-
   const invoiceIds = [
     ...new Set((notifications ?? []).map((n) => n.invoice_id).filter((id): id is string => !!id)),
   ];
@@ -43,60 +38,83 @@ export default async function NotificationsPage() {
   const invoiceById = new Map((invoices ?? []).map((i) => [i.id, i]));
   const actorNameById = new Map((actors ?? []).map((a) => [a.id, a.full_name ?? "Team member"]));
 
+  const unread = (notifications ?? []).filter((n) => !n.read);
+  const done = (notifications ?? []).filter((n) => n.read);
+
+  const renderRow = (n: NonNullable<typeof notifications>[number]) => {
+    const invoice = n.invoice_id ? invoiceById.get(n.invoice_id) : null;
+    const label = invoice
+      ? `${invoice.vendor_name ?? invoice.file_name}${
+          invoice.invoice_number ? ` #${invoice.invoice_number}` : ""
+        }`
+      : "an invoice";
+    const actorName = n.actor_id ? actorNameById.get(n.actor_id) ?? "Team member" : "Someone";
+    return (
+      <li key={n.id}>
+        <NotificationRow
+          href={n.invoice_id ? `/dashboard/${n.invoice_id}?n=${n.id}` : "/dashboard"}
+          read={n.read}
+        >
+          <p className="min-w-0 flex-1 truncate text-sm text-slate-700">
+            {n.type === "assigned" ? (
+              <>
+                <span className="font-medium">{label}</span> is ready for
+                your approval
+              </>
+            ) : n.type === "rejected" ? (
+              <>
+                <span className="font-medium">{actorName}</span> rejected{" "}
+                <span className="font-medium">{label}</span>
+              </>
+            ) : (
+              <>
+                <span className="font-medium">{actorName}</span>{" "}
+                mentioned you on <span className="font-medium">{label}</span>
+              </>
+            )}
+          </p>
+          <span className="flex-none text-xs text-slate-400">
+            {new Date(n.created_at).toLocaleString()}
+          </span>
+        </NotificationRow>
+      </li>
+    );
+  };
+
   return (
     <main className="mx-auto max-w-2xl p-8">
       <BackToDashboardButton />
-      <h1 className="mt-2 text-xl font-semibold">Notifications</h1>
+      <h1 className="mt-2 text-xl font-semibold">Mentions</h1>
       <p className="mt-1 text-sm text-slate-500">
-        @mentions in Discussion, and invoices that just became yours to review.
+        @mentions in Discussion, and invoices that just became yours to
+        review — click one to open it. It&apos;s marked done once you do.
       </p>
 
       {(notifications ?? []).length === 0 ? (
         <p className="mt-6 text-sm text-slate-400">No notifications yet.</p>
       ) : (
-        <ul className="mt-6 divide-y divide-slate-200 rounded-lg border border-slate-200 bg-white">
-          {(notifications ?? []).map((n) => {
-            const invoice = n.invoice_id ? invoiceById.get(n.invoice_id) : null;
-            const label = invoice
-              ? `${invoice.vendor_name ?? invoice.file_name}${
-                  invoice.invoice_number ? ` #${invoice.invoice_number}` : ""
-                }`
-              : "an invoice";
-            const actorName = n.actor_id ? actorNameById.get(n.actor_id) ?? "Team member" : "Someone";
-            return (
-              <li key={n.id}>
-                <Link
-                  href={n.invoice_id ? `/dashboard/${n.invoice_id}` : "/dashboard"}
-                  className={`flex items-center justify-between gap-4 px-4 py-3 hover:bg-slate-50 ${
-                    !n.read ? "bg-blue-50/60" : ""
-                  }`}
-                >
-                  <p className="min-w-0 truncate text-sm text-slate-700">
-                    {n.type === "assigned" ? (
-                      <>
-                        <span className="font-medium">{label}</span> is ready for
-                        your approval
-                      </>
-                    ) : n.type === "rejected" ? (
-                      <>
-                        <span className="font-medium">{actorName}</span> rejected{" "}
-                        <span className="font-medium">{label}</span>
-                      </>
-                    ) : (
-                      <>
-                        <span className="font-medium">{actorName}</span>{" "}
-                        mentioned you on <span className="font-medium">{label}</span>
-                      </>
-                    )}
-                  </p>
-                  <span className="flex-none text-xs text-slate-400">
-                    {new Date(n.created_at).toLocaleString()}
-                  </span>
-                </Link>
-              </li>
-            );
-          })}
-        </ul>
+        <>
+          {unread.length > 0 && (
+            <div className="mt-6">
+              <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Unread ({unread.length})
+              </h2>
+              <ul className="mt-2 divide-y divide-slate-200 rounded-lg border border-slate-200 bg-white">
+                {unread.map(renderRow)}
+              </ul>
+            </div>
+          )}
+          {done.length > 0 && (
+            <div className="mt-8">
+              <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                Done ({done.length})
+              </h2>
+              <ul className="mt-2 divide-y divide-slate-200 rounded-lg border border-slate-200 bg-white">
+                {done.map(renderRow)}
+              </ul>
+            </div>
+          )}
+        </>
       )}
     </main>
   );

@@ -132,6 +132,10 @@ export default async function DashboardPage({
     holder?: string;
     requester?: string;
     approvedBy?: string;
+    // The notification this navigation came from (Mentions list click, or
+    // the @mention/assignment/rejection email link) — see the mark-read
+    // logic near `selected` below.
+    n?: string;
     supplier?: string;
     customer?: string;
     class?: string;
@@ -733,6 +737,22 @@ export default async function DashboardPage({
     ? visibleInvoices.find((i) => i.id === selectedId)
     : filtered[0];
   if (selectedId && !selected) notFound();
+
+  // Marks read ONLY the specific notification this navigation came from
+  // (?n=<id> — see NotificationRow and the @mention/assignment/rejection
+  // email templates, which both link with this param) — never "every
+  // notification for this invoice", so opening the invoice for an
+  // unrelated reason (it's just next in your queue) doesn't silently
+  // dismiss someone else's still-unaddressed mention. Scoped to the
+  // caller's own id, not just the raw param, so this can't be used to
+  // mark another user's notification read.
+  if (searchParams.n) {
+    await supabase
+      .from("notifications")
+      .update({ read: true })
+      .eq("id", searchParams.n)
+      .eq("user_id", user.id);
+  }
 
   // @mention list for Discussion, scoped to THIS invoice: whoever's an
   // eligible approver on some step of its workflow (any step, matching
