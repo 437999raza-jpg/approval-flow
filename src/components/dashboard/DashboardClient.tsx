@@ -37,9 +37,9 @@ import { switchOrgAction } from "@/lib/admin-actions";
 import { buildAuditTimeline } from "@/lib/audit-timeline";
 import {
   fetchDashboardListData,
-  fetchInvoiceDetail,
   markNotificationReadForDashboard,
   type DashboardListData,
+  type InvoiceDetailData,
 } from "@/lib/dashboard-data";
 import {
   VIEWS,
@@ -175,6 +175,17 @@ function parseFilterUrl(url: string): { q: string; advanced: AdvancedFilters } {
   };
 }
 
+// A plain fetch() to a Route Handler, not a direct call to the
+// "use server" fetchInvoiceDetail — see api/dashboard/invoice/[id]/route.ts
+// for why: this is called at high volume (every row that scrolls into
+// view) and a Server Action call, even a pure read, makes Next's router
+// refetch/remount whatever route it still thinks is mounted.
+async function fetchInvoiceDetailViaApi(id: string): Promise<InvoiceDetailData> {
+  const res = await fetch(`/api/dashboard/invoice/${id}`);
+  if (!res.ok) throw new Error(`Failed to load invoice ${id}`);
+  return res.json();
+}
+
 export function DashboardClient({ initialListData }: { initialListData: DashboardListData }) {
   const queryClient = useQueryClient();
   const orgId = initialListData.org.id;
@@ -257,7 +268,7 @@ export function DashboardClient({ initialListData }: { initialListData: Dashboar
 
   const detailQuery = useQuery({
     queryKey: ["invoice-detail", effectiveSelectedId],
-    queryFn: () => fetchInvoiceDetail(effectiveSelectedId!),
+    queryFn: () => fetchInvoiceDetailViaApi(effectiveSelectedId!),
     enabled: !!effectiveSelectedId,
     staleTime: 30 * 1000,
   });
@@ -335,6 +346,29 @@ export function DashboardClient({ initialListData }: { initialListData: Dashboar
       ? filteredForDisplay[selectedDisplayIndex + 1]
       : null;
   const nextInvoiceIdAfterDelete = nextInvoice?.id ?? prevInvoice?.id ?? null;
+
+  // Background prefetch: whenever a row actually scrolls into view in the
+  // invoice list, warm its detail so clicking it later feels the same as
+  // revisiting an already-cached one — same idea as Gmail preloading the
+  // next email. Scoped to real visibility (wired up in
+  // InvoiceSelectionList via IntersectionObserver) rather than a fixed
+  // guess at how many rows are nearby: it matches whatever actually fits
+  // the viewport, extends naturally as the user scrolls, and — unlike a
+  // fixed "distance from the selected row" — doesn't need to track
+  // anything across a list reorder, since visibility is just
+  // re-evaluated fresh each time. prefetchQuery itself already no-ops
+  // for a key that's already fresh or in flight, so calling this
+  // repeatedly for the same id as it re-enters view is harmless.
+  const handleRowVisible = useCallback(
+    (id: string) => {
+      queryClient.prefetchQuery({
+        queryKey: ["invoice-detail", id],
+        queryFn: () => fetchInvoiceDetailViaApi(id),
+        staleTime: 30 * 1000,
+      });
+    },
+    [queryClient]
+  );
 
   const possibleDuplicates = useMemo(() => {
     if (!selected) return [];
@@ -578,6 +612,7 @@ export function DashboardClient({ initialListData }: { initialListData: Dashboar
                     setSelectedId(id);
                     setDocOpen(false);
                   }}
+                  onRowVisible={handleRowVisible}
                 />
               </CollapsiblePane>
 
