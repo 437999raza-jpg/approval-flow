@@ -238,7 +238,7 @@ anything.
 
 | Variable | Value / note |
 |---|---|
-| `INBOUND_EMAIL_DOMAIN` | `flow.ufirst.co` (the Resend receiving domain) |
+| `INBOUND_EMAIL_DOMAIN` | `invoices.ufirst.co` (Resend receiving domain — mail-only subdomain; `flow.ufirst.co` remains a working fallback) |
 | `INBOUND_EMAIL_WEBHOOK_SECRET` | random hex (`6ffe5524e8…` on 2026-08-24) — **must match** the `?token=` in the Resend webhook URL |
 | `RESEND_API_KEY` | **Full access** key (receiving scope needed) created in the SAME Resend account that owns `flow.ufirst.co` receiving |
 | QBO vars | Production Intuit app credentials + `QBO_REDIRECT_URI=https://flow.ufirst.co/api/qbo/callback` — do NOT overwrite with the localhost dev keys in `.env.local` |
@@ -1452,7 +1452,7 @@ Copy `.env.example` → `.env.local` and fill in:
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Yes | Same page → **Publishable key** (new naming) / anon key (legacy naming) — safe to expose client-side |
 | `SUPABASE_SERVICE_ROLE_KEY` | Yes | Same page → **Secret key** (new naming) / service_role key (legacy) — **server-only, full admin access, never expose to the client** |
 | `INBOUND_EMAIL_WEBHOOK_SECRET` | Yes (for email ingestion) | Any random string you choose; appended as `?token=` on the webhook URL you give Resend |
-| `INBOUND_EMAIL_DOMAIN` | Yes (for email ingestion) | The receiving domain added to Resend, e.g. `flow.ufirst.co` |
+| `INBOUND_EMAIL_DOMAIN` | Yes (for email ingestion) | The receiving domain added to Resend, e.g. `invoices.ufirst.co` |
 | `OPENROUTER_API_KEY` | For extraction | openrouter.ai — required for invoice field/line-item extraction (without it, extraction silently no-ops rather than failing ingestion) |
 | `OPENROUTER_MODEL` | No | Any OpenRouter model id, e.g. `anthropic/claude-sonnet-4.5`, `openai/gpt-4o`, `google/gemini-2.0-flash-001` — defaults to `anthropic/claude-sonnet-4.5`. This is the knob for testing extraction quality across models. |
 | `QBO_CLIENT_ID` | For QBO sync | Intuit Developer app client id (developer.intuit.com) |
@@ -1852,7 +1852,7 @@ both manual upload and email ingestion.
 ### Email ingestion (Resend Receiving)
 
 The ApprovalMax/Dext model: every org gets a capture address **on our
-domain** — `{friendly}@{INBOUND_EMAIL_DOMAIN}`, e.g. `fluid@flow.ufirst.co`
+domain** — `{friendly}@{INBOUND_EMAIL_DOMAIN}`, e.g. `fluid@invoices.ufirst.co`
 — and the client changes nothing (no DNS, no MX, nothing). They tell
 suppliers to email invoices to that address and log in at our app to manage
 them.
