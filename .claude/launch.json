@@ -14,6 +14,20 @@
       "runtimeArgs": ["--prefix", "/Users/araza/Documents/Deepseek_Harness/flow-ops", "run", "dev"],
       "port": 3211,
       "autoPort": false
+    },
+    {
+      "name": "approval-flow-phase2-dev",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "/Users/araza/Documents/Deepseek_Harness/Approval_Flow_Phase2", "run", "dev", "--", "-p", "3212"],
+      "port": 3212,
+      "autoPort": false
+    },
+    {
+      "name": "approval-flow-phase2-prod",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "/Users/araza/Documents/Deepseek_Harness/Approval_Flow_Phase2", "run", "start", "--", "-p", "3213"],
+      "port": 3213,
+      "autoPort": false
     }
   ]
 }

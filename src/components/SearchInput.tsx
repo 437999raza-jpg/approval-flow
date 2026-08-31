@@ -81,13 +81,24 @@ function getSpeechRecognitionCtor(): (new () => SpeechRecognitionLike) | null {
 export function SearchInput({
   defaultValue,
   placeholder = "Search vendor, file, invoice #...",
+  // Phase 2: when provided, every place this component would otherwise
+  // call router.push(...) (plain search, AI-parsed filters, the AI
+  // fallback, and "clear filters") instead hands the resulting relative
+  // URL (path + query string) to this callback — letting a client-state
+  // dashboard apply it locally (instant) instead of a real Next.js
+  // navigation. All the existing voice/AI/clear-intent parsing stays
+  // completely unchanged; only this last "where do the params go" step
+  // is redirected.
+  onNavigate,
 }: {
   defaultValue: string;
   placeholder?: string;
+  onNavigate?: (url: string) => void;
 }) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const go = (url: string) => (onNavigate ? onNavigate(url) : router.push(url));
   const [value, setValue] = useState(defaultValue);
   const [pending, setPending] = useState(false);
   const [listening, setListening] = useState(false);
@@ -103,7 +114,7 @@ export function SearchInput({
     const params = new URLSearchParams(searchParams);
     if (next) params.set("q", next);
     else params.delete("q");
-    router.push(`${pathname}?${params.toString()}`);
+    go(`${pathname}?${params.toString()}`);
   }
 
   // Used when the AI path comes up empty — a fresh /dashboard?q=... rather
@@ -112,7 +123,7 @@ export function SearchInput({
   // supplier=X from the last query), which shouldn't silently carry over
   // into an unrelated one that failed to parse.
   function cleanFallbackSubmit(query: string) {
-    router.push(`/dashboard?q=${encodeURIComponent(query)}`);
+    go(`/dashboard?q=${encodeURIComponent(query)}`);
   }
 
   async function aiSubmit(query: string) {
@@ -142,7 +153,7 @@ export function SearchInput({
       if (f.amountFrom) params.set("amountFrom", f.amountFrom);
       if (f.amountTo) params.set("amountTo", f.amountTo);
       setValue("");
-      router.push(`/dashboard${params.toString() ? `?${params.toString()}` : ""}`);
+      go(`/dashboard${params.toString() ? `?${params.toString()}` : ""}`);
     } catch {
       // Best-effort — a failed AI call still lets the user's typed text
       // through as a plain literal search rather than dead-ending.
@@ -156,7 +167,7 @@ export function SearchInput({
     const trimmed = stripTrailingPunctuation(next);
     if (trimmed && isClearIntent(trimmed)) {
       setValue("");
-      router.push(pathname);
+      go(pathname);
       return;
     }
     if (trimmed && looksLikeNaturalLanguage(trimmed)) aiSubmit(trimmed);

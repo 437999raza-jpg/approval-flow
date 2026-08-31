@@ -126,42 +126,57 @@ export async function getCachedMemberRoster(orgId: string) {
 // (approved-pairs for badges, line-item class/category for filters and
 // matching). Invalidated by every invoice-mutating action via INVOICES_TAG,
 // plus a 10-minute safety TTL.
+async function fetchInvoiceListDirect(orgId: string) {
+  const supabase = createAdminClient();
+  const { data: invoices } = await supabase
+    .from("invoices")
+    .select("*")
+    .eq("organization_id", orgId)
+    .order("created_at", { ascending: false });
+  const invoiceIds = (invoices ?? []).map((i) => i.id);
+  const { data: approvedPairs } =
+    invoiceIds.length > 0
+      ? await supabase
+          .from("invoice_approvals")
+          .select("invoice_id, approver_id")
+          .in("invoice_id", invoiceIds)
+          .eq("decision", "approved")
+      : { data: [] };
+  const { data: lineItemRows } =
+    invoiceIds.length > 0
+      ? await supabase
+          .from("invoice_line_items")
+          .select("invoice_id, class, category, project_id")
+          .in("invoice_id", invoiceIds)
+      : { data: [] };
+  return {
+    invoices: (invoices ?? []) as InvoiceRow[],
+    approvedPairs: (approvedPairs ?? []) as {
+      invoice_id: string;
+      approver_id: string;
+    }[],
+    lineItemRows: (lineItemRows ?? []) as {
+      invoice_id: string;
+      class: string | null;
+      category: string | null;
+      project_id: string | null;
+    }[],
+  };
+}
+
 export async function getCachedInvoiceList(orgId: string) {
-  return cached([`invoice-list`, orgId], [INVOICES_TAG], async () => {
-    const supabase = createAdminClient();
-    const { data: invoices } = await supabase
-      .from("invoices")
-      .select("*")
-      .eq("organization_id", orgId)
-      .order("created_at", { ascending: false });
-    const invoiceIds = (invoices ?? []).map((i) => i.id);
-    const { data: approvedPairs } =
-      invoiceIds.length > 0
-        ? await supabase
-            .from("invoice_approvals")
-            .select("invoice_id, approver_id")
-            .in("invoice_id", invoiceIds)
-            .eq("decision", "approved")
-        : { data: [] };
-    const { data: lineItemRows } =
-      invoiceIds.length > 0
-        ? await supabase
-            .from("invoice_line_items")
-            .select("invoice_id, class, category, project_id")
-            .in("invoice_id", invoiceIds)
-        : { data: [] };
-    return {
-      invoices: (invoices ?? []) as InvoiceRow[],
-      approvedPairs: (approvedPairs ?? []) as {
-        invoice_id: string;
-        approver_id: string;
-      }[],
-      lineItemRows: (lineItemRows ?? []) as {
-        invoice_id: string;
-        class: string | null;
-        category: string | null;
-        project_id: string | null;
-      }[],
-    };
-  });
+  return cached([`invoice-list`, orgId], [INVOICES_TAG], () => fetchInvoiceListDirect(orgId));
+}
+
+// Uncached variant for the client-driven Dashboard (dashboard-data.ts):
+// that page's own TanStack Query cache (30s staleTime) already avoids
+// hammering the database, and it only ever re-calls this after an
+// explicit mutation invalidates its query key. Layering unstable_cache's
+// revalidateTag underneath that turned out to race — two mutations on the
+// same invoice in quick succession (e.g. reassign then override status)
+// could leave this tag's cache entry stuck serving the FIRST mutation's
+// snapshot indefinitely, invisible to the acting user until a hard
+// reload. Reading straight from the database sidesteps that entirely.
+export async function getInvoiceListUncached(orgId: string) {
+  return fetchInvoiceListDirect(orgId);
 }
