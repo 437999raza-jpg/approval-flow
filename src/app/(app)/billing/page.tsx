@@ -6,7 +6,6 @@ import { StripeCheckoutButton } from "@/components/StripeCheckoutButton";
 import { CollapsibleSection } from "@/components/CollapsibleSection";
 import { SubmitButton } from "@/components/SubmitButton";
 import { PLANS, PLAN_ORDER, isPlanId, isTrialActive } from "@/lib/plans";
-import { BackToDashboardButton } from "@/components/BackToDashboardButton";
 
 // Flow's billing: a fixed monthly plan (Starter/Growth/Scale) rather than
 // an admin-editable $/document rate — see src/lib/plans.ts for how these
@@ -83,10 +82,8 @@ export default async function BillingPage({
   const totalCount = (events ?? []).length;
 
   return (
-    <main className="mx-auto max-w-3xl px-6 py-10">
-      <BackToDashboardButton />
-
-      <div className="mt-3 flex items-baseline justify-between gap-4">
+    <main className="mx-auto w-full max-w-3xl px-6 py-10">
+      <div className="flex items-baseline justify-between gap-4">
         <div>
           <p className="text-[11px] font-bold uppercase tracking-wide text-brand-green-dark">
             {org.name}

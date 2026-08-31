@@ -7,7 +7,6 @@ import { fetchAllQboSuppliers } from "@/lib/qbo-all";
 import { isPlanId, hasStatementReconciliation } from "@/lib/plans";
 import { StatementUploadForm } from "@/components/StatementUploadForm";
 import { LocalTime } from "@/components/LocalTime";
-import { BackToDashboardButton } from "@/components/BackToDashboardButton";
 
 // Statement Reconciliation — Detailed-plan-only. Upload a vendor's
 // statement, extract its lines, and match them against this org's own
@@ -38,8 +37,7 @@ export default async function StatementsPage() {
 
   const header = (
     <>
-      <BackToDashboardButton />
-      <div className="mt-3">
+      <div>
         <p className="text-[11px] font-bold uppercase tracking-wide text-brand-green-dark">
           {org.name}
         </p>
@@ -52,7 +50,7 @@ export default async function StatementsPage() {
 
   if (!entitled) {
     return (
-      <main className="mx-auto max-w-3xl px-6 py-10">
+      <main className="mx-auto w-full max-w-3xl px-6 py-10">
         {header}
         <div className="mt-6 rounded-lg border border-brand-line bg-brand-mist p-6 text-center">
           <p className="text-sm text-brand-ink">
@@ -82,7 +80,7 @@ export default async function StatementsPage() {
   ]);
 
   return (
-    <main className="mx-auto max-w-3xl px-6 py-10">
+    <main className="mx-auto w-full max-w-3xl px-6 py-10">
       {header}
       <p className="mt-1 text-sm text-brand-muted">
         Upload a vendor&apos;s statement — Flow reads its invoice numbers and checks each one

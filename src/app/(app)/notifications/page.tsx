@@ -1,7 +1,6 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentOrg } from "@/lib/current-org";
-import { BackToDashboardButton } from "@/components/BackToDashboardButton";
 import { NotificationRow } from "@/components/NotificationRow";
 
 export default async function NotificationsPage() {
@@ -82,9 +81,8 @@ export default async function NotificationsPage() {
   };
 
   return (
-    <main className="mx-auto max-w-2xl p-8">
-      <BackToDashboardButton />
-      <h1 className="mt-2 text-xl font-semibold">Mentions</h1>
+    <main className="mx-auto w-full max-w-2xl p-8">
+      <h1 className="text-xl font-semibold">Mentions</h1>
       <p className="mt-1 text-sm text-slate-500">
         @mentions in Discussion, and invoices that just became yours to
         review — click one to open it. It&apos;s marked done once you do.

@@ -475,7 +475,7 @@ export default async function SettingsPage({
     "rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none";
 
   return (
-    <main className="mx-auto max-w-6xl p-8">
+    <main className="mx-auto w-full max-w-6xl p-8">
       <h1 className="text-2xl font-semibold">Settings</h1>
       <p className="mt-1 text-sm text-slate-500">
         {org.name} · you are {ROLE_LABELS[org.role]}
@@ -485,8 +485,12 @@ export default async function SettingsPage({
           the shared layout) covers cross-page navigation now; this is
           purely for finding a section on THIS page without scrolling.
           Sticky (not just inline) so it stays put after jumping to a
-          section instead of scrolling away with the content above it. */}
-      <nav className="sticky top-0 z-10 -mx-8 mt-4 flex flex-wrap gap-1.5 border-b border-slate-200 bg-slate-50 px-8 py-4">
+          section instead of scrolling away with the content above it.
+          No negative margins here — a full-bleed sticky bar via -mx-8
+          overflowed past <main>'s own box and forced the whole page to
+          scroll horizontally on every anchor jump. Staying inside main's
+          own padding keeps it flush with everything else on the page. */}
+      <nav className="sticky top-0 z-10 mt-4 flex flex-wrap gap-1.5 border-b border-slate-200 bg-slate-50 py-4">
         <a href="#profile" className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600 hover:bg-slate-200">
           My profile
         </a>

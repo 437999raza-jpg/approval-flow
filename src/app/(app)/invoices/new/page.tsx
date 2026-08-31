@@ -5,7 +5,6 @@ import { getCurrentOrg } from "@/lib/current-org";
 import { InvoiceUploadDropzone } from "@/components/InvoiceUploadDropzone";
 import { ExtractionPoller } from "@/components/ExtractionPoller";
 import { LocalTime } from "@/components/LocalTime";
-import { BackToDashboardButton } from "@/components/BackToDashboardButton";
 
 export default async function NewInvoicePage() {
   const supabase = createClient();
@@ -49,18 +48,17 @@ export default async function NewInvoicePage() {
   return (
     <main className="mx-auto max-w-2xl p-8">
       <ExtractionPoller />
-      <div className="flex items-center justify-between">
-        <BackToDashboardButton />
-        {org?.role === "admin" && (
+      {org?.role === "admin" && (
+        <div className="mb-2 flex justify-end">
           <Link
             href="/queue"
             className="rounded-md bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-800"
           >
             Go to Queue
           </Link>
-        )}
-      </div>
-      <h1 className="mt-2 text-xl font-semibold">Add invoice</h1>
+        </div>
+      )}
+      <h1 className="text-xl font-semibold">Add invoice</h1>
       <p className="mt-1 text-sm text-slate-500">
         Drop one or more invoices — each appears in the queue below as it&apos;s
         processed, then lands as a new invoice in &quot;Pending Review&quot; and enters

@@ -656,7 +656,7 @@ export default async function WorkflowsPage() {
     "rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none";
 
   return (
-    <main className="mx-auto max-w-4xl p-8">
+    <main className="mx-auto w-full max-w-4xl p-8">
       <h1 className="text-2xl font-semibold">Approval workflows</h1>
           <p className="mt-1 text-sm text-slate-500">
             Each workflow has ordered approval steps. A step can have several

@@ -2,7 +2,6 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentOrg } from "@/lib/current-org";
-import { BackToDashboardButton } from "@/components/BackToDashboardButton";
 
 export default async function PendingSplitsListPage({
   searchParams,
@@ -27,8 +26,7 @@ export default async function PendingSplitsListPage({
 
   return (
     <main className="mx-auto max-w-3xl p-8">
-      <BackToDashboardButton />
-      <h1 className="mt-2 text-xl font-semibold">Needs split review</h1>
+      <h1 className="text-xl font-semibold">Needs split review</h1>
       <p className="mt-1 text-sm text-slate-500">
         Uploads (manual or by email) that looked like they contain more than one invoice.
         Nothing is created until you review and confirm the split.

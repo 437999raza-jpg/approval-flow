@@ -299,7 +299,7 @@ export default async function ReportsPage({
   const labelCls = "block text-[10px] font-semibold uppercase tracking-wide text-slate-400";
 
   return (
-    <main className="mx-auto max-w-5xl p-8">
+    <main className="mx-auto w-full max-w-5xl p-8">
       <TrialBanner plan={trialOrgRow?.plan ?? null} trialEndsAt={trialOrgRow?.trial_ends_at ?? null} />
           <h1 className="text-2xl font-semibold">Reports</h1>
           <p className="mt-1 text-sm text-slate-500">
