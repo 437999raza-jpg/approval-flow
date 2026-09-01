@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentOrg } from "@/lib/current-org";
 import { uploadAndReconcileStatement } from "@/lib/dashboard-actions";
-import { fetchAllQboSuppliers } from "@/lib/qbo-all";
+import { getCachedQboSuppliers } from "@/lib/org-cache";
 import { isPlanId, hasStatementReconciliation } from "@/lib/plans";
 import { StatementUploadForm } from "@/components/StatementUploadForm";
 import { LocalTime } from "@/components/LocalTime";
@@ -70,7 +70,7 @@ export default async function StatementsPage() {
   }
 
   const [suppliers, { data: statements }] = await Promise.all([
-    fetchAllQboSuppliers(supabase, org.id),
+    getCachedQboSuppliers(org.id),
     supabase
       .from("vendor_statements")
       .select("id, supplier_name, file_name, status, created_at")

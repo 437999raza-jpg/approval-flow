@@ -1,9 +1,9 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
 import Image from "next/image";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { clsx } from "clsx";
 import { ResizeHandle } from "./ResizeHandle";
 import { useDocumentFocus } from "./DocumentFocusContext";
@@ -116,6 +116,14 @@ const icons = {
 };
 
 type BadgeTone = "green" | "orange" | "slate";
+type NavItem = {
+  href: string;
+  active: boolean;
+  icon: ReactNode;
+  label: string;
+  badge?: number;
+  badgeTone?: BadgeTone;
+};
 
 function NavLink({
   href,
@@ -124,6 +132,10 @@ function NavLink({
   children,
   badge,
   badgeTone = "slate",
+  pending = false,
+  onIntent,
+  onPending,
+  prefetch,
 }: {
   href: string;
   active: boolean;
@@ -131,15 +143,28 @@ function NavLink({
   children: ReactNode;
   badge?: number;
   badgeTone?: BadgeTone;
+  pending?: boolean;
+  onIntent?: () => void;
+  onPending?: () => void;
+  prefetch?: boolean;
 }) {
   return (
     <Link
       href={href}
+      prefetch={prefetch}
       title={typeof children === "string" ? children : undefined}
+      onMouseEnter={onIntent}
+      onFocus={onIntent}
+      onClick={(event) => {
+        if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+        onPending?.();
+      }}
       className={clsx(
         "group flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition-colors duration-150",
         active
           ? "bg-brand-green/10 font-medium text-brand-green-dark"
+          : pending
+            ? "bg-brand-mist font-medium text-brand-ink"
           : "text-brand-muted hover:bg-brand-mist hover:text-brand-ink"
       )}
     >
@@ -152,6 +177,12 @@ function NavLink({
         {icon}
       </span>
       <span className="flex-1 truncate">{children}</span>
+      {pending && (
+        <span
+          aria-label="Opening"
+          className="h-1.5 w-1.5 flex-none animate-pulse rounded-full bg-brand-green"
+        />
+      )}
       {typeof badge === "number" && badge > 0 && (
         <span
           className={clsx(
@@ -175,6 +206,10 @@ function IconRailLink({
   label,
   badge,
   badgeTone = "slate",
+  pending = false,
+  onIntent,
+  onPending,
+  prefetch,
 }: {
   href: string;
   active: boolean;
@@ -182,20 +217,34 @@ function IconRailLink({
   label: string;
   badge?: number;
   badgeTone?: BadgeTone;
+  pending?: boolean;
+  onIntent?: () => void;
+  onPending?: () => void;
+  prefetch?: boolean;
 }) {
   return (
     <Link
       href={href}
+      prefetch={prefetch}
       title={label}
       aria-label={label}
+      onMouseEnter={onIntent}
+      onFocus={onIntent}
+      onClick={(event) => {
+        if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+        onPending?.();
+      }}
       className={clsx(
         "relative flex h-9 w-9 items-center justify-center rounded-lg transition-colors duration-150",
         active
           ? "bg-brand-green/10 text-brand-green-dark"
+          : pending
+            ? "bg-brand-mist text-brand-ink"
           : "text-slate-400 hover:bg-brand-mist hover:text-brand-ink"
       )}
     >
       {icon}
+      {pending && <span className="absolute bottom-1 h-1 w-1 animate-pulse rounded-full bg-brand-green" />}
       {typeof badge === "number" && badge > 0 && (
         <span
           className={clsx(
@@ -234,46 +283,78 @@ export function AppSidebar({
   children?: ReactNode;
 }) {
   const pathname = usePathname();
+  const router = useRouter();
   const { focused: docFocused } = useDocumentFocus();
   const [collapsed, setCollapsed] = useState(false);
   const [width, setWidth] = useState(240);
+  const [pendingHref, setPendingHref] = useState<string | null>(null);
 
   // Workflows/Billing/Statements/Reports/Settings are open to anyone but
   // the "user" role; Queue is stricter — admin only (see /queue's own
   // redirect) — so it needs its own check rather than reusing this one.
   const isAdminOrOwner = org.role !== "user";
   const isAdmin = org.role === "admin";
-  const is = (prefix: string) => pathname === prefix || pathname.startsWith(`${prefix}/`);
-  const primaryNav = [
-    { href: "/dashboard", active: is("/dashboard"), icon: icons.dashboard, label: "Dashboard" },
-    ...(isAdmin ? [{ href: "/queue", active: is("/queue"), icon: icons.queue, label: "Queue" }] : []),
-    {
-      href: "/notifications",
-      active: is("/notifications"),
-      icon: icons.mentions,
-      label: "Mentions",
-      badge: counts?.mentions,
-      badgeTone: "green" as const,
+  const is = useCallback((prefix: string) => pathname === prefix || pathname.startsWith(`${prefix}/`), [pathname]);
+  const primaryNav: NavItem[] = useMemo(
+    () => [
+      { href: "/dashboard", active: is("/dashboard"), icon: icons.dashboard, label: "Dashboard" },
+      ...(isAdmin ? [{ href: "/queue", active: is("/queue"), icon: icons.queue, label: "Queue" }] : []),
+      {
+        href: "/notifications",
+        active: is("/notifications"),
+        icon: icons.mentions,
+        label: "Mentions",
+        badge: counts?.mentions,
+        badgeTone: "green" as const,
+      },
+      {
+        href: "/invoices/pending-splits",
+        active: is("/invoices/pending-splits"),
+        icon: icons.splits,
+        label: "Split review",
+        badge: counts?.pendingSplits,
+        badgeTone: "orange" as const,
+      },
+    ],
+    [counts?.mentions, counts?.pendingSplits, is, isAdmin]
+  );
+  const secondaryNav: NavItem[] = useMemo(
+    () => [
+      ...(isAdminOrOwner ? [{ href: "/workflows", active: is("/workflows"), icon: icons.workflows, label: "Workflows" }] : []),
+      ...(isAdminOrOwner ? [{ href: "/billing", active: is("/billing"), icon: icons.billing, label: "Billing" }] : []),
+      ...(isAdminOrOwner ? [{ href: "/statements", active: is("/statements"), icon: icons.statements, label: "Statements" }] : []),
+      { href: "/reports", active: is("/reports"), icon: icons.reports, label: "Reports" },
+      { href: "/settings", active: is("/settings"), icon: icons.settings, label: "Settings" },
+      ...(isPlatformAdmin
+        ? [{ href: "/admin/organizations", active: is("/admin"), icon: icons.admin, label: "Organizations" }]
+        : []),
+    ],
+    [is, isAdminOrOwner, isPlatformAdmin]
+  );
+  const warmSecondaryRoute = useCallback(
+    (href: string) => {
+      router.prefetch(href);
     },
-    {
-      href: "/invoices/pending-splits",
-      active: is("/invoices/pending-splits"),
-      icon: icons.splits,
-      label: "Split review",
-      badge: counts?.pendingSplits,
-      badgeTone: "orange" as const,
+    [router]
+  );
+  const markSecondaryRoutePending = useCallback(
+    (item: NavItem) => {
+      if (item.active) return;
+      setPendingHref(item.href);
+      warmSecondaryRoute(item.href);
     },
-  ];
-  const secondaryNav = [
-    ...(isAdminOrOwner ? [{ href: "/workflows", active: is("/workflows"), icon: icons.workflows, label: "Workflows" }] : []),
-    ...(isAdminOrOwner ? [{ href: "/billing", active: is("/billing"), icon: icons.billing, label: "Billing" }] : []),
-    ...(isAdminOrOwner ? [{ href: "/statements", active: is("/statements"), icon: icons.statements, label: "Statements" }] : []),
-    { href: "/reports", active: is("/reports"), icon: icons.reports, label: "Reports" },
-    { href: "/settings", active: is("/settings"), icon: icons.settings, label: "Settings" },
-    ...(isPlatformAdmin
-      ? [{ href: "/admin/organizations", active: is("/admin"), icon: icons.admin, label: "Organizations" }]
-      : []),
-  ];
+    [warmSecondaryRoute]
+  );
+
+  useEffect(() => {
+    setPendingHref(null);
+  }, [pathname]);
+
+  useEffect(() => {
+    if (!pendingHref) return;
+    const timeout = setTimeout(() => setPendingHref(null), 8000);
+    return () => clearTimeout(timeout);
+  }, [pendingHref]);
 
   // A document open for the 50/50 split takes the whole screen — not even
   // the collapsed rail stays. collapsed/width are untouched, so whatever
@@ -308,7 +389,14 @@ export function AppSidebar({
             </div>
             <div className="mt-auto flex flex-col items-center gap-1 border-t border-brand-line pt-2">
               {secondaryNav.map((item) => (
-                <IconRailLink key={item.href} {...item} />
+                <IconRailLink
+                  key={item.href}
+                  {...item}
+                  prefetch
+                  pending={pendingHref === item.href}
+                  onIntent={() => warmSecondaryRoute(item.href)}
+                  onPending={() => markSecondaryRoutePending(item)}
+                />
               ))}
             </div>
           </nav>
@@ -366,7 +454,14 @@ export function AppSidebar({
           <div className="mt-auto space-y-0.5 pt-2">
             <div className="mb-2 border-t border-brand-line" />
             {secondaryNav.map((item) => (
-              <NavLink key={item.href} {...item}>
+              <NavLink
+                key={item.href}
+                {...item}
+                prefetch
+                pending={pendingHref === item.href}
+                onIntent={() => warmSecondaryRoute(item.href)}
+                onPending={() => markSecondaryRoutePending(item)}
+              >
                 {item.label}
               </NavLink>
             ))}

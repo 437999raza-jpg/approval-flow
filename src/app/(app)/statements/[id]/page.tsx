@@ -5,7 +5,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentOrg } from "@/lib/current-org";
 import { sendStatementEmail, updateStatementDetails, updateStatementSupplier, reconcileStatementAgain } from "@/lib/dashboard-actions";
 import { SubmitButton } from "@/components/SubmitButton";
-import { fetchAllQboSuppliers } from "@/lib/qbo-all";
+import { getCachedQboSuppliers } from "@/lib/org-cache";
 import { resolveSupplier } from "@/lib/suppliers";
 import { StatementEmailDraft } from "@/components/StatementEmailDraft";
 import { StatementDetailsForm } from "@/components/StatementDetailsForm";
@@ -41,7 +41,7 @@ export default async function StatementDetailPage({
       .eq("id", params.id)
       .eq("organization_id", org.id)
       .single(),
-    fetchAllQboSuppliers(supabase, org.id),
+    getCachedQboSuppliers(org.id),
   ]);
   if (!statement) notFound();
 

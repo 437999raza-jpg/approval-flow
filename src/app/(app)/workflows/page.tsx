@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentOrg } from "@/lib/current-org";
-import { fetchAllQboSuppliers } from "@/lib/qbo-all";
+import { getCachedQboCategories, getCachedQboClasses, getCachedQboSuppliers } from "@/lib/org-cache";
 import { WorkflowRuleRow } from "@/components/WorkflowRuleRow";
 import { StepApproversManager } from "@/components/StepApproversManager";
 import { CollapsibleWorkflowSection } from "@/components/CollapsibleWorkflowSection";
@@ -501,8 +501,8 @@ export default async function WorkflowsPage() {
     { data: pendingImpacts },
     { data: workflows },
     { data: projects },
-    { data: qboClassRows },
-    { data: qboCategoryRows },
+    qboClassRows,
+    qboCategoryRows,
     qboSupplierRows,
     { data: members },
   ] = await Promise.all([
@@ -530,19 +530,9 @@ export default async function WorkflowsPage() {
     // free-typing. The stored value is the display string — exactly what
     // an invoice's class/category/supplier holds, so conditions match at
     // runtime.
-    supabase
-      .from("qbo_classes")
-      .select("name")
-      .eq("organization_id", org.id)
-      .eq("active", true)
-      .order("name", { ascending: true }),
-    supabase
-      .from("qbo_categories")
-      .select("name, acct_num")
-      .eq("organization_id", org.id)
-      .eq("active", true)
-      .order("name", { ascending: true }),
-    fetchAllQboSuppliers(supabase, org.id),
+    getCachedQboClasses(org.id),
+    getCachedQboCategories(org.id),
+    getCachedQboSuppliers(org.id),
     // Org members for the approver selects (auditors can't be approvers).
     supabase.from("organization_members").select("user_id, role").eq("organization_id", org.id),
   ]);
