@@ -34,7 +34,7 @@ export function InvoiceSelectionList({
   clearQboPublishDataAction,
   emailInvoicesAction,
   onSelect,
-  onRowVisible,
+  onRowIntent,
 }: {
   rows: SelectableInvoice[];
   pinnedCount: number;
@@ -54,14 +54,10 @@ export function InvoiceSelectionList({
   // the browser's own default handling, since preventDefault() is only
   // called for plain clicks.
   onSelect?: (id: string) => void;
-  // Phase 2: fired (repeatedly — the caller is expected to de-dupe/no-op
-  // on already-fresh data) whenever a row scrolls into view, so its
-  // detail can warm in the background before it's ever clicked. Scoped
-  // to "what's actually on screen" rather than a fixed guess at how many
-  // rows fit — it also self-corrects if the list reorders underneath the
-  // user, since visibility is re-evaluated fresh, not tracked as
-  // "distance from some anchor row."
-  onRowVisible?: (id: string) => void;
+  // Fired only when the user shows real intent toward a row (hover/focus),
+  // not when scrolling happens to bring it into view. Full invoice-detail
+  // reads are expensive, so scroll itself must stay cheap.
+  onRowIntent?: (id: string) => void;
 }) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -72,33 +68,6 @@ export function InvoiceSelectionList({
   const [emailNote, setEmailNote] = useState("");
   const [emailStatus, setEmailStatus] = useState<null | { ok: boolean; message: string }>(null);
   const confirmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // Kept in a ref, not state — onRowVisible firing shouldn't itself
-  // trigger a re-render of this list, and the callback the parent hands
-  // in can change identity across renders without needing to re-wire it.
-  const onRowVisibleRef = useRef(onRowVisible);
-  onRowVisibleRef.current = onRowVisible;
-  const rowElements = useRef(new Map<string, HTMLElement>());
-  const rowIdsKey = rows.map((r) => r.id).join(",");
-  useEffect(() => {
-    if (!onRowVisibleRef.current) return;
-    const observer = new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) {
-          if (!entry.isIntersecting) continue;
-          const id = (entry.target as HTMLElement).dataset.invoiceId;
-          if (id) onRowVisibleRef.current?.(id);
-        }
-      },
-      // rootMargin extends the observed area a bit past the pane's own
-      // edges so a row warms just before it's actually scrolled into
-      // view, not the instant it crosses the boundary.
-      { rootMargin: "200px 0px" }
-    );
-    for (const el of rowElements.current.values()) observer.observe(el);
-    return () => observer.disconnect();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rowIdsKey]);
 
   const selectedCount = selected.size;
   const allIds = rows.map((r) => r.id);
@@ -315,14 +284,7 @@ export function InvoiceSelectionList({
         </div>
       ) : (
         rows.map((inv, i) => (
-          <div
-            key={inv.id}
-            data-invoice-id={inv.id}
-            ref={(el) => {
-              if (el) rowElements.current.set(inv.id, el);
-              else rowElements.current.delete(inv.id);
-            }}
-          >
+          <div key={inv.id} className="[contain-intrinsic-size:76px] [content-visibility:auto]">
             {i === 0 && pinnedCount > 0 && (
               <div className="flex items-center gap-1.5 border-b border-orange-200 bg-orange-50 px-4 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-orange-800">
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
@@ -353,7 +315,10 @@ export function InvoiceSelectionList({
               </label>
               <Link
                 href={`/dashboard/${inv.id}${qs}`}
+                aria-current={inv.selected ? "page" : undefined}
                 scroll={false}
+                onMouseEnter={() => onRowIntent?.(inv.id)}
+                onFocus={() => onRowIntent?.(inv.id)}
                 onClick={(e) => {
                   if (!onSelect) return;
                   if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
@@ -363,7 +328,7 @@ export function InvoiceSelectionList({
                 className={clsx(
                   "block min-w-0 flex-1 px-4 py-3",
                   inv.isDuplicate && "border-l-2 border-l-orange-300",
-                  inv.selected ? "bg-blue-50" : "hover:bg-slate-50"
+                  inv.selected ? "bg-brand-green/10" : "hover:bg-slate-50"
                 )}
               >
                 <div className="flex items-center gap-1.5">

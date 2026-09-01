@@ -173,14 +173,12 @@ export async function fetchDashboardListData() {
 
 export type DashboardListData = Awaited<ReturnType<typeof fetchDashboardListData>>;
 
-export async function fetchInvoiceDetail(invoiceId: string) {
-  const { supabase, org } = await requireOrg();
-
+export async function fetchInvoiceDetailForOrg(supabase: ReturnType<typeof createClient>, orgId: string, invoiceId: string) {
   const { data: selected } = await supabase
     .from("invoices")
     .select("*")
     .eq("id", invoiceId)
-    .eq("organization_id", org.id)
+    .eq("organization_id", orgId)
     .maybeSingle();
   if (!selected) return null;
 
@@ -223,7 +221,7 @@ export async function fetchInvoiceDetail(invoiceId: string) {
         ? supabase
             .from("supplier_defaults")
             .select("*")
-            .eq("organization_id", org.id)
+            .eq("organization_id", orgId)
             .eq("supplier_id", selected.supplier_id)
             .maybeSingle()
         : Promise.resolve({ data: null }),
@@ -231,7 +229,7 @@ export async function fetchInvoiceDetail(invoiceId: string) {
         ? supabase
             .from("qbo_suppliers")
             .select("qbo_vendor_id")
-            .eq("organization_id", org.id)
+            .eq("organization_id", orgId)
             .eq("name_normalized", normalizeForMatching(selected.vendor_name))
             .maybeSingle()
         : Promise.resolve({ data: null }),
@@ -312,11 +310,14 @@ export async function fetchInvoiceDetail(invoiceId: string) {
     })),
   ];
 
+  const instrRows = instrRes.data ?? [];
   const authorIds = [
     ...new Set(
-      [...comments.map((c) => c.author_id), ...auditEntries.map((a) => a.actor_id)].filter(
-        (id): id is string => !!id
-      )
+      [
+        ...comments.map((c) => c.author_id),
+        ...auditEntries.map((a) => a.actor_id),
+        ...instrRows.map((r) => r.author_id),
+      ].filter((id): id is string => !!id)
     ),
   ];
   const { data: authors } =
@@ -325,15 +326,6 @@ export async function fetchInvoiceDetail(invoiceId: string) {
       : { data: [] };
   const authorNameById: Record<string, string> = {};
   for (const a of authors ?? []) authorNameById[a.id] = a.full_name ?? "Team member";
-
-  const instrRows = instrRes.data ?? [];
-  const instrAuthorIds = [...new Set(instrRows.map((r) => r.author_id).filter((id): id is string => !!id))];
-  const { data: instrProfiles } =
-    instrAuthorIds.length > 0
-      ? await supabase.from("profiles").select("id, full_name").in("id", instrAuthorIds)
-      : { data: [] };
-  const instrNameById: Record<string, string> = {};
-  for (const p of instrProfiles ?? []) instrNameById[p.id] = p.full_name ?? "Team member";
 
   return {
     invoice: selected,
@@ -347,11 +339,16 @@ export async function fetchInvoiceDetail(invoiceId: string) {
     authorNameById,
     instructionEntries: instrRows.map((r) => ({
       id: r.id,
-      authorName: r.author_id ? instrNameById[r.author_id] ?? "Team member" : "System",
+      authorName: r.author_id ? authorNameById[r.author_id] ?? "Team member" : "System",
       body: r.body,
       createdAt: r.created_at,
     })),
   };
+}
+
+export async function fetchInvoiceDetail(invoiceId: string) {
+  const { supabase, org } = await requireOrg();
+  return fetchInvoiceDetailForOrg(supabase, org.id, invoiceId);
 }
 
 export type InvoiceDetailData = Awaited<ReturnType<typeof fetchInvoiceDetail>>;

@@ -115,6 +115,8 @@ const icons = {
   ),
 };
 
+type BadgeTone = "green" | "orange" | "slate";
+
 function NavLink({
   href,
   active,
@@ -128,11 +130,12 @@ function NavLink({
   icon: ReactNode;
   children: ReactNode;
   badge?: number;
-  badgeTone?: "green" | "orange" | "slate";
+  badgeTone?: BadgeTone;
 }) {
   return (
     <Link
       href={href}
+      title={typeof children === "string" ? children : undefined}
       className={clsx(
         "group flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition-colors duration-150",
         active
@@ -159,6 +162,50 @@ function NavLink({
           )}
         >
           {badge}
+        </span>
+      )}
+    </Link>
+  );
+}
+
+function IconRailLink({
+  href,
+  active,
+  icon,
+  label,
+  badge,
+  badgeTone = "slate",
+}: {
+  href: string;
+  active: boolean;
+  icon: ReactNode;
+  label: string;
+  badge?: number;
+  badgeTone?: BadgeTone;
+}) {
+  return (
+    <Link
+      href={href}
+      title={label}
+      aria-label={label}
+      className={clsx(
+        "relative flex h-9 w-9 items-center justify-center rounded-lg transition-colors duration-150",
+        active
+          ? "bg-brand-green/10 text-brand-green-dark"
+          : "text-slate-400 hover:bg-brand-mist hover:text-brand-ink"
+      )}
+    >
+      {icon}
+      {typeof badge === "number" && badge > 0 && (
+        <span
+          className={clsx(
+            "absolute -right-0.5 -top-0.5 min-w-4 rounded-full px-1 text-center text-[9px] font-bold leading-4",
+            badgeTone === "green" && "bg-brand-green text-white",
+            badgeTone === "orange" && "bg-amber-500 text-white",
+            badgeTone === "slate" && "bg-slate-400 text-white"
+          )}
+        >
+          {badge > 9 ? "9+" : badge}
         </span>
       )}
     </Link>
@@ -197,6 +244,36 @@ export function AppSidebar({
   const isAdminOrOwner = org.role !== "user";
   const isAdmin = org.role === "admin";
   const is = (prefix: string) => pathname === prefix || pathname.startsWith(`${prefix}/`);
+  const primaryNav = [
+    { href: "/dashboard", active: is("/dashboard"), icon: icons.dashboard, label: "Dashboard" },
+    ...(isAdmin ? [{ href: "/queue", active: is("/queue"), icon: icons.queue, label: "Queue" }] : []),
+    {
+      href: "/notifications",
+      active: is("/notifications"),
+      icon: icons.mentions,
+      label: "Mentions",
+      badge: counts?.mentions,
+      badgeTone: "green" as const,
+    },
+    {
+      href: "/invoices/pending-splits",
+      active: is("/invoices/pending-splits"),
+      icon: icons.splits,
+      label: "Split review",
+      badge: counts?.pendingSplits,
+      badgeTone: "orange" as const,
+    },
+  ];
+  const secondaryNav = [
+    ...(isAdminOrOwner ? [{ href: "/workflows", active: is("/workflows"), icon: icons.workflows, label: "Workflows" }] : []),
+    ...(isAdminOrOwner ? [{ href: "/billing", active: is("/billing"), icon: icons.billing, label: "Billing" }] : []),
+    ...(isAdminOrOwner ? [{ href: "/statements", active: is("/statements"), icon: icons.statements, label: "Statements" }] : []),
+    { href: "/reports", active: is("/reports"), icon: icons.reports, label: "Reports" },
+    { href: "/settings", active: is("/settings"), icon: icons.settings, label: "Settings" },
+    ...(isPlatformAdmin
+      ? [{ href: "/admin/organizations", active: is("/admin"), icon: icons.admin, label: "Organizations" }]
+      : []),
+  ];
 
   // A document open for the 50/50 split takes the whole screen — not even
   // the collapsed rail stays. collapsed/width are untouched, so whatever
@@ -214,15 +291,27 @@ export function AppSidebar({
   if (collapsed) {
     return (
       <SupportChatProvider initialOpen={initialSupportOpen}>
-        <aside className="flex w-12 flex-none flex-col items-center border-r border-brand-line bg-white">
+        <aside className="flex w-14 flex-none flex-col items-center border-r border-brand-line bg-white">
           <button
             type="button"
             onClick={() => setCollapsed(false)}
             title="Show menu"
-            className="flex w-full items-center justify-center bg-brand-ink py-3 text-white transition-colors duration-150 hover:bg-white/10"
+            className="flex h-12 w-full items-center justify-center bg-brand-ink text-white transition-colors duration-150 hover:bg-brand-ink/90"
           >
             {icons.menu}
           </button>
+          <nav className="flex min-h-0 flex-1 flex-col items-center gap-1 overflow-y-auto py-2">
+            <div className="flex flex-col items-center gap-1">
+              {primaryNav.map((item) => (
+                <IconRailLink key={item.href} {...item} />
+              ))}
+            </div>
+            <div className="mt-auto flex flex-col items-center gap-1 border-t border-brand-line pt-2">
+              {secondaryNav.map((item) => (
+                <IconRailLink key={item.href} {...item} />
+              ))}
+            </div>
+          </nav>
         </aside>
         <SupportChatWidget />
       </SupportChatProvider>
@@ -267,62 +356,20 @@ export function AppSidebar({
             bottom (mt-auto), with whatever space is left between them. */}
         <nav className="flex flex-1 flex-col overflow-y-auto p-2">
           <div className="space-y-0.5">
-            <NavLink href="/dashboard" active={is("/dashboard")} icon={icons.dashboard}>
-              Dashboard
-            </NavLink>
-            {isAdmin && (
-              <NavLink href="/queue" active={is("/queue")} icon={icons.queue}>
-                Queue
+            {primaryNav.map((item) => (
+              <NavLink key={item.href} {...item}>
+                {item.label}
               </NavLink>
-            )}
-            <NavLink
-              href="/notifications"
-              active={is("/notifications")}
-              icon={icons.mentions}
-              badge={counts?.mentions}
-              badgeTone="green"
-            >
-              Mentions
-            </NavLink>
-            <NavLink
-              href="/invoices/pending-splits"
-              active={is("/invoices/pending-splits")}
-              icon={icons.splits}
-              badge={counts?.pendingSplits}
-              badgeTone="orange"
-            >
-              Needs split review
-            </NavLink>
+            ))}
           </div>
 
           <div className="mt-auto space-y-0.5 pt-2">
             <div className="mb-2 border-t border-brand-line" />
-            {isAdminOrOwner && (
-              <NavLink href="/workflows" active={is("/workflows")} icon={icons.workflows}>
-                Workflows
+            {secondaryNav.map((item) => (
+              <NavLink key={item.href} {...item}>
+                {item.label}
               </NavLink>
-            )}
-            {isAdminOrOwner && (
-              <NavLink href="/billing" active={is("/billing")} icon={icons.billing}>
-                Billing
-              </NavLink>
-            )}
-            {isAdminOrOwner && (
-              <NavLink href="/statements" active={is("/statements")} icon={icons.statements}>
-                Statements
-              </NavLink>
-            )}
-            <NavLink href="/reports" active={is("/reports")} icon={icons.reports}>
-              Reports
-            </NavLink>
-            <NavLink href="/settings" active={is("/settings")} icon={icons.settings}>
-              Settings
-            </NavLink>
-            {isPlatformAdmin && (
-              <NavLink href="/admin/organizations" active={is("/admin")} icon={icons.admin}>
-                Organizations
-              </NavLink>
-            )}
+            ))}
           </div>
         </nav>
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 // Searchable combobox for bill fields: type to filter, click or arrow+enter
@@ -34,6 +34,8 @@ function secondaryValueOf(o: ComboboxOption): string {
 function isObjOption(o: ComboboxOption): boolean {
   return typeof o !== "string";
 }
+
+const MAX_RENDERED_RESULTS = 80;
 
 export function Combobox({
   name,
@@ -219,29 +221,32 @@ export function Combobox({
   const q = query.trim().toLowerCase();
   // Search-as-you-type: with big lists (2,045 suppliers, 454 projects) a
   // wall of options on click is useless. Only surface matches once the user
-  // has typed enough (minQueryLength). Show ALL matches (scrollable) so the
-  // user can narrow down themselves — no hidden results.
+  // has typed enough (minQueryLength). Render a useful first page of matches
+  // so broad queries do not dump thousands of buttons into the DOM.
   const searching = q.length >= minQueryLength;
-  const matched = searching
-    ? options.filter((o) => {
-        const label = labelOf(o).toLowerCase();
-        return matchStart ? label.startsWith(q) : label.includes(q);
-      })
-    : [];
   // Rank: names that START with the query first (typing "tri" should surface
   // "Tri-An Electric" before "Aetna Electric" — where "tri" hides inside
   // "elecTRIc"). Then the rest alphabetically.
-  const ranked = searching
-    ? [...matched].sort((a, b) => {
-        const al = labelOf(a).toLowerCase();
-        const bl = labelOf(b).toLowerCase();
-        const aPrefix = al.startsWith(q) ? 0 : 1;
-        const bPrefix = bl.startsWith(q) ? 0 : 1;
-        if (aPrefix !== bPrefix) return aPrefix - bPrefix;
-        return al.localeCompare(bl);
-      })
-    : [];
-  const filtered = ranked;
+  const { filtered, totalMatches } = useMemo(() => {
+    if (!searching) return { filtered: [] as ComboboxOption[], totalMatches: 0 };
+    const matched = options.filter((o) => {
+      const label = labelOf(o).toLowerCase();
+      return matchStart ? label.startsWith(q) : label.includes(q);
+    });
+    const ranked = [...matched].sort((a, b) => {
+      const al = labelOf(a).toLowerCase();
+      const bl = labelOf(b).toLowerCase();
+      const aPrefix = al.startsWith(q) ? 0 : 1;
+      const bPrefix = bl.startsWith(q) ? 0 : 1;
+      if (aPrefix !== bPrefix) return aPrefix - bPrefix;
+      return al.localeCompare(bl);
+    });
+    return {
+      filtered: ranked.slice(0, MAX_RENDERED_RESULTS),
+      totalMatches: ranked.length,
+    };
+  }, [matchStart, options, q, searching]);
+  const hasMoreMatches = totalMatches > filtered.length;
   // The list's own top-ranked match, auto-highlighted the moment typing
   // produces results — without this, Enter/Tab right after typing (without
   // ever touching an arrow key) fell through to commitCurrent()'s exact-
@@ -528,12 +533,17 @@ export function Combobox({
                     }}
                     onMouseEnter={() => setActive(i)}
                     className={`block w-full truncate px-2 py-1 text-left text-xs ${
-                      i === effectiveActive ? "bg-blue-50 text-blue-700" : "text-slate-700"
+                      i === effectiveActive ? "bg-brand-green/10 text-brand-green-dark" : "text-slate-700"
                     }`}
                   >
                     {labelOf(o)}
                   </button>
                 ))}
+                {hasMoreMatches && (
+                  <div className="border-t border-slate-100 px-2 py-1.5 text-[11px] text-slate-400">
+                    Showing first {MAX_RENDERED_RESULTS} of {totalMatches}. Keep typing to narrow results.
+                  </div>
+                )}
               </div>
             ) : (
               !searching && (

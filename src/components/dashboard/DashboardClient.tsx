@@ -177,13 +177,77 @@ function parseFilterUrl(url: string): { q: string; advanced: AdvancedFilters } {
 
 // A plain fetch() to a Route Handler, not a direct call to the
 // "use server" fetchInvoiceDetail — see api/dashboard/invoice/[id]/route.ts
-// for why: this is called at high volume (every row that scrolls into
-// view) and a Server Action call, even a pure read, makes Next's router
-// refetch/remount whatever route it still thinks is mounted.
+// for why: detail reads are warmed client-side for likely next clicks and
+// a Server Action call, even a pure read, makes Next's router refetch/remount
+// whatever route it still thinks is mounted.
 async function fetchInvoiceDetailViaApi(id: string): Promise<InvoiceDetailData> {
   const res = await fetch(`/api/dashboard/invoice/${id}`);
   if (!res.ok) throw new Error(`Failed to load invoice ${id}`);
   return res.json();
+}
+
+const LIST_STALE_MS = 30 * 1000;
+const DETAIL_STALE_MS = 2 * 60 * 1000;
+
+type InvoiceListRow = DashboardListData["invoices"][number];
+
+function InvoiceDetailLoading({ invoice }: { invoice: InvoiceListRow }) {
+  const amount =
+    invoice.amount != null
+      ? invoice.amount.toLocaleString(undefined, { style: "currency", currency: invoice.currency })
+      : "Amount pending";
+  return (
+    <div className="flex flex-1 items-center justify-center bg-slate-50 p-6">
+      <div className="w-full max-w-2xl overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+        <div className="border-b border-slate-100 px-6 py-5">
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Opening invoice</div>
+              <div className="mt-1 truncate text-lg font-semibold text-slate-900">
+                {invoice.vendor_name ?? invoice.file_name}
+              </div>
+              {invoice.invoice_number && <div className="mt-1 text-xs text-slate-500">#{invoice.invoice_number}</div>}
+            </div>
+            <div className="flex-none text-right">
+              <div className="text-xl font-bold tabular-nums text-slate-900">{amount}</div>
+              <InvoiceStatusBadge status={invoice.status} />
+            </div>
+          </div>
+        </div>
+        <div className="space-y-4 px-6 py-5">
+          <div className="grid grid-cols-4 gap-4">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="space-y-2">
+                <div className="h-2 w-14 rounded-full bg-slate-100" />
+                <div className="h-8 rounded-md bg-slate-100" />
+              </div>
+            ))}
+          </div>
+          <div className="h-20 rounded-lg bg-slate-100" />
+          <div className="space-y-2">
+            <div className="h-3 w-28 rounded-full bg-slate-100" />
+            <div className="h-10 rounded-lg bg-slate-100" />
+            <div className="h-10 rounded-lg bg-slate-100" />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function InvoiceDetailUnavailable({ invoice, error }: { invoice: InvoiceListRow; error?: unknown }) {
+  const message = error instanceof Error ? error.message : "The invoice details could not be loaded.";
+  return (
+    <div className="flex flex-1 items-center justify-center bg-slate-50 p-6">
+      <div className="max-w-md rounded-xl border border-rose-100 bg-white p-6 text-center shadow-sm">
+        <div className="text-sm font-semibold text-slate-900">Couldn&apos;t open this invoice</div>
+        <p className="mt-2 text-sm text-slate-500">
+          {invoice.vendor_name ?? invoice.file_name} is still in the list, but its full detail record did not load.
+        </p>
+        <p className="mt-3 text-xs text-rose-600">{message}</p>
+      </div>
+    </div>
+  );
 }
 
 export function DashboardClient({ initialListData }: { initialListData: DashboardListData }) {
@@ -247,7 +311,7 @@ export function DashboardClient({ initialListData }: { initialListData: Dashboar
     queryKey: ["dashboard-list", orgId],
     queryFn: fetchDashboardListData,
     initialData: initialListData,
-    staleTime: 30 * 1000,
+    staleTime: LIST_STALE_MS,
   });
   const data = listQuery.data;
 
@@ -270,7 +334,7 @@ export function DashboardClient({ initialListData }: { initialListData: Dashboar
     queryKey: ["invoice-detail", effectiveSelectedId],
     queryFn: () => fetchInvoiceDetailViaApi(effectiveSelectedId!),
     enabled: !!effectiveSelectedId,
-    staleTime: 30 * 1000,
+    staleTime: DETAIL_STALE_MS,
   });
 
   const handleSearchNavigate = useCallback((url: string) => {
@@ -325,10 +389,17 @@ export function DashboardClient({ initialListData }: { initialListData: Dashboar
   const counts = useMemo(() => computeCounts(visibleInvoices, lookups, user.id), [visibleInvoices, lookups, user.id]);
   const vendorOptions = useMemo(() => vendorOptionsFor(data.invoices), [data.invoices]);
   const classOptions = useMemo(() => classOptionsFor(data.lineItemRows), [data.lineItemRows]);
-  const projectOptions: MultiSelectOption[] = data.projects.map((p) => ({ id: p.id, label: p.name }));
-  const memberOptions: MultiSelectOption[] = data.memberUserIds
-    .map((id) => ({ id, label: data.memberNameById[id] ?? "Team member" }))
-    .sort((a, b) => a.label.localeCompare(b.label));
+  const projectOptions: MultiSelectOption[] = useMemo(
+    () => data.projects.map((p) => ({ id: p.id, label: p.name })),
+    [data.projects]
+  );
+  const memberOptions: MultiSelectOption[] = useMemo(
+    () =>
+      data.memberUserIds
+        .map((id) => ({ id, label: data.memberNameById[id] ?? "Team member" }))
+        .sort((a, b) => a.label.localeCompare(b.label)),
+    [data.memberNameById, data.memberUserIds]
+  );
 
   const selected = selectedId ? visibleInvoices.find((i) => i.id === selectedId) ?? null : filtered[0] ?? null;
   const selectedNotFound = !!selectedId && !selected;
@@ -347,28 +418,25 @@ export function DashboardClient({ initialListData }: { initialListData: Dashboar
       : null;
   const nextInvoiceIdAfterDelete = nextInvoice?.id ?? prevInvoice?.id ?? null;
 
-  // Background prefetch: whenever a row actually scrolls into view in the
-  // invoice list, warm its detail so clicking it later feels the same as
-  // revisiting an already-cached one — same idea as Gmail preloading the
-  // next email. Scoped to real visibility (wired up in
-  // InvoiceSelectionList via IntersectionObserver) rather than a fixed
-  // guess at how many rows are nearby: it matches whatever actually fits
-  // the viewport, extends naturally as the user scrolls, and — unlike a
-  // fixed "distance from the selected row" — doesn't need to track
-  // anything across a list reorder, since visibility is just
-  // re-evaluated fresh each time. prefetchQuery itself already no-ops
-  // for a key that's already fresh or in flight, so calling this
-  // repeatedly for the same id as it re-enters view is harmless.
-  const handleRowVisible = useCallback(
-    (id: string) => {
-      queryClient.prefetchQuery({
+  // Intentional detail warming: invoice detail loads are fairly heavy, so
+  // scrolling alone should not enqueue them. Warm only rows the user hovers/
+  // focuses and the immediate prev/next neighbors of the open invoice.
+  const prefetchInvoiceDetail = useCallback(
+    (id: string | null | undefined) => {
+      if (!id || id === effectiveSelectedId) return;
+      void queryClient.prefetchQuery({
         queryKey: ["invoice-detail", id],
         queryFn: () => fetchInvoiceDetailViaApi(id),
-        staleTime: 30 * 1000,
+        staleTime: DETAIL_STALE_MS,
       });
     },
-    [queryClient]
+    [effectiveSelectedId, queryClient]
   );
+
+  useEffect(() => {
+    prefetchInvoiceDetail(prevInvoice?.id);
+    prefetchInvoiceDetail(nextInvoice?.id);
+  }, [nextInvoice?.id, prefetchInvoiceDetail, prevInvoice?.id]);
 
   const possibleDuplicates = useMemo(() => {
     if (!selected) return [];
@@ -446,52 +514,83 @@ export function DashboardClient({ initialListData }: { initialListData: Dashboar
     return map;
   }, [selected, detail, stepsForSelected, lookups]);
 
-  const projectNameById = new Map(data.projects.map((p) => [p.id, p.name]));
-  const auditTimelineForSelected = detail
-    ? buildAuditTimeline({
-        auditEntries: detail.auditEntries,
-        comments: detail.comments,
-        nameOf: (id) => (id ? detail.authorNameById[id] ?? "Team member" : "System"),
-        idName: (id) => projectNameById.get(id),
-      })
-    : [];
-
-  const qboCategoryNames = [...new Set(data.qboCategoryRows.map((c) => (c.acct_num ? `${c.acct_num} - ${c.name}` : c.name)))].sort((a, b) =>
-    a.localeCompare(b)
+  const projectNameById = useMemo(() => new Map(data.projects.map((p) => [p.id, p.name])), [data.projects]);
+  const auditTimelineForSelected = useMemo(
+    () =>
+      detail
+        ? buildAuditTimeline({
+            auditEntries: detail.auditEntries,
+            comments: detail.comments,
+            nameOf: (id) => (id ? detail.authorNameById[id] ?? "Team member" : "System"),
+            idName: (id) => projectNameById.get(id),
+          })
+        : [],
+    [detail, projectNameById]
   );
-  const qboSupplierNames = [...new Set(data.qboSupplierRows.map((s) => s.name))].sort((a, b) => a.localeCompare(b));
-  const qboClassNames = [...new Set(data.qboClassRows.map((c) => c.name))].sort((a, b) => a.localeCompare(b));
-  const qboTaxRateOptions = data.qboTaxRateRows.map((r) => ({ value: String(r.rate_value), label: `${r.rate_value}% — ${r.name}` }));
-  const qboTaxCodeOptions = data.qboTaxCodeRows
-    .filter((c) => c.rate_value != null)
-    .map((c) => ({ value: c.qbo_tax_code_id, label: `${c.name} (${c.rate_value}%)`, secondaryValue: String(c.rate_value) }));
-  const qboTaxCodeRateOnlyOptions = data.qboTaxCodeRows
-    .filter((c) => c.rate_value != null)
-    .map((c) => ({ value: String(c.rate_value), label: `${c.name} (${c.rate_value}%)` }));
+  const qboCategoryNames = useMemo(
+    () =>
+      [...new Set(data.qboCategoryRows.map((c) => (c.acct_num ? `${c.acct_num} - ${c.name}` : c.name)))].sort((a, b) =>
+        a.localeCompare(b)
+      ),
+    [data.qboCategoryRows]
+  );
+  const qboSupplierNames = useMemo(
+    () => [...new Set(data.qboSupplierRows.map((s) => s.name))].sort((a, b) => a.localeCompare(b)),
+    [data.qboSupplierRows]
+  );
+  const qboClassNames = useMemo(
+    () => [...new Set(data.qboClassRows.map((c) => c.name))].sort((a, b) => a.localeCompare(b)),
+    [data.qboClassRows]
+  );
+  const qboTaxRateOptions = useMemo(
+    () => data.qboTaxRateRows.map((r) => ({ value: String(r.rate_value), label: `${r.rate_value}% — ${r.name}` })),
+    [data.qboTaxRateRows]
+  );
+  const qboTaxCodeOptions = useMemo(
+    () =>
+      data.qboTaxCodeRows
+        .filter((c) => c.rate_value != null)
+        .map((c) => ({ value: c.qbo_tax_code_id, label: `${c.name} (${c.rate_value}%)`, secondaryValue: String(c.rate_value) })),
+    [data.qboTaxCodeRows]
+  );
+  const qboTaxCodeRateOnlyOptions = useMemo(
+    () =>
+      data.qboTaxCodeRows
+        .filter((c) => c.rate_value != null)
+        .map((c) => ({ value: String(c.rate_value), label: `${c.name} (${c.rate_value}%)` })),
+    [data.qboTaxCodeRows]
+  );
   const qboSupplierDefaultTaxOptions = qboTaxCodeRateOnlyOptions.length > 0 ? qboTaxCodeRateOnlyOptions : qboTaxRateOptions;
 
-  const navItems: { key: View; label: string }[] = [
-    { key: "all", label: "All invoices" },
-    ...(canSeeReviewQueue ? [{ key: "review" as View, label: "Pending Review" }] : []),
-    { key: "mine", label: "Requires my approval" },
-    ...(canReviewNow ? [{ key: "ready" as View, label: "QBO Ready" }] : []),
-    { key: "created", label: "Created by me" },
-    { key: "approved", label: "Approved" },
-    { key: "rejected", label: "Rejected" },
-  ];
+  const navItems: { key: View; label: string }[] = useMemo(
+    () => [
+      { key: "all", label: "All invoices" },
+      ...(canSeeReviewQueue ? [{ key: "review" as View, label: "Pending Review" }] : []),
+      { key: "mine", label: "Requires my approval" },
+      ...(canReviewNow ? [{ key: "ready" as View, label: "QBO Ready" }] : []),
+      { key: "created", label: "Created by me" },
+      { key: "approved", label: "Approved" },
+      { key: "rejected", label: "Rejected" },
+    ],
+    [canReviewNow, canSeeReviewQueue]
+  );
 
-  const selectableRows: SelectableInvoice[] = filteredForDisplay.map((inv) => ({
-    id: inv.id,
-    vendor: inv.vendor_name ?? inv.file_name,
-    amount: inv.amount,
-    invoiceNumber: inv.invoice_number,
-    currency: inv.currency,
-    status: inv.status,
-    isDuplicate: duplicateInvoiceIds.has(inv.id),
-    holders: holderOf(inv, lookups).map((id) => data.memberNameById[id] ?? "Team member"),
-    selected: selected?.id === inv.id,
-    qboBillId: inv.qbo_sync_status === "synced" ? inv.qbo_bill_id : null,
-  }));
+  const selectableRows: SelectableInvoice[] = useMemo(
+    () =>
+      filteredForDisplay.map((inv) => ({
+        id: inv.id,
+        vendor: inv.vendor_name ?? inv.file_name,
+        amount: inv.amount,
+        invoiceNumber: inv.invoice_number,
+        currency: inv.currency,
+        status: inv.status,
+        isDuplicate: duplicateInvoiceIds.has(inv.id),
+        holders: holderOf(inv, lookups).map((id) => data.memberNameById[id] ?? "Team member"),
+        selected: selected?.id === inv.id,
+        qboBillId: inv.qbo_sync_status === "synced" ? inv.qbo_bill_id : null,
+      })),
+    [data.memberNameById, duplicateInvoiceIds, filteredForDisplay, lookups, selected?.id]
+  );
 
   if (!mounted) return null;
 
@@ -587,12 +686,12 @@ export function DashboardClient({ initialListData }: { initialListData: Dashboar
                 </div>
               )}
               {canReviewNow && (
-                <Link href="/queue" className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700">
+                <Link href="/queue" className="rounded-md bg-brand-green px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-brand-green-dark">
                   Queue
                 </Link>
               )}
               {!isAuditor && (
-                <Link href="/invoices/new" className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700">
+                <Link href="/invoices/new" className="rounded-md bg-brand-green px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-brand-green-dark">
                   + Add invoice
                 </Link>
               )}
@@ -609,10 +708,11 @@ export function DashboardClient({ initialListData }: { initialListData: Dashboar
                   clearQboPublishDataAction={invalidateAfter(clearQboPublishDataAction)}
                   emailInvoicesAction={emailInvoicesAction}
                   onSelect={(id) => {
+                    prefetchInvoiceDetail(id);
                     setSelectedId(id);
                     setDocOpen(false);
                   }}
-                  onRowVisible={handleRowVisible}
+                  onRowIntent={prefetchInvoiceDetail}
                 />
               </CollapsiblePane>
 
@@ -625,8 +725,12 @@ export function DashboardClient({ initialListData }: { initialListData: Dashboar
                   <div className="flex flex-1 items-center justify-center text-sm text-slate-400">
                     Select an invoice to view details.
                   </div>
+                ) : detailQuery.isError ? (
+                  <InvoiceDetailUnavailable invoice={selected} error={detailQuery.error} />
+                ) : detailQuery.data === null && !detailQuery.isFetching ? (
+                  <InvoiceDetailUnavailable invoice={selected} />
                 ) : !detail ? (
-                  <div className="flex flex-1 items-center justify-center text-sm text-slate-400">Loading…</div>
+                  <InvoiceDetailLoading invoice={selected} />
                 ) : (
                   <DetailSplit
                     documents={detail.documents}
@@ -638,7 +742,7 @@ export function DashboardClient({ initialListData }: { initialListData: Dashboar
                       primaryFileUrl: detail.documents[0]?.url ?? null,
                       documentCount: detail.documents.length,
                       lineItems: detail.lineItems,
-                      projects: data.projects.map((p) => ({ id: p.id, name: p.name })),
+                      projects: data.projects,
                       qboCategories: qboCategoryNames,
                       qboSuppliers: qboSupplierNames,
                       qboClasses: qboClassNames,
