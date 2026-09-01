@@ -295,9 +295,16 @@ export function AppSidebar({
   const isAdminOrOwner = org.role !== "user";
   const isAdmin = org.role === "admin";
   const is = useCallback((prefix: string) => pathname === prefix || pathname.startsWith(`${prefix}/`), [pathname]);
+  // Dashboard is its own thing, not part of primaryNav below: it's the one
+  // route that's client-cached after its first load (see the Dashboard
+  // rewrite), so a real page navigation to it essentially never happens
+  // again once you're on it — no prefetch/pending affordance to give it.
+  const dashboardNavItem: NavItem = useMemo(
+    () => ({ href: "/dashboard", active: is("/dashboard"), icon: icons.dashboard, label: "Dashboard" }),
+    [is]
+  );
   const primaryNav: NavItem[] = useMemo(
     () => [
-      { href: "/dashboard", active: is("/dashboard"), icon: icons.dashboard, label: "Dashboard" },
       ...(isAdmin ? [{ href: "/queue", active: is("/queue"), icon: icons.queue, label: "Queue" }] : []),
       {
         href: "/notifications",
@@ -331,19 +338,23 @@ export function AppSidebar({
     ],
     [is, isAdminOrOwner, isPlatformAdmin]
   );
-  const warmSecondaryRoute = useCallback(
+  // Shared by every nav item that points at a real server-rendered page —
+  // both primaryNav (Queue/Mentions/Split review) and secondaryNav
+  // (Workflows..Organizations). Dashboard is the only link that opts out
+  // (see dashboardNavItem above).
+  const warmRoute = useCallback(
     (href: string) => {
       router.prefetch(href);
     },
     [router]
   );
-  const markSecondaryRoutePending = useCallback(
+  const markRoutePending = useCallback(
     (item: NavItem) => {
       if (item.active) return;
       setPendingHref(item.href);
-      warmSecondaryRoute(item.href);
+      warmRoute(item.href);
     },
-    [warmSecondaryRoute]
+    [warmRoute]
   );
 
   useEffect(() => {
@@ -383,8 +394,16 @@ export function AppSidebar({
           </button>
           <nav className="flex min-h-0 flex-1 flex-col items-center gap-1 overflow-y-auto py-2">
             <div className="flex flex-col items-center gap-1">
+              <IconRailLink {...dashboardNavItem} />
               {primaryNav.map((item) => (
-                <IconRailLink key={item.href} {...item} />
+                <IconRailLink
+                  key={item.href}
+                  {...item}
+                  prefetch
+                  pending={pendingHref === item.href}
+                  onIntent={() => warmRoute(item.href)}
+                  onPending={() => markRoutePending(item)}
+                />
               ))}
             </div>
             <div className="mt-auto flex flex-col items-center gap-1 border-t border-brand-line pt-2">
@@ -394,8 +413,8 @@ export function AppSidebar({
                   {...item}
                   prefetch
                   pending={pendingHref === item.href}
-                  onIntent={() => warmSecondaryRoute(item.href)}
-                  onPending={() => markSecondaryRoutePending(item)}
+                  onIntent={() => warmRoute(item.href)}
+                  onPending={() => markRoutePending(item)}
                 />
               ))}
             </div>
@@ -444,8 +463,16 @@ export function AppSidebar({
             bottom (mt-auto), with whatever space is left between them. */}
         <nav className="flex flex-1 flex-col overflow-y-auto p-2">
           <div className="space-y-0.5">
+            <NavLink {...dashboardNavItem}>{dashboardNavItem.label}</NavLink>
             {primaryNav.map((item) => (
-              <NavLink key={item.href} {...item}>
+              <NavLink
+                key={item.href}
+                {...item}
+                prefetch
+                pending={pendingHref === item.href}
+                onIntent={() => warmRoute(item.href)}
+                onPending={() => markRoutePending(item)}
+              >
                 {item.label}
               </NavLink>
             ))}
@@ -459,8 +486,8 @@ export function AppSidebar({
                 {...item}
                 prefetch
                 pending={pendingHref === item.href}
-                onIntent={() => warmSecondaryRoute(item.href)}
-                onPending={() => markSecondaryRoutePending(item)}
+                onIntent={() => warmRoute(item.href)}
+                onPending={() => markRoutePending(item)}
               >
                 {item.label}
               </NavLink>
