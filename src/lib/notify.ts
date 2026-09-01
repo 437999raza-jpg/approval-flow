@@ -93,7 +93,7 @@ function emailShell({
         ${
           bandLabel
             ? `<tr>
-          <td style="background:${accentColor};padding:12px 28px;font-size:15px;font-weight:800;letter-spacing:0.04em;text-transform:uppercase;color:#ffffff;">${escapeHtml(bandLabel)}</td>
+          <td style="background:${accentColor};padding:13px 28px;font-size:15px;line-height:1.35;font-weight:800;letter-spacing:0.04em;text-transform:uppercase;color:#ffffff;">${escapeHtml(bandLabel)}</td>
         </tr>`
             : `<tr>
           <td style="height:4px;background:${accentColor};line-height:4px;font-size:0;">&nbsp;</td>
@@ -101,8 +101,8 @@ function emailShell({
         }
         <tr>
           <td style="padding:28px 28px 8px 28px;">
-            <p style="margin:0;font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#94a3b8;">${escapeHtml(eyebrow)}</p>
-            <h1 style="margin:8px 0 0 0;font-size:18px;line-height:1.4;color:#0f172a;font-weight:600;">${headline}</h1>
+            <p style="margin:0;font-size:11px;line-height:1.4;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#94a3b8;">${escapeHtml(eyebrow)}</p>
+            <h1 style="margin:10px 0 0 0;font-size:18px;line-height:1.5;color:#0f172a;font-weight:600;">${headline}</h1>
           </td>
         </tr>
         <tr>
@@ -286,7 +286,7 @@ export async function sendDigestEmail({
     .map(
       (i) => `
       <tr>
-        <td style="padding:8px 0;border-top:1px solid #eef2f7;font-size:13px;color:#334155;">
+        <td style="padding:11px 0;border-top:1px solid #eef2f7;font-size:13px;line-height:1.55;color:#334155;">
           <a href="${i.url}" style="color:#0f172a;text-decoration:none;font-weight:600;">${escapeHtml(i.label)}</a>
           ${
             i.overdue
