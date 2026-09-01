@@ -22,6 +22,49 @@ function escapeHtml(s: string): string {
 // button. Not a bare "X did Y" paragraph — a fixed color accent bar plus
 // a real button reads as an actual product notification, not a bland
 // system alert.
+// Urgency is graduated, not binary. An overdue notice that looks
+// identical whether something is one day late or ten trains people to
+// ignore all of them — the same fatigue that got approval emails deleted
+// unread in the first place. So the further past its deadline a bill
+// gets, the louder the treatment, and "red" still means something when
+// it finally shows up.
+//
+// `band` colors carry white text, so each is dark enough to stay legible
+// (and to survive Outlook/Gmail dark mode, which can invert a light
+// background but leaves an explicitly-colored one alone).
+export type Severity = "normal" | "warning" | "overdue" | "critical";
+
+const SEVERITY: Record<
+  Severity,
+  { band: string; emoji: string; label: string; priority: boolean }
+> = {
+  normal: { band: "#2563EB", emoji: "", label: "", priority: false },
+  warning: { band: "#B45309", emoji: "⏰", label: "Due now", priority: false },
+  overdue: { band: "#DC2626", emoji: "🔴", label: "Overdue", priority: true },
+  critical: { band: "#991B1B", emoji: "🚨", label: "Escalation", priority: true },
+};
+
+// Days past a step's deadline → how loud to be about it.
+export function severityForDaysLate(daysLate: number): Severity {
+  if (daysLate <= 0) return "normal";
+  if (daysLate <= 2) return "warning";
+  return "overdue";
+}
+
+// Outlook renders a native red "!" in the message list for these, and
+// auto-files the message under a colored category — both stronger
+// signals than anything we can do inside the HTML body, and both
+// unaffected by dark mode or image blocking.
+function urgencyHeaders(severity: Severity): Record<string, string> | undefined {
+  const s = SEVERITY[severity];
+  if (!s.priority) return undefined;
+  return {
+    "X-Priority": "1",
+    Importance: "high",
+    "X-MS-Categories": s.label,
+  };
+}
+
 function emailShell({
   accentColor,
   eyebrow,
@@ -29,6 +72,7 @@ function emailShell({
   bodyHtml,
   ctaLabel,
   ctaUrl,
+  bandLabel,
 }: {
   accentColor: string;
   eyebrow: string;
@@ -36,15 +80,25 @@ function emailShell({
   bodyHtml: string;
   ctaLabel: string;
   ctaUrl: string;
+  // When set, the 4px hairline is replaced by a full-width colored band
+  // carrying this text — the part that actually reads as urgent at a
+  // glance, rather than a stripe most people never consciously see.
+  bandLabel?: string;
 }): string {
   return `
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9;padding:32px 16px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;">
   <tr>
     <td align="center">
       <table role="presentation" width="480" cellpadding="0" cellspacing="0" style="max-width:480px;width:100%;background:#ffffff;border-radius:10px;overflow:hidden;box-shadow:0 1px 3px rgba(15,23,42,0.08);">
-        <tr>
+        ${
+          bandLabel
+            ? `<tr>
+          <td style="background:${accentColor};padding:12px 28px;font-size:15px;font-weight:800;letter-spacing:0.04em;text-transform:uppercase;color:#ffffff;">${escapeHtml(bandLabel)}</td>
+        </tr>`
+            : `<tr>
           <td style="height:4px;background:${accentColor};line-height:4px;font-size:0;">&nbsp;</td>
-        </tr>
+        </tr>`
+        }
         <tr>
           <td style="padding:28px 28px 8px 28px;">
             <p style="margin:0;font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#94a3b8;">${escapeHtml(eyebrow)}</p>
@@ -219,7 +273,15 @@ export async function sendDigestEmail({
   dashboardUrl: string;
 }): Promise<void> {
   const overdueCount = items.filter((i) => i.overdue).length;
-  const rows = items
+  // Overdue first, then longest-waiting — a six-day-late bill sitting
+  // below three fresh ones is how a digest gets skimmed and closed.
+  const sorted = [...items].sort(
+    (a, b) => Number(b.overdue) - Number(a.overdue) || b.daysOnStep - a.daysOnStep
+  );
+  const worstDaysLate = sorted[0]?.overdue ? sorted[0].daysOnStep : 0;
+  const severity: Severity = overdueCount === 0 ? "normal" : severityForDaysLate(worstDaysLate);
+  const tone = SEVERITY[severity];
+  const rows = sorted
     .slice(0, 25)
     .map(
       (i) => `
@@ -238,7 +300,11 @@ export async function sendDigestEmail({
   const more = items.length > 25 ? `<p style="margin:10px 0 0 0;color:#94a3b8;">+ ${items.length - 25} more</p>` : "";
 
   const html = emailShell({
-    accentColor: overdueCount > 0 ? "#dc2626" : "#2563eb",
+    accentColor: tone.band,
+    bandLabel:
+      overdueCount > 0
+        ? `${tone.emoji} ${overdueCount} overdue${worstDaysLate > 0 ? ` · up to ${worstDaysLate}d late` : ""}`
+        : undefined,
     eyebrow: "Daily approvals digest",
     headline: `You have ${items.length} bill${items.length === 1 ? "" : "s"} waiting for your approval${
       overdueCount > 0 ? ` — ${overdueCount} overdue` : ""
@@ -250,11 +316,14 @@ export async function sendDigestEmail({
 
   await sendEmail({
     to,
+    // The emoji leads because the inbox list is where triage actually
+    // happens — the body only gets read if the subject earns the click.
     subject:
       overdueCount > 0
-        ? `${overdueCount} overdue bill${overdueCount === 1 ? "" : "s"} in your queue (${items.length} total)`
+        ? `${tone.emoji} ${overdueCount} overdue bill${overdueCount === 1 ? "" : "s"} in your queue (${items.length} total)`
         : `${items.length} bill${items.length === 1 ? "" : "s"} waiting for your approval`,
     html,
+    headers: urgencyHeaders(severity),
   });
 }
 
@@ -280,8 +349,11 @@ export async function sendEscalationEmail({
   stuckOnNames: string[];
   invoiceUrl: string;
 }): Promise<void> {
+  const tone = SEVERITY.critical;
+  const daysLate = daysOnStep - deadlineDays;
   const html = emailShell({
-    accentColor: "#dc2626",
+    accentColor: tone.band,
+    bandLabel: `${tone.emoji} ${daysLate} day${daysLate === 1 ? "" : "s"} past deadline`,
     eyebrow: "Escalation — overdue approval",
     headline: `${escapeHtml(invoiceLabel)} has been sitting ${daysOnStep} days${
       stepName ? ` on ${escapeHtml(stepName)}` : ""
@@ -293,5 +365,10 @@ export async function sendEscalationEmail({
     ctaUrl: invoiceUrl,
   });
 
-  await sendEmail({ to, subject: `Escalation: ${invoiceLabel} is overdue`, html });
+  await sendEmail({
+    to,
+    subject: `${tone.emoji} Escalation: ${invoiceLabel} is ${daysLate}d past deadline`,
+    html,
+    headers: urgencyHeaders("critical"),
+  });
 }
