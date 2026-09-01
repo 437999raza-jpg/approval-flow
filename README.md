@@ -79,7 +79,7 @@ lifecycle](#invoice-lifecycle--statuses)).
 ## Data model
 
 Full schema: [`supabase/migrations/`](supabase/migrations/) — numbered
-through `0091` as of 2026-08-30 (a few numbers were added then reverted for
+through `0093` as of 2026-09-01 (a few numbers were added then reverted for
 a shipped-then-reverted feature, e.g. 0043/0044, 0087/0088→0089 — see the
 table below and each session log for why). [`supabase/full_schema.sql`](supabase/full_schema.sql)
 is every migration concatenated in order into one file — the fast path for
@@ -210,7 +210,7 @@ written to be idempotent (safe to re-run). Roughly:
 | 0055 | `ingest_jobs` — async ingestion queue (staging file, status, 3-try retry); `upload_log` gains `queued`/`processing` statuses; `inbound_email_log.processing` for in-flight display. |
 | 0056 | Storage UPDATE policy on the `invoices` bucket — fixes "new row violates row-level security policy" when Reorder pages replaces the stored PDF in place. |
 
-**0057 onward** (`0057`–`0091`) aren't re-listed row by row here — each is
+**0057 onward** (`0057`–`0093`) aren't re-listed row by row here — each is
 documented in the session log or feature section it belongs to: QBO
 payment status (0079), deadlines/reminders (0073), the ops dashboard
 (0077), self-serve signup + trial (0085/0086, [session log —
@@ -219,7 +219,8 @@ Reconciliation (0081–0084), the plan-derived extraction mode saga
 (0088 added a column, 0089 dropped it again — same session log), MFA
 recovery codes (0090, [Two-factor authentication
 (TOTP)](#two-factor-authentication-totp)), real-time Discussion
-updates (0091, same session log), and the real Supplier entity (0092,
+updates (0091, same session log), the real Supplier entity (0092), and
+the QBO vendor-id supplier backfill (0093,
 [Session log — 2026-08-30](#session-log--2026-08-30-supplier-entity--admin-mfa-reset)).
 Check `supabase/migrations/` directly for the exhaustive list.
 
@@ -1289,6 +1290,14 @@ visible), its detail query warms in the background — clicking it later
 feels the same as revisiting an already-cached one, without eagerly
 loading every invoice in the org up front.
 
+**Superseded 2026-09-01**: that scroll-prefetch design did fix cold
+clicks, but in real usage it made scrolling itself expensive because
+each visible row could start a full invoice-detail API request. Current
+behavior is intent-based instead: hover/focus warms a row, and the
+current invoice's immediate previous/next neighbors warm in the
+background; merely scrolling through the list stays cheap. See [Session
+log — 2026-09-01](#session-log--2026-09-01-dashboard-and-lower-sidebar-performance-pass).
+
 ### Two real bugs this exposed, both root-caused by reading Next's own source, not by trial and error
 
 **`revalidatePath("/dashboard", "layout")` in every mutation action**
@@ -1439,6 +1448,114 @@ section per the `:target` rule — just not what a user expects from a
 tab. Promoted Invoice email (and Vendor email reply-to) out to their
 own independent top-level panel; every pill is now a direct, exclusive
 tab target, none of them nested inside another.
+
+---
+
+## Session log — 2026-09-01 (Dashboard and lower-sidebar performance pass)
+
+Two commits shipped this pass:
+
+- `8947040 Improve dashboard invoice switching performance`
+- `13247d3 Speed up lower sidebar navigation`
+
+### Dashboard invoice switching: scroll stays cheap, detail warming is intentional
+
+The 2026-08-31 rewrite made invoice switching client-cached, but the
+scroll-prefetch follow-up was too aggressive in real use: every invoice
+row entering the viewport could trigger a full detail fetch through
+`/api/dashboard/invoice/[id]`. A detail fetch is not tiny — it reads the
+invoice, approvals, comments, documents, line items, audit entries,
+accounting instructions, supplier defaults, matched QBO supplier, signed
+document URLs, attachment URLs, and author profiles — so quick scrolling
+could enqueue a burst of work before the user clicked anything.
+
+Current behavior:
+
+- [`InvoiceSelectionList.tsx`](src/components/InvoiceSelectionList.tsx)
+  no longer uses `IntersectionObserver` or row refs for detail prefetch.
+  Scrolling the invoice list does not start invoice-detail reads.
+- Rows now expose `onRowIntent`, fired from hover/focus only, so a row is
+  warmed when the user actually points at it or tabs to it.
+- [`DashboardClient.tsx`](src/components/dashboard/DashboardClient.tsx)
+  also warms only the selected invoice's immediate previous/next
+  neighbors. This preserves fast keyboard/chevron-style reviewing without
+  flooding the API while scanning the list.
+- Detail cache freshness increased from 30 seconds to 2 minutes, so
+  stepping away from an invoice briefly and coming back is more likely to
+  feel instant.
+- The invoice list row wrappers now use CSS `content-visibility: auto`
+  with a `contain-intrinsic-size` hint, letting the browser defer layout
+  and paint work for offscreen rows without adding a virtualization
+  dependency yet.
+- The old bare `Loading…` detail pane is replaced by an invoice-shaped
+  skeleton and explicit error state, so a genuinely cold detail load
+  still gives immediate, professional feedback.
+
+The detail API itself also dropped duplicated auth/org work:
+[`src/app/api/dashboard/invoice/[id]/route.ts`](src/app/api/dashboard/invoice/%5Bid%5D/route.ts)
+authenticates and resolves the org once, then calls
+`fetchInvoiceDetailForOrg(supabase, org.id, invoiceId)`. The public
+`fetchInvoiceDetail(invoiceId)` wrapper still exists for server-side
+callers that want the old "resolve my org first" behavior.
+
+One more small trim in the same loader: profile names for comments,
+audit entries, and accounting instructions are now fetched in one author
+lookup instead of a separate second profiles query for instructions.
+
+### Dashboard render churn: memoize the big option lists
+
+Several large values were being rebuilt on ordinary dashboard renders:
+project/member filter options, project-name maps, QBO category/supplier/
+class lists, tax-code options, the audit timeline, nav items, and the
+selectable invoice rows. These are now memoized in
+[`DashboardClient.tsx`](src/components/dashboard/DashboardClient.tsx), so
+typing in filters, switching invoice selection, or receiving a detail
+result does less repeated client work.
+
+The shared `Combobox` now memoizes search results, caps broad dropdowns
+to the first 80 matches, and shows a "keep typing to narrow" hint when
+more matches exist. This avoids rendering thousands of option buttons
+for supplier/category/project searches while keeping the same keyboard
+and autosave behavior.
+
+### Lower sidebar links: instant feedback for server-heavy pages
+
+The upper sidebar/dashboard links felt fine because dashboard invoice
+navigation is client-owned after initial load. The lower group —
+Workflows, Billing, Statements, Reports, Settings — points to real
+server-rendered routes under `src/app/(app)`, and several of those pages
+load org/QBO/member/report data before rendering. That is legitimate
+server work, but without a loading boundary the UI looked frozen for
+3–4 seconds.
+
+Current behavior:
+
+- [`AppSidebar.tsx`](src/components/AppSidebar.tsx) keeps the upper nav
+  behavior unchanged, but lower nav links now call `router.prefetch()` on
+  hover/focus and show an immediate pending indicator on plain click
+  until `pathname` changes.
+- The collapsed sidebar is now a usable icon rail instead of only a
+  hamburger strip, with badges preserved for relevant items.
+- Each lower route now has a route-level `loading.tsx` skeleton:
+  `/workflows`, `/billing`, `/statements`, `/reports`, and `/settings`.
+  They all share [`AppPageLoading.tsx`](src/components/AppPageLoading.tsx),
+  so route transitions have an instant, branded loading state while the
+  server-rendered page finishes.
+- Workflows and Statements now use the existing cached QBO org lookups
+  from [`org-cache.ts`](src/lib/org-cache.ts) for supplier/category/class
+  data instead of refetching the big QuickBooks lists directly every
+  visit. The statement detail route uses the cached supplier list too.
+
+Validation for both commits:
+
+- `npm run lint`
+- `npm run build`
+
+Known next optimization if those lower routes still feel too slow after
+deployment: move their expensive read-only data behind client-side
+queries or smaller route segments, especially Settings member details
+(`admin.auth.admin.getUserById` per member) and Workflows' step/
+approver/condition graph.
 
 ---
 
@@ -2378,9 +2495,10 @@ for the full architecture and two real bugs it took to get there:
   [Document search](#document-search) panel for everything else.
 - **List pane**: clicking a row updates client state and the URL
   (`/dashboard/[id]?...`, filters preserved) without a server round trip
-  — a previously-opened invoice renders instantly from cache, and rows
-  scrolled into view prefetch their detail in the background before
-  they're ever clicked. Admin users get a **checkbox per row**; with one
+  — a previously-opened invoice renders instantly from cache. Detail
+  prefetch is now intent-based: hover/focus warms a row, and the selected
+  invoice's immediate previous/next neighbors warm in the background;
+  scrolling alone does not fetch details. Admin users get a **checkbox per row**; with one
   or more selected a
   **batch action bar** appears (sticky at the top of the list):
   - **Delete** — removes the selected invoices + their documents (two-step
