@@ -20,6 +20,10 @@ export type WaitingForInvoice = {
 
 export async function computeWaitingForIds(
   supabase: SupabaseClient<Database>,
+  // Every caller already reports on a single org, and substitute cover
+  // (migration 0094) is per-membership, so it's resolved once here rather
+  // than carried on every invoice row.
+  organizationId: string,
   invoices: WaitingForInvoice[]
 ): Promise<Map<string, string[]>> {
   const waitingIdsByInvoice = new Map<string, string[]>();
@@ -47,6 +51,7 @@ export async function computeWaitingForIds(
     if (!step) continue;
     const ids = await requiredApproversFor(supabase, step, {
       id: inv.id,
+      organization_id: organizationId,
       vendor_name: inv.vendor_name,
       project_id: inv.project_id,
       step_override_approver_id: inv.step_override_approver_id,

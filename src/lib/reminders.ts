@@ -24,6 +24,12 @@ export interface EscalationCandidate {
   daysOnStep: number;
   deadlineDays: number;
   approverIds: string[];
+  // Who the step nominates to be told (migration 0094). Null falls back
+  // to every org admin, which is what happened before this was
+  // configurable. Deliberately per-step rather than derived from a
+  // reporting line: the same two people appear in both orders across
+  // workflows, so "escalate upward" would be wrong half the time.
+  escalateToUserId: string | null;
 }
 
 export interface OrgPending {
@@ -32,15 +38,24 @@ export interface OrgPending {
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-// Grace period after a step's own deadline before admins get paged —
-// the daily digest is already nagging the approver every day past the
-// deadline; escalation is for when that alone hasn't worked.
-const ESCALATION_GRACE_DAYS = 2;
+// Fallback grace period after a step's own deadline before anyone gets
+// paged — the daily digest is already nagging the approver every day
+// past the deadline; escalation is for when that alone hasn't worked.
+// Orgs set their own via organizations.escalation_grace_days (migration
+// 0094); this is only used if that read fails.
+const DEFAULT_ESCALATION_GRACE_DAYS = 2;
 
 export async function computeOrgPending(organizationId: string): Promise<OrgPending> {
   const admin = createAdminClient();
   const byApprover = new Map<string, PendingItem[]>();
   const escalations: EscalationCandidate[] = [];
+
+  const { data: orgRow } = await admin
+    .from("organizations")
+    .select("escalation_grace_days")
+    .eq("id", organizationId)
+    .single();
+  const graceDays = orgRow?.escalation_grace_days ?? DEFAULT_ESCALATION_GRACE_DAYS;
 
   const { data: invoicesRaw } = await admin
     .from("invoices")
@@ -70,6 +85,7 @@ export async function computeOrgPending(organizationId: string): Promise<OrgPend
 
     const approverIds = await requiredApproversFor(admin, step, {
       id: inv.id,
+      organization_id: organizationId,
       vendor_name: inv.vendor_name,
       project_id: inv.project_id,
       step_override_approver_id: inv.step_override_approver_id,
@@ -98,11 +114,7 @@ export async function computeOrgPending(organizationId: string): Promise<OrgPend
       byApprover.set(uid, list);
     }
 
-    if (
-      deadlineDays != null &&
-      daysOnStep >= deadlineDays + ESCALATION_GRACE_DAYS &&
-      !inv.escalated_at
-    ) {
+    if (deadlineDays != null && daysOnStep >= deadlineDays + graceDays && !inv.escalated_at) {
       escalations.push({
         invoiceId: inv.id,
         label,
@@ -110,6 +122,7 @@ export async function computeOrgPending(organizationId: string): Promise<OrgPend
         daysOnStep,
         deadlineDays,
         approverIds,
+        escalateToUserId: step.escalate_to_user_id,
       });
     }
   }

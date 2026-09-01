@@ -54,6 +54,9 @@ export interface Database {
           plan_selected_at: string | null;
           statement_reply_to: string | null;
           trial_ends_at: string | null;
+          // Days after a step's own deadline before escalating (migration
+          // 0094). Replaces the hardcoded ESCALATION_GRACE_DAYS constant.
+          escalation_grace_days: number;
           created_at: string;
         };
         Insert: Partial<
@@ -69,6 +72,10 @@ export interface Database {
           user_id: string;
           role: OrgRole;
           created_at: string;
+          // Stand-in cover while this member is away (migration 0094).
+          // substitute_until is inclusive; null means "until cleared".
+          substitute_user_id: string | null;
+          substitute_until: string | null;
         };
         Insert: Partial<
           Database["public"]["Tables"]["organization_members"]["Row"]
@@ -153,6 +160,9 @@ export interface Database {
           approval_mode: "any" | "all";
           deadline_days: number | null;
           created_at: string;
+          // Who gets paged when this step blows its deadline (migration
+          // 0094). Null = every org admin, the pre-0094 behavior.
+          escalate_to_user_id: string | null;
         };
         Insert: Partial<
           Database["public"]["Tables"]["approval_workflow_steps"]["Row"]

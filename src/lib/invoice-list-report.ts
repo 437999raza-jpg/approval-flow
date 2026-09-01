@@ -114,7 +114,7 @@ export async function buildInvoiceListReport(
     if (invoices.length === 0) return [];
   }
 
-  const waitingIdsByInvoice = await computeWaitingForIds(supabase, invoices);
+  const waitingIdsByInvoice = await computeWaitingForIds(supabase, organizationId, invoices);
 
   if (filters.waiting_for_user_id) {
     const wantedId = filters.waiting_for_user_id;

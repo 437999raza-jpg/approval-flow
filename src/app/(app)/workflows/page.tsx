@@ -175,10 +175,45 @@ async function updateStep(stepId: string, formData: FormData) {
   const name = String(formData.get("name") ?? "").trim();
   const approvalMode = String(formData.get("approval_mode") ?? "all") === "any" ? "any" : "all";
   const deadlineDays = parseDeadlineDays(formData);
+  // Empty = nobody nominated, which falls back to paging every admin
+  // (migration 0094). Per-step rather than a reporting line on each
+  // person: the same two people appear in both orders across workflows —
+  // manager first in one, subordinate first in another — so "escalate
+  // upward" would be wrong half the time.
+  const escalateTo = String(formData.get("escalate_to_user_id") ?? "").trim() || null;
   await supabase
     .from("approval_workflow_steps")
-    .update({ name, approval_mode: approvalMode, deadline_days: deadlineDays })
+    .update({
+      name,
+      approval_mode: approvalMode,
+      deadline_days: deadlineDays,
+      escalate_to_user_id: escalateTo,
+    })
     .eq("id", stepId);
+
+  revalidatePath("/workflows");
+}
+
+// The wait after a step's own deadline before the escalation email goes
+// out. Org-wide (every workflow shares it), which is why it lives here
+// beside the per-step deadlines rather than in Settings — someone tuning
+// "how long before this chases me" is already on this page.
+async function saveEscalationGraceDays(orgId: string, formData: FormData) {
+  "use server";
+
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
+  const raw = String(formData.get("escalation_grace_days") ?? "").trim();
+  const days = Number(raw);
+  // Mirrors the DB check constraint. Rejects rather than clamps, so a
+  // typo'd 600 doesn't quietly become 60.
+  if (!Number.isInteger(days) || days < 0 || days > 60) return;
+
+  await supabase.from("organizations").update({ escalation_grace_days: days }).eq("id", orgId);
 
   revalidatePath("/workflows");
 }
@@ -505,6 +540,7 @@ export default async function WorkflowsPage() {
     qboCategoryRows,
     qboSupplierRows,
     { data: members },
+    { data: orgRow },
   ] = await Promise.all([
     isAdmin
       ? supabase
@@ -535,6 +571,13 @@ export default async function WorkflowsPage() {
     getCachedQboSuppliers(org.id),
     // Org members for the approver selects (auditors can't be approvers).
     supabase.from("organization_members").select("user_id, role").eq("organization_id", org.id),
+    // Escalation grace period (migration 0094) — joins this batch rather
+    // than adding a seventh round trip of its own.
+    supabase
+      .from("organizations")
+      .select("escalation_grace_days")
+      .eq("id", org.id)
+      .single(),
   ]);
 
   const projectOptions = (projects ?? []).map((p) => ({ id: p.id, label: p.name }));
@@ -658,6 +701,40 @@ export default async function WorkflowsPage() {
             (routing rules) only decide which workflow an invoice uses, if
             you have more than one.
           </p>
+
+          {/* Org-wide timing sits with the per-step deadlines rather than
+              in Settings: someone tuning "how long before this chases
+              me" is already looking at this page. */}
+          {isAdmin && (
+            <form
+              action={saveEscalationGraceDays.bind(null, org.id)}
+              className="mt-4 flex flex-wrap items-center gap-2 rounded-lg border border-brand-line bg-white p-3 shadow-elevation-1"
+            >
+              <span className="text-sm text-brand-ink">
+                Escalate a step
+              </span>
+              <input
+                type="number"
+                name="escalation_grace_days"
+                min={0}
+                max={60}
+                defaultValue={orgRow?.escalation_grace_days ?? 2}
+                className="w-16 rounded-md border border-slate-300 px-2 py-1 text-sm tabular-nums"
+              />
+              <span className="text-sm text-brand-ink">
+                day(s) after its own deadline passes.
+              </span>
+              <SubmitButton className="rounded-md bg-brand-green px-3 py-1 text-xs font-medium text-white hover:bg-brand-green-dark">
+                Save
+              </SubmitButton>
+              <span className="w-full text-xs text-brand-muted">
+                The daily digest already flags a bill as overdue the moment its
+                step deadline passes. This is the extra wait before the
+                escalation email goes out on top of that — set it to 0 to
+                escalate the same day.
+              </span>
+            </form>
+          )}
 
           {isAdmin && (pendingImpacts ?? []).length > 0 && (
             <div className="mt-4 space-y-3">
@@ -836,9 +913,22 @@ export default async function WorkflowsPage() {
                                     min={1}
                                     defaultValue={s.deadline_days ?? ""}
                                     placeholder="Deadline (days)"
-                                    title="Days before this step is flagged overdue in the daily digest and, after a grace period, escalated to admins. Leave blank for no deadline."
+                                    title="Days before this step is flagged overdue in the daily digest and, after the grace period, escalated. Leave blank for no deadline."
                                     className="w-32 rounded-md border border-slate-300 px-2 py-1 text-xs"
                                   />
+                                  <select
+                                    name="escalate_to_user_id"
+                                    defaultValue={s.escalate_to_user_id ?? ""}
+                                    title="Who gets the escalation email if this step blows its deadline. Defaults to every admin."
+                                    className="w-44 rounded-md border border-slate-300 px-2 py-1 text-xs"
+                                  >
+                                    <option value="">Escalate to: all admins</option>
+                                    {approverOptions.map((m) => (
+                                      <option key={m.id} value={m.id}>
+                                        Escalate to: {m.label}
+                                      </option>
+                                    ))}
+                                  </select>
                                   <SubmitButton className="rounded-md bg-slate-800 px-2 py-1 text-xs font-medium text-white hover:bg-slate-700">
                                     Save
                                   </SubmitButton>

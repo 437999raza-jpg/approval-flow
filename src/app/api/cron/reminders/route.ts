@@ -82,8 +82,18 @@ export async function GET(request: NextRequest) {
 
       for (const esc of escalations) {
         const stuckOnNames = esc.approverIds.map((id) => nameById.get(id) ?? "someone");
+        // A step can nominate who hears about it (migration 0094).
+        // Falling back to every admin keeps the pre-0094 behavior for any
+        // step nobody has configured, and also covers the case where the
+        // nominated person no longer has an email on file — better to
+        // over-notify than to let a stuck bill go silent.
+        let recipients = adminEmails;
+        if (esc.escalateToUserId) {
+          const nominated = await getEmail(esc.escalateToUserId);
+          if (nominated) recipients = [nominated];
+        }
         await Promise.all(
-          adminEmails.map((to) =>
+          recipients.map((to) =>
             sendEscalationEmail({
               to,
               invoiceLabel: esc.label,

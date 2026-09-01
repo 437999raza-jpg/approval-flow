@@ -60,17 +60,64 @@ function stepEnteredReset() {
   };
 }
 
+// Swaps in stand-ins for anyone currently covered (migration 0094).
+// Applied centrally here rather than at each notification site on
+// purpose: a substitute who receives the email but still can't approve
+// is worse than no substitute at all, so "who must approve", "who is
+// shown as holding it", and "who gets reminded" all have to come from
+// the same answer.
+//
+// A substitute who is themselves away doesn't chain — one hop only.
+// Chains invite cycles (A covers B covers A) and, more practically,
+// nobody can reason about who is actually accountable once cover is
+// two people deep.
+async function applySubstitutes(
+  supabase: ReturnType<typeof createClient>,
+  organizationId: string,
+  userIds: string[]
+): Promise<string[]> {
+  if (userIds.length === 0) return userIds;
+
+  const { data: rows } = await supabase
+    .from("organization_members")
+    .select("user_id, substitute_user_id, substitute_until")
+    .eq("organization_id", organizationId)
+    .in("user_id", userIds)
+    .not("substitute_user_id", "is", null);
+  if (!rows || rows.length === 0) return userIds;
+
+  const today = new Date().toISOString().slice(0, 10);
+  const coverFor = new Map<string, string>();
+  for (const r of rows) {
+    if (!r.substitute_user_id) continue;
+    // substitute_until is inclusive — cover through the end of that day.
+    if (r.substitute_until && r.substitute_until < today) continue;
+    coverFor.set(r.user_id, r.substitute_user_id);
+  }
+  if (coverFor.size === 0) return userIds;
+
+  return [...new Set(userIds.map((id) => coverFor.get(id) ?? id))];
+}
+
 export async function requiredApproversFor(
   supabase: ReturnType<typeof createClient>,
   step: Database["public"]["Tables"]["approval_workflow_steps"]["Row"],
   invoice: {
     id: string;
+    organization_id: string;
     vendor_name: string | null;
     project_id: string | null;
     step_override_approver_id: string | null;
   }
 ): Promise<string[]> {
-  if (invoice.step_override_approver_id) return [invoice.step_override_approver_id];
+  // An explicit reassignment names a person deliberately, so it wins over
+  // the workflow's own routing — but that person can still be away, so
+  // cover applies to them too.
+  if (invoice.step_override_approver_id) {
+    return applySubstitutes(supabase, invoice.organization_id, [
+      invoice.step_override_approver_id,
+    ]);
+  }
 
   const { data: approversRaw } = await supabase
     .from("approval_workflow_step_approvers")
@@ -89,7 +136,7 @@ export async function requiredApproversFor(
     .select("class, category, project_id")
     .eq("invoice_id", invoice.id);
 
-  return effectiveApproversForStep(
+  const workflowApprovers = effectiveApproversForStep(
     (approversRaw ?? []).map((a) => ({
       id: a.id,
       approver_user_id: a.approver_user_id,
@@ -104,6 +151,8 @@ export async function requiredApproversFor(
     { vendor_name: invoice.vendor_name, project_id: invoice.project_id },
     lineItems ?? []
   );
+
+  return applySubstitutes(supabase, invoice.organization_id, workflowApprovers);
 }
 
 // Everyone actually allowed to be @mentioned on this invoice: an eligible
@@ -146,6 +195,7 @@ export async function eligibleMentionIdsForInvoice(
     for (const step of steps ?? []) {
       const stepIds = await requiredApproversFor(supabase, step, {
         id: invoiceId,
+        organization_id: invoice.organization_id,
         vendor_name: invoice.vendor_name,
         project_id: invoice.project_id,
         step_override_approver_id: null,
@@ -179,7 +229,12 @@ async function firstMatchingStepFrom(
   supabase: ReturnType<typeof createClient>,
   steps: Database["public"]["Tables"]["approval_workflow_steps"]["Row"][],
   from: number,
-  invoice: { id: string; vendor_name: string | null; project_id: string | null }
+  invoice: {
+    id: string;
+    organization_id: string;
+    vendor_name: string | null;
+    project_id: string | null;
+  }
 ): Promise<MatchingStep | null> {
   const candidates = steps
     .filter((s) => s.step_order >= from)
@@ -187,6 +242,7 @@ async function firstMatchingStepFrom(
   for (const step of candidates) {
     const required = await requiredApproversFor(supabase, step, {
       id: invoice.id,
+      organization_id: invoice.organization_id,
       vendor_name: invoice.vendor_name,
       project_id: invoice.project_id,
       step_override_approver_id: null,
@@ -382,7 +438,12 @@ export async function decide(
         supabase,
         orderedSteps,
         invoice.current_step_order + 1,
-        { id: invoiceId, vendor_name: invoice.vendor_name, project_id: invoice.project_id }
+        {
+          id: invoiceId,
+          organization_id: invoice.organization_id,
+          vendor_name: invoice.vendor_name,
+          project_id: invoice.project_id,
+        }
       );
       await supabase
         .from("invoices")
@@ -452,7 +513,12 @@ export async function decide(
       supabase,
       orderedSteps,
       invoice.current_step_order + 1,
-      { id: invoiceId, vendor_name: invoice.vendor_name, project_id: invoice.project_id }
+      {
+        id: invoiceId,
+        organization_id: invoice.organization_id,
+        vendor_name: invoice.vendor_name,
+        project_id: invoice.project_id,
+      }
     );
 
     await supabase
@@ -1206,6 +1272,7 @@ export async function reviewComplete(invoiceId: string) {
       .eq("workflow_id", workflowId);
     start = await firstMatchingStepFrom(supabase, workflowSteps ?? [], 1, {
       id: invoiceId,
+      organization_id: inv.organization_id,
       vendor_name: inv.vendor_name,
       project_id: inv.project_id,
     });
@@ -1820,6 +1887,7 @@ export async function setInvoiceStage(invoiceId: string, formData: FormData) {
 
   const stageApproverIds = await requiredApproversFor(supabase, validStep, {
     id: invoiceId,
+    organization_id: invoice.organization_id,
     vendor_name: invoice.vendor_name,
     project_id: invoice.project_id,
     step_override_approver_id: null,

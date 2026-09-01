@@ -176,7 +176,7 @@ export async function runReport(
   // (e.g. "Bianca") narrows the summary the same way it narrows the list.
   if (config.filters.waiting_for_user_id) {
     const wantedId = config.filters.waiting_for_user_id;
-    const waitingIdsByInvoice = await computeWaitingForIds(supabase, list);
+    const waitingIdsByInvoice = await computeWaitingForIds(supabase, organizationId, list);
     list = list.filter((i) => (waitingIdsByInvoice.get(i.id) ?? []).includes(wantedId));
   }
   if (config.filters.approved_by_user_id) {

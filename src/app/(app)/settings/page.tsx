@@ -14,6 +14,7 @@ import { AvatarUploadForm } from "@/components/AvatarUploadForm";
 import { AddUsersModal } from "@/components/AddUsersModal";
 import { MemberFilterInput } from "@/components/MemberFilterInput";
 import { InlineSelectSave } from "@/components/InlineSelectSave";
+import { SubstitutePicker } from "@/components/SubstitutePicker";
 import { InlineTextSave } from "@/components/InlineTextSave";
 import { SubmitButton } from "@/components/SubmitButton";
 import { ConfirmSubmitButton } from "@/components/ConfirmSubmitButton";
@@ -208,6 +209,61 @@ async function removeMember(membershipId: string) {
   revalidatePath("/settings");
 }
 
+// Sets (or clears) who stands in for a member while they're away —
+// migration 0094. Cover is what actually prevents a stalled step: an
+// approver on holiday is the most common reason a bill sits untouched,
+// and no escalation policy fixes that on its own, it only reports it
+// after the fact.
+//
+// Anyone may set their OWN cover (you shouldn't need an admin to go on
+// holiday); only admins may set someone else's.
+async function saveSubstitute(membershipId: string, formData: FormData) {
+  "use server";
+
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
+  const { data: member } = await supabase
+    .from("organization_members")
+    .select("user_id, organization_id")
+    .eq("id", membershipId)
+    .single();
+  if (!member) return;
+
+  if (member.user_id !== user.id) {
+    const org = await getCurrentOrg(supabase);
+    if (!org || org.role !== "admin" || org.id !== member.organization_id) return;
+  }
+
+  const substituteRaw = String(formData.get("substitute_user_id") ?? "").trim();
+  const untilRaw = String(formData.get("substitute_until") ?? "").trim();
+
+  // The DB rejects self-cover too (check constraint), but failing here
+  // keeps it a no-op rather than a thrown error in the UI.
+  if (substituteRaw && substituteRaw === member.user_id) return;
+
+  // Clearing the person clears the date with it — a date with nobody to
+  // cover is meaningless state that would just confuse the next reader.
+  const substituteUserId = substituteRaw || null;
+  const substituteUntil =
+    substituteUserId && /^\d{4}-\d{2}-\d{2}$/.test(untilRaw) ? untilRaw : null;
+
+  await supabase
+    .from("organization_members")
+    .update({
+      substitute_user_id: substituteUserId,
+      substitute_until: substituteUntil,
+    })
+    .eq("id", membershipId);
+
+  revalidateTag(membersTag(member.organization_id));
+  revalidatePath("/settings");
+  redirect("/settings#members");
+}
+
 // Admin-facing recovery for a teammate who lost their authenticator
 // device AND their saved recovery codes — the one remaining gap after
 // self-service recovery codes (see mfa-recovery.ts): before this,
@@ -343,7 +399,7 @@ export default async function SettingsPage({
       .eq("source", "qbo"),
     supabase
       .from("organization_members")
-      .select("id, user_id, role")
+      .select("id, user_id, role, substitute_user_id, substitute_until")
       .eq("organization_id", org.id)
       .order("created_at", { ascending: true }),
   ]);
@@ -1132,6 +1188,7 @@ export default async function SettingsPage({
                     <th className="px-4 py-3 font-medium">Role</th>
                     <th className="px-4 py-3 font-medium">Status</th>
                     <th className="px-4 py-3 font-medium">2FA</th>
+                    <th className="px-4 py-3 font-medium">Covered by</th>
                     {/* Substitute / Start date / End date / Time zone lived
                         here but had no backing feature yet, so every row
                         rendered four columns of em dashes — ~350px of dead
@@ -1198,6 +1255,27 @@ export default async function SettingsPage({
                           )}
                         </span>
                       </td>
+                      <td className="px-4 py-3">
+                        {isAdmin || m.user_id === user.id ? (
+                          <SubstitutePicker
+                            action={saveSubstitute.bind(null, m.id)}
+                            currentSubstituteId={m.substitute_user_id}
+                            currentUntil={m.substitute_until}
+                            options={(members ?? [])
+                              .filter((other) => other.user_id !== m.user_id)
+                              .map((other) => ({
+                                value: other.user_id,
+                                label: nameById.get(other.user_id) ?? "Team member",
+                              }))}
+                          />
+                        ) : m.substitute_user_id ? (
+                          <span className="text-xs text-slate-500">
+                            {nameById.get(m.substitute_user_id) ?? "Team member"}
+                          </span>
+                        ) : (
+                          <span className="text-xs text-slate-400">—</span>
+                        )}
+                      </td>
                       {isAdmin && (
                         <td className="px-4 py-3">
                           {m.user_id !== user.id && (
@@ -1214,7 +1292,7 @@ export default async function SettingsPage({
                   {visibleMembers.length === 0 && (
                     <tr>
                       <td
-                        colSpan={isAdmin ? 6 : 5}
+                        colSpan={isAdmin ? 7 : 6}
                         className="px-4 py-8 text-center text-slate-400"
                       >
                         No members match &quot;{q}&quot;.
