@@ -3,6 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { computeOrgPending } from "@/lib/reminders";
 import { sendDigestEmail, sendEscalationEmail } from "@/lib/notify";
 import { getAppUrl } from "@/lib/app-url";
+import { authorizeCronRequest } from "@/lib/cron-auth";
 
 // Reads request.headers directly (not next/headers' headers()) and touches
 // no cookies, so Next has no signal to treat this as dynamic on its own —
@@ -18,13 +19,8 @@ export const dynamic = "force-dynamic";
 // (and made to spam every user's inbox) by an outside request.
 // Authored by Araza.
 export async function GET(request: NextRequest) {
-  const secret = process.env.CRON_SECRET;
-  if (secret) {
-    const auth = request.headers.get("authorization");
-    if (auth !== `Bearer ${secret}`) {
-      return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-    }
-  }
+  const unauthorized = authorizeCronRequest(request);
+  if (unauthorized) return unauthorized;
 
   const admin = createAdminClient();
   const appUrl = getAppUrl();

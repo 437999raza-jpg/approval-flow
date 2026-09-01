@@ -10,8 +10,8 @@ import { extractionModeForOrg } from "@/lib/plans";
 import { resolveSupplier } from "@/lib/suppliers";
 
 const INVOICE_BUCKET = "invoices";
-const MAX_FILE_BYTES = 20 * 1024 * 1024; // 20MB
-const ALLOWED_TYPES = new Set([
+export const MAX_INVOICE_FILE_BYTES = 20 * 1024 * 1024; // 20MB
+export const ALLOWED_INVOICE_TYPES = new Set([
   "application/pdf",
   "image/png",
   "image/jpeg",
@@ -19,6 +19,22 @@ const ALLOWED_TYPES = new Set([
 ]);
 
 export class InvoiceIngestError extends Error {}
+
+export function invoiceFileValidationError(file: Pick<File, "size" | "type">): string | null {
+  if (file.size === 0) return "File is empty";
+  if (file.size > MAX_INVOICE_FILE_BYTES) {
+    return `File exceeds ${MAX_INVOICE_FILE_BYTES / 1024 / 1024}MB limit`;
+  }
+  if (!ALLOWED_INVOICE_TYPES.has(file.type)) {
+    return `Unsupported file type: ${file.type || "unknown"}`;
+  }
+  return null;
+}
+
+export function validateInvoiceFile(file: Pick<File, "size" | "type">) {
+  const error = invoiceFileValidationError(file);
+  if (error) throw new InvoiceIngestError(error);
+}
 
 // Thrown by createInvoiceFromFile when the document clearly isn't an
 // invoice (no invoice number, no total, no line items) — the Queue shows
@@ -177,15 +193,7 @@ export async function createInvoiceFromFile({
   sourceEmail,
   extraContext,
 }: CreateInvoiceArgs) {
-  if (file.size === 0) {
-    throw new InvoiceIngestError("File is empty");
-  }
-  if (file.size > MAX_FILE_BYTES) {
-    throw new InvoiceIngestError(`File exceeds ${MAX_FILE_BYTES / 1024 / 1024}MB limit`);
-  }
-  if (!ALLOWED_TYPES.has(file.type)) {
-    throw new InvoiceIngestError(`Unsupported file type: ${file.type || "unknown"}`);
-  }
+  validateInvoiceFile(file);
 
   const safeName = file.name.replace(/[^\w.\-]+/g, "_");
   const filePath = `${organizationId}/${crypto.randomUUID()}-${safeName}`;

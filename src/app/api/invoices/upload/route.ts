@@ -16,6 +16,7 @@ import { enqueueIngestJob } from "@/lib/ingest-queue";
 import { recordUsageEvent } from "@/lib/usage";
 import { INVOICES_TAG } from "@/lib/org-cache";
 import { isOrgLocked } from "@/lib/plans";
+import { invoiceFileValidationError } from "@/lib/invoices";
 
 export async function POST(request: Request) {
   const supabase = createClient();
@@ -54,6 +55,10 @@ export async function POST(request: Request) {
   const file = formData.get("file");
   if (!(file instanceof File)) {
     return NextResponse.json({ error: "Missing file" }, { status: 400 });
+  }
+  const validationError = invoiceFileValidationError(file);
+  if (validationError) {
+    return NextResponse.json({ error: validationError }, { status: 400 });
   }
 
   const bytes = new Uint8Array(await file.arrayBuffer());

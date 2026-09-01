@@ -3,6 +3,7 @@ export const maxDuration = 60;
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { runNextIngestJob } from "@/lib/ingest-queue";
+import { authorizeCronRequest } from "@/lib/cron-auth";
 
 // Every 2 minutes (see vercel.json's "crons" entry): drives the invoice
 // ingestion queue independently of anyone having the app open. Before
@@ -20,13 +21,8 @@ import { runNextIngestJob } from "@/lib/ingest-queue";
 export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
-  const secret = process.env.CRON_SECRET;
-  if (secret) {
-    const auth = request.headers.get("authorization");
-    if (auth !== `Bearer ${secret}`) {
-      return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-    }
-  }
+  const unauthorized = authorizeCronRequest(request);
+  if (unauthorized) return unauthorized;
 
   const admin = createAdminClient();
   const { data: pending } = await admin

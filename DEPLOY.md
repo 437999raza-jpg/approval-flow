@@ -89,6 +89,7 @@ verifications.
    - `RESEND_API_KEY` + `RESEND_FROM_EMAIL` (from Resend; use a sender
      address on a domain you control, e.g. `noreply@ufirst.co` — you must
      verify that domain in Resend first)
+   - `CRON_SECRET` = a long random string for Vercel Cron requests
    - `QBO_CLIENT_ID` / `QBO_CLIENT_SECRET` (from Intuit — step 6)
    - `QBO_REDIRECT_URI=https://flow.ufirst.co/api/qbo/callback`
    - `BILLING_RATE_PER_INVOICE=5.00` (your price per invoice)

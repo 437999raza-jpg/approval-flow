@@ -1462,7 +1462,7 @@ Copy `.env.example` → `.env.local` and fill in:
 | `RESEND_FROM_EMAIL` | No (required if `RESEND_API_KEY` is set) | Must be a verified sender/domain in your Resend account |
 | `NEXT_PUBLIC_APP_URL` | Recommended | The site's real public URL (e.g. `https://flow.ufirst.co`), used by [`getAppUrl()`](src/lib/app-url.ts) to build absolute links in every email (mentions, assignments, rejections, the reminder digest) and the Stripe checkout redirect. **Must be set separately in Vercel** — same gotcha as `PLATFORM_ADMIN_EMAILS` below, confirmed live: left unset, every email link pointed at `localhost:3210` in production. Unset now falls back to Vercel's own `VERCEL_URL` (still correct, just an ugly `*.vercel.app` link) rather than localhost. |
 | `PLATFORM_ADMIN_EMAILS` | No | Comma-separated emails allowed to create/manage organizations at `/admin/organizations` (see [Multi-tenant onboarding tool](#multi-tenant-onboarding-tool-adminorganizations)). Leave unset to hide that page entirely. **Must be set separately in each environment** — a value in `.env.local` has no effect on Vercel; set it there too (Project Settings → Environment Variables → Production) and trigger a fresh deploy, or the page/nav-link stays invisible in production even for the right email. |
-| `CRON_SECRET` | Recommended | Any random string you choose; Vercel sends it as `Authorization: Bearer $CRON_SECRET` on cron-triggered requests to `/api/cron/reminders` (see [Deadlines, reminders & escalation](#deadlines-reminders--escalation-migration-0073)). Unset = the route runs unauthenticated. |
+| `CRON_SECRET` | Yes (for cron jobs) | Any random string you choose; Vercel sends it as `Authorization: Bearer $CRON_SECRET` on cron-triggered requests to `/api/cron/*` (see [Deadlines, reminders & escalation](#deadlines-reminders--escalation-migration-0073)). Unset = cron routes fail closed and do not run. |
 | `STRIPE_SECRET_KEY` | For billing | dashboard.stripe.com → Developers → API keys. Powers `/billing`'s "Pay now" and "Manage billing" (see [Billing & usage](#billing--usage)). No publishable key needed — the app only redirects to Stripe-hosted pages, never loads Stripe.js client-side. |
 | `OPS_APP_URL` | No | Base URL of the separate "Ufirst Ops" internal app (see [Ufirst Ops](#ufirst-ops-separate-internal-app)). Only used to link out to it from `/admin/organizations`'s "Support chat" button. Leave unset to hide that button. |
 | `NEXT_PUBLIC_SENTRY_DSN` | No | sentry.io → your project → Client Keys (DSN). Leave unset and error monitoring is a complete no-op — `Sentry.init` is never called, zero behavior change. |
@@ -2261,9 +2261,9 @@ doesn't delete the row.
 > note here flagged 0073 as not-yet-run due to a Supabase incident; the
 > migration has since been applied (verified: `deadline_days`,
 > `current_step_entered_at`, `escalated_at` all exist in the live DB).
-> `CRON_SECRET` should still be set in Vercel (and `.env.local`) so the
-> daily digest/escalation cron can't be hit by outsiders; until it is, the
-> route runs unauthenticated.
+> `CRON_SECRET` must be set in Vercel (and `.env.local` for local cron
+> testing) so the daily digest/escalation cron can't be hit by outsiders.
+> Cron routes now fail closed when it is missing.
 
 Another gap found comparing a real ApprovalMax export: their steps carry
 a **Deadline** (e.g. "4 days"), and — separately reported — some
@@ -2302,8 +2302,8 @@ approvers just sit on bills for days with nothing prompting them.
   again and later stalls at a *different* step can escalate again.
 - The route checks `Authorization: Bearer $CRON_SECRET` (set the env var
   in both Vercel and `.env.local`) so it can't be hit — and made to spam
-  every user's inbox — by an outside request; if `CRON_SECRET` isn't set
-  it runs unauthenticated (fine for local testing, not for production).
+  every user's inbox — by an outside request. If `CRON_SECRET` isn't set,
+  cron routes return an error and do not run.
   It's declared `export const dynamic = "force-dynamic"` — without that,
   Next.js has no signal this route needs per-request execution (it reads
   `request.headers` directly rather than `next/headers`' `headers()`,

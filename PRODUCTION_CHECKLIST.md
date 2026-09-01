@@ -16,7 +16,7 @@ Last updated: 2026-08-25 (matches the session log in README.md).
 - [ ] You can log in at `flow.ufirst.co` as the org admin.
 - [ ] `.env.local` / Vercel have the values from the README "Config state"
       (INBOUND_EMAIL_DOMAIN, INBOUND_EMAIL_WEBHOOK_SECRET matching the Resend
-      webhook URL, RESEND_API_KEY, production QBO keys).
+      webhook URL, RESEND_API_KEY, CRON_SECRET, production QBO keys).
 
 ---
 

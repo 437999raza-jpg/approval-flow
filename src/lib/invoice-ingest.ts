@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database, InvoiceSource } from "@/lib/supabase/types";
-import { createInvoiceFromFile, InvoiceIngestError } from "@/lib/invoices";
+import { createInvoiceFromFile, InvoiceIngestError, validateInvoiceFile } from "@/lib/invoices";
 import { classifyMultiPageInvoice } from "@/lib/invoice-split";
 import { pdfPageCount } from "@/lib/merge-documents";
 
@@ -46,6 +46,7 @@ interface IngestArgs {
 // confirm — see src/app/invoices/pending-splits. Authored by Araza.
 export async function ingestInvoiceFile(args: IngestArgs): Promise<IngestResult> {
   const { supabase, organizationId, file, source, submittedBy, sourceEmail, extraContext, forceSplit } = args;
+  validateInvoiceFile(file);
 
   if (file.type === "application/pdf") {
     let bytes: Uint8Array | null = null;

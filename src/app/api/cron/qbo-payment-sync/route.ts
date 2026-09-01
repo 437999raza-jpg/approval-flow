@@ -3,6 +3,7 @@ export const maxDuration = 60;
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getQboConnection, runQboPaymentSync } from "@/lib/qbo";
+import { authorizeCronRequest } from "@/lib/cron-auth";
 
 // Nightly (see vercel.json's "crons" entry): pulls payment status
 // (paid/unpaid + date paid) from QuickBooks for every bill each connected
@@ -13,13 +14,8 @@ import { getQboConnection, runQboPaymentSync } from "@/lib/qbo";
 export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
-  const secret = process.env.CRON_SECRET;
-  if (secret) {
-    const auth = request.headers.get("authorization");
-    if (auth !== `Bearer ${secret}`) {
-      return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-    }
-  }
+  const unauthorized = authorizeCronRequest(request);
+  if (unauthorized) return unauthorized;
 
   const admin = createAdminClient();
   const { data: connections } = await admin

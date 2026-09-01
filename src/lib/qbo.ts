@@ -26,7 +26,7 @@ export function qboEnv() {
   return { clientId, clientSecret, redirectUri };
 }
 
-export function qboAuthorizeUrl(orgId: string): string | null {
+export function qboAuthorizeUrl(state: string): string | null {
   const env = qboEnv();
   if (!env) return null;
   const params = new URLSearchParams({
@@ -34,7 +34,7 @@ export function qboAuthorizeUrl(orgId: string): string | null {
     response_type: "code",
     scope: SCOPE,
     redirect_uri: env.redirectUri,
-    state: orgId,
+    state,
   });
   return `${AUTH_URL}?${params.toString()}`;
 }
