@@ -79,7 +79,7 @@ export function TagInput({
         />
       </div>
       {options && text && filteredOptions && filteredOptions.length > 0 && (
-        <div className="absolute z-10 mt-1 max-h-40 w-full overflow-y-auto rounded-md border border-slate-200 bg-white shadow-lg">
+        <div className="absolute z-10 mt-1 max-h-40 w-full overflow-y-auto rounded-md border border-slate-200 bg-white shadow-elevation-2">
           {filteredOptions.map((o) => (
             <button
               key={o.id}

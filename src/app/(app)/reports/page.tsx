@@ -301,7 +301,7 @@ export default async function ReportsPage({
   return (
     <main className="mx-auto w-full max-w-5xl p-8">
       <TrialBanner plan={trialOrgRow?.plan ?? null} trialEndsAt={trialOrgRow?.trial_ends_at ?? null} />
-          <h1 className="text-2xl font-semibold">Reports</h1>
+          <h1 className="font-display text-3xl font-extrabold tracking-tight text-brand-ink">Reports</h1>
           <p className="mt-1 text-sm text-slate-500">
             Build and save your own reports. Every report runs against
             what you can see (admins see everything; members see their
@@ -313,7 +313,7 @@ export default async function ReportsPage({
             key={editingReport?.id ?? "new"}
             id={FORM_ID}
             action={saveReport.bind(null, org.id)}
-            className="mt-4 rounded-lg border border-slate-200 bg-white p-4"
+            className="mt-4 rounded-lg border border-slate-200 bg-white shadow-elevation-1 p-4"
           >
             {editingReport && (
               <input type="hidden" name="report_id" value={editingReport.id} />
@@ -359,7 +359,7 @@ export default async function ReportsPage({
               </div>
             </div>
 
-            <div className="mt-3 text-[11px] font-bold uppercase tracking-wide text-slate-400">
+            <div className="mt-3 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
               Filters
             </div>
             <div className="mt-1.5 grid grid-cols-2 gap-x-3 gap-y-2 md:grid-cols-4">
@@ -460,7 +460,7 @@ export default async function ReportsPage({
               </div>
             </div>
 
-            <div className="mt-3 text-[11px] font-bold uppercase tracking-wide text-slate-400">
+            <div className="mt-3 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
               Visible columns
             </div>
             <p className="mt-0.5 text-xs text-slate-400">Name always shows — it links to the invoice.</p>
@@ -492,7 +492,7 @@ export default async function ReportsPage({
               itself rather than the outer card) so there's no dead
               whitespace around the title that looks clickable but isn't. */}
           <div className="mt-6">
-            <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
               Saved reports
             </div>
             <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -545,7 +545,7 @@ export default async function ReportsPage({
 
           {/* Results */}
           {runningReport && result && (
-            <div className="mt-6 rounded-lg border border-slate-200 bg-white">
+            <div className="mt-6 rounded-lg border border-slate-200 bg-white shadow-elevation-1">
               <div className="border-b border-slate-200 px-4 py-3">
                 <h2 className="text-base font-semibold">{runningReport.name}</h2>
                 <p className="text-xs text-slate-400">
@@ -618,7 +618,7 @@ export default async function ReportsPage({
               older saved report, DEFAULT_REPORT_COLUMNS) render — CSV
               matches exactly via the cols= query param. */}
           {runningReport && listRows && (
-            <div className="mt-6 rounded-lg border border-slate-200 bg-white">
+            <div className="mt-6 rounded-lg border border-slate-200 bg-white shadow-elevation-1">
               <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-4 py-3">
                 <div>
                   <h2 className="text-base font-semibold">Invoice list</h2>

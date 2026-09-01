@@ -105,7 +105,7 @@ function MfaChallengeInner() {
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-brand-mist px-4 py-12">
-      <div className="w-full max-w-sm overflow-hidden rounded-2xl border border-brand-line bg-white p-8 shadow-sm shadow-brand-ink/5">
+      <div className="w-full max-w-sm overflow-hidden rounded-2xl border border-brand-line bg-white p-8 shadow-elevation-1 shadow-brand-ink/5">
         <Image
           src="/brand/ufirst-wordmark.png"
           alt="ufirst"

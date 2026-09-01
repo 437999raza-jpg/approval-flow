@@ -39,7 +39,7 @@ function ToastItem({ message, leaving }: { message: string; leaving: boolean }) 
 
   return (
     <div
-      className="pointer-events-auto flex items-center gap-2.5 rounded-lg bg-slate-900 px-4 py-3 text-sm font-medium text-white shadow-lg transition-all duration-200 ease-out"
+      className="pointer-events-auto flex items-center gap-2.5 rounded-lg bg-slate-900 px-4 py-3 text-sm font-medium text-white shadow-elevation-2 transition-all duration-200 ease-out"
       style={{
         opacity: entered && !leaving ? 1 : 0,
         transform: entered && !leaving ? "translateY(0)" : "translateY(8px)",

@@ -520,7 +520,7 @@ export function Combobox({
             {filtered.length > 0 ? (
               <div
                 style={{ maxHeight: rect.maxHeight }}
-                className="overflow-y-auto rounded-md border border-slate-200 bg-white py-0.5 shadow-lg"
+                className="overflow-y-auto rounded-md border border-slate-200 bg-white py-0.5 shadow-elevation-2"
               >
                 {filtered.map((o, i) => (
                   <button
@@ -547,7 +547,7 @@ export function Combobox({
               </div>
             ) : (
               !searching && (
-                <div className="rounded-md border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-400 shadow-lg">
+                <div className="rounded-md border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-400 shadow-elevation-2">
                   {minQueryLength === 1
                     ? "Type to search…"
                     : `Type at least ${minQueryLength} characters to search…`}

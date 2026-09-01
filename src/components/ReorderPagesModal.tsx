@@ -110,7 +110,7 @@ export function ReorderPagesModal({
           onClick={() => setOpen(false)}
         >
           <div
-            className="w-full max-w-sm rounded-lg bg-white shadow-xl"
+            className="w-full max-w-sm rounded-lg bg-white shadow-elevation-3"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between border-b border-slate-200 px-5 py-3">

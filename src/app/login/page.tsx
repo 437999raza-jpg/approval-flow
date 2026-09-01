@@ -229,7 +229,7 @@ export default function LoginPage() {
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-brand-mist px-4 py-12">
-      <div className="grid w-full max-w-4xl overflow-hidden rounded-2xl border border-brand-line bg-white shadow-sm shadow-brand-ink/5 md:grid-cols-2">
+      <div className="grid w-full max-w-4xl overflow-hidden rounded-2xl border border-brand-line bg-white shadow-elevation-1 shadow-brand-ink/5 md:grid-cols-2">
         {/* Hero panel — hidden on narrow screens, the form alone still
             carries the wordmark below. */}
         <div className="relative hidden flex-col bg-gradient-to-br from-brand-ink to-brand-navy p-10 text-white md:flex">

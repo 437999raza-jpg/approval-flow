@@ -45,7 +45,11 @@ export function ApprovalStepper({
                   "flex h-7 w-7 items-center justify-center rounded-full text-xs font-medium",
                   state === "done" && "bg-emerald-500 text-white",
                   state === "rejected" && "bg-red-500 text-white",
-                  state === "current" && "bg-blue-600 text-white",
+                  // brand navy, not blue-600 (off-palette) and not brand
+                  // green (would collide with the emerald "done" state —
+                  // "where I am" and "already finished" must stay legible
+                  // as different things at a glance).
+                  state === "current" && "bg-brand-navy text-white",
                   state === "upcoming" && "bg-slate-200 text-slate-500"
                 )}
               >

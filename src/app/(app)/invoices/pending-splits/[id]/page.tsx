@@ -163,7 +163,7 @@ export default async function PendingSplitReviewPage({
               ? `Page ${group.pages[0]}`
               : `Pages ${group.pages[0]}–${group.pages[group.pages.length - 1]}`;
           return (
-            <div key={i} className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+            <div key={i} className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-elevation-1">
               {thumb ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img src={thumb} alt={`Group ${i + 1} preview`} className="h-48 w-full border-b border-slate-100 object-cover object-top" />

@@ -62,7 +62,7 @@ export function CollapsiblePane({
           type="button"
           onClick={() => setOpen(true)}
           title={`Show ${title}`}
-          className="rounded-md border border-slate-300 bg-white p-2 text-slate-700 shadow-sm hover:border-blue-400 hover:text-blue-600"
+          className="rounded-md border border-slate-300 bg-white p-2 text-slate-700 shadow-elevation-1 hover:border-blue-400 hover:text-blue-600"
         >
           <svg
             width="16"

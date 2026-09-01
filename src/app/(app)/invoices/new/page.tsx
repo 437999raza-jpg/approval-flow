@@ -73,7 +73,7 @@ export default async function NewInvoicePage() {
           <h2 className="text-sm font-semibold text-slate-700">
             Recent uploads
           </h2>
-          <ul className="mt-2 divide-y divide-slate-100 rounded-lg border border-slate-200 bg-white">
+          <ul className="mt-2 divide-y divide-slate-100 rounded-lg border border-slate-200 bg-white shadow-elevation-1">
             {recentUploads.map((u) => (
               <li key={u.id} className="px-4 py-2.5">
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">

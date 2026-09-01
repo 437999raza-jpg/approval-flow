@@ -41,7 +41,7 @@ export default async function PendingSplitsListPage({
       {(pending ?? []).length === 0 ? (
         <p className="mt-6 text-sm text-slate-400">Nothing waiting on review.</p>
       ) : (
-        <ul className="mt-6 divide-y divide-slate-200 rounded-lg border border-slate-200 bg-white">
+        <ul className="mt-6 divide-y divide-slate-200 rounded-lg border border-slate-200 bg-white shadow-elevation-1">
           {(pending ?? []).map((p) => (
             <li key={p.id}>
               <Link

@@ -191,7 +191,7 @@ export default async function StatementDetailPage({
 
         {/* Right: statement details + reconciliation. */}
         <div className="min-h-0 flex-1 overflow-y-auto p-6">
-          <p className="text-[11px] font-bold uppercase tracking-wide text-brand-green-dark">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-brand-green-dark">
             {statement.supplier_name}
           </p>
           <p className="mt-0.5 text-xs text-brand-muted">
@@ -228,7 +228,7 @@ export default async function StatementDetailPage({
               )}
 
               <section className="mt-4">
-                <div className="text-[11px] font-bold uppercase tracking-wide text-brand-muted">
+                <div className="text-[11px] font-semibold uppercase tracking-wide text-brand-muted">
                   Supplier statement details
                 </div>
                 {statement.supplier_name === "Unknown vendor" && (
@@ -240,7 +240,7 @@ export default async function StatementDetailPage({
                 <div className="mt-2 rounded-lg border border-brand-line bg-white p-4">
                   <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className="text-[11px] font-bold uppercase tracking-wide text-brand-muted">
+                      <label className="text-[11px] font-semibold uppercase tracking-wide text-brand-muted">
                         Supplier
                       </label>
                       <div className="mt-1">
@@ -267,7 +267,7 @@ export default async function StatementDetailPage({
 
               <section className="mt-6">
                 <div className="flex items-center justify-between gap-2">
-                  <div className="text-[11px] font-bold uppercase tracking-wide text-brand-muted">
+                  <div className="text-[11px] font-semibold uppercase tracking-wide text-brand-muted">
                     Reconciliation ({(lines ?? []).length})
                   </div>
                   {org.role === "admin" && (
@@ -281,7 +281,7 @@ export default async function StatementDetailPage({
                 <div className="mt-2 overflow-hidden rounded-lg border border-brand-line bg-white">
                   <table className="w-full text-sm">
                     <thead>
-                      <tr className="border-b border-brand-line bg-brand-mist text-[11px] font-bold uppercase tracking-wide text-brand-muted">
+                      <tr className="border-b border-brand-line bg-brand-mist text-[11px] font-semibold uppercase tracking-wide text-brand-muted">
                         <th className="px-4 py-2 text-left">Status</th>
                         <th className="px-4 py-2 text-left">Date</th>
                         <th className="px-4 py-2 text-left">Reference</th>
@@ -351,7 +351,7 @@ export default async function StatementDetailPage({
 
               {missingLines.length > 0 && org.role === "admin" && (
                 <section className="mt-6">
-                  <div className="mb-2 text-[11px] font-bold uppercase tracking-wide text-brand-muted">
+                  <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-brand-muted">
                     Email {statement.supplier_name} about the missing invoices
                   </div>
                   <StatementEmailDraft

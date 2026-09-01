@@ -647,7 +647,7 @@ export default async function WorkflowsPage() {
 
   return (
     <main className="mx-auto w-full max-w-4xl p-8">
-      <h1 className="text-2xl font-semibold">Approval workflows</h1>
+      <h1 className="font-display text-3xl font-extrabold tracking-tight text-brand-ink">Approval workflows</h1>
           <p className="mt-1 text-sm text-slate-500">
             Each workflow has ordered approval steps. A step can have several
             approvers, each eligible only when an invoice&apos;s Class,
@@ -715,7 +715,7 @@ export default async function WorkflowsPage() {
           {isAdmin && (
             <form
               action={createWorkflow.bind(null, org.id)}
-              className="mt-4 flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-white p-4"
+              className="mt-4 flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-white shadow-elevation-1 p-4"
             >
               <input
                 name="name"
@@ -744,7 +744,7 @@ export default async function WorkflowsPage() {
               return (
                 <section
                   key={w.id}
-                  className="rounded-lg border border-slate-200 bg-white"
+                  className="rounded-lg border border-slate-200 bg-white shadow-elevation-1"
                 >
                   <CollapsibleWorkflowSection
                     storageKey={`workflow-collapsed:${w.id}`}
@@ -796,7 +796,7 @@ export default async function WorkflowsPage() {
                   >
                   {/* Approval steps */}
                   <div className="px-4 py-3">
-                    <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">
+                    <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
                       Approval steps
                     </div>
                     <ol className="mt-2 space-y-3">
@@ -942,7 +942,7 @@ export default async function WorkflowsPage() {
 
                   {/* Workflow items (routing rules) */}
                   <div className="border-t border-slate-200 px-4 py-3">
-                    <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">
+                    <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
                       Workflow items
                     </div>
                     <div className="mt-2 space-y-2">

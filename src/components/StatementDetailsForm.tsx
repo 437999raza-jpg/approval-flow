@@ -26,7 +26,7 @@ export function StatementDetailsForm({
   return (
     <form ref={formRef} action={boundAction} className="grid grid-cols-2 gap-3">
       <div>
-        <label className="text-[11px] font-bold uppercase tracking-wide text-brand-muted">
+        <label className="text-[11px] font-semibold uppercase tracking-wide text-brand-muted">
           Statement date
         </label>
         <input
@@ -38,7 +38,7 @@ export function StatementDetailsForm({
         />
       </div>
       <div>
-        <label className="text-[11px] font-bold uppercase tracking-wide text-brand-muted">
+        <label className="text-[11px] font-semibold uppercase tracking-wide text-brand-muted">
           Outstanding balance
         </label>
         <input
@@ -51,7 +51,7 @@ export function StatementDetailsForm({
         />
       </div>
       <div className="col-span-2">
-        <label className="text-[11px] font-bold uppercase tracking-wide text-brand-muted">
+        <label className="text-[11px] font-semibold uppercase tracking-wide text-brand-muted">
           Note
         </label>
         <textarea

@@ -12,7 +12,7 @@ import { qboEnv } from "@/lib/qbo";
 import { Avatar } from "@/components/Avatar";
 import { AvatarUploadForm } from "@/components/AvatarUploadForm";
 import { AddUsersModal } from "@/components/AddUsersModal";
-import { SearchInput } from "@/components/SearchInput";
+import { MemberFilterInput } from "@/components/MemberFilterInput";
 import { InlineSelectSave } from "@/components/InlineSelectSave";
 import { InlineTextSave } from "@/components/InlineTextSave";
 import { SubmitButton } from "@/components/SubmitButton";
@@ -488,7 +488,7 @@ export default async function SettingsPage({
           height (which drifted out of sync the moment the header's own
           height changed). */}
       <StickyHeader>
-        <h1 className="text-2xl font-semibold">Settings</h1>
+        <h1 className="font-display text-3xl font-extrabold tracking-tight text-brand-ink">Settings</h1>
         <p className="mt-1 text-sm text-slate-500">
           {org.name} · you are {ROLE_LABELS[org.role]}
         </p>
@@ -496,7 +496,7 @@ export default async function SettingsPage({
         {/* In-page section jump-nav — the app-wide sidebar (AppSidebar,
             via the shared layout) covers cross-page navigation now; this
             is purely for switching between sections on THIS page. */}
-        <nav className="mt-4 flex flex-wrap gap-1.5 border-b border-slate-200 pb-4">
+        <nav className="settings-tab-nav mt-4 flex flex-wrap gap-1.5 border-b border-slate-200 pb-4">
           <a href="#profile" className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600 hover:bg-slate-200">
             My profile
           </a>
@@ -536,6 +536,23 @@ export default async function SettingsPage({
         .settings-tabs .settings-panel { display: none; }
         .settings-tabs .settings-panel:target { display: block; }
         .settings-tabs:not(:has(:target)) .settings-panel:first-of-type { display: block; }
+
+        /* Selected-tab state, driven by the same :target the panels use, so
+           the pill row can't drift out of sync with what's showing. Without
+           this every pill rendered identically no matter which panel was
+           open — the tab bar gave no indication of where you were. Brand
+           green (#57A14C at 10%) matches the sidebar's own active state. */
+        main:has(#profile:target) .settings-tab-nav a[href="#profile"],
+        main:has(#security:target) .settings-tab-nav a[href="#security"],
+        main:has(#integrations:target) .settings-tab-nav a[href="#integrations"],
+        main:has(#invoice-email:target) .settings-tab-nav a[href="#invoice-email"],
+        main:has(#billing:target) .settings-tab-nav a[href="#billing"],
+        main:has(#members:target) .settings-tab-nav a[href="#members"],
+        main:not(:has(:target)) .settings-tab-nav a[href="#profile"] {
+          background-color: rgba(87, 161, 76, 0.12);
+          color: #3E7D36;
+          font-weight: 600;
+        }
       `}</style>
 
           {/* Puts the page back where you were after a sync/save button
@@ -561,8 +578,8 @@ export default async function SettingsPage({
 
           {/* My profile */}
           <section id="profile" className="settings-panel mt-8">
-            <h2 className="text-lg font-semibold">My profile</h2>
-            <div className="mt-3 flex items-center gap-4 rounded-lg border border-slate-200 bg-white p-4">
+            <h2 className="text-xl font-semibold text-brand-ink">My profile</h2>
+            <div className="mt-3 flex items-center gap-4 rounded-lg border border-slate-200 bg-white shadow-elevation-1 p-4">
               <Avatar name={myName || user.email || "?"} photoUrl={myAvatar} size="lg" />
               <div className="flex-1">
                 <InlineTextSave
@@ -582,7 +599,7 @@ export default async function SettingsPage({
               admin-assignable; an admin can only see the status below in
               the Members table and remind someone directly). */}
           <section id="security" className="settings-panel mt-8">
-            <h2 className="text-lg font-semibold">Security</h2>
+            <h2 className="text-xl font-semibold text-brand-ink">Security</h2>
             <p className="mt-1 text-sm text-slate-500">
               Two-factor authentication for your own account.
             </p>
@@ -593,7 +610,7 @@ export default async function SettingsPage({
           <>
           {/* Integrations */}
           <section id="integrations" className="settings-panel mt-8">
-            <h2 className="text-lg font-semibold">Integrations</h2>
+            <h2 className="text-xl font-semibold text-brand-ink">Integrations</h2>
             <p className="mt-1 text-sm text-slate-500">
               Connect external apps here — connection details stay out of the
               Bill panel, which only shows sync status and links.
@@ -661,8 +678,8 @@ export default async function SettingsPage({
                 authorization, just try again.
               </div>
             )}
-            <div className="mt-3 rounded-lg border border-slate-200 bg-white p-4 text-sm">
-              <div className="text-xs font-bold uppercase tracking-wide text-slate-400">
+            <div className="mt-3 rounded-lg border border-slate-200 bg-white shadow-elevation-1 p-4 text-sm">
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
                 QuickBooks Online
               </div>
               <div className="mt-2">
@@ -725,7 +742,7 @@ export default async function SettingsPage({
               {/* Data from QuickBooks — read-only pulls */}
               <div className="mt-3 border-t border-slate-100 pt-3">
                 <div className="flex flex-wrap items-center gap-2">
-                  <div className="text-xs font-bold uppercase tracking-wide text-slate-400">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
                     Data from QuickBooks
                   </div>
                   <span className="flex-1" />
@@ -785,7 +802,7 @@ export default async function SettingsPage({
 
                     {isAdmin && qboTaxCodes && qboTaxCodes.length > 0 && (
                       <div className="mt-3 border-t border-slate-100 pt-3">
-                        <div className="text-xs font-bold uppercase tracking-wide text-slate-400">
+                        <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
                           Default tax rate for new invoices
                         </div>
                         <p className="mt-1 text-xs text-slate-500">
@@ -1025,13 +1042,13 @@ export default async function SettingsPage({
               clients change nothing), plus where a vendor's Statement
               Reconciliation reply lands. */}
           <section id="invoice-email" className="settings-panel mt-8">
-            <h2 className="text-lg font-semibold">Invoice email</h2>
+            <h2 className="text-xl font-semibold text-brand-ink">Invoice email</h2>
             <p className="mt-1 text-sm text-slate-500">
               Invoices emailed to your capture address land in the app
               automatically. The address is on our domain — your suppliers
               just send to it, and there is nothing to set up on your side.
             </p>
-            <div className="mt-3 rounded-lg border border-slate-200 bg-white p-4 text-sm">
+            <div className="mt-3 rounded-lg border border-slate-200 bg-white shadow-elevation-1 p-4 text-sm">
               {isAdmin ? (
                 <InboundEmailForm
                   domain={inboundEmailDomain}
@@ -1054,8 +1071,8 @@ export default async function SettingsPage({
             {/* Statement Reconciliation vendor emails — Flow still sends
                 from its own verified address, this only controls where a
                 vendor's reply lands. */}
-            <div className="mt-3 rounded-lg border border-slate-200 bg-white p-4 text-sm">
-              <div className="text-xs font-bold uppercase tracking-wide text-slate-400">
+            <div className="mt-3 rounded-lg border border-slate-200 bg-white shadow-elevation-1 p-4 text-sm">
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
                 Vendor email reply-to
               </div>
               <p className="mt-1 text-xs text-slate-500">
@@ -1077,7 +1094,7 @@ export default async function SettingsPage({
 
           {/* Billing & usage — lives on its own page now */}
           <section id="billing" className="settings-panel mt-8">
-            <h2 className="text-lg font-semibold">Billing &amp; usage</h2>
+            <h2 className="text-xl font-semibold text-brand-ink">Billing &amp; usage</h2>
             <p className="mt-1 text-sm text-slate-500">
               Documents processed, the suggested charge at your per-document
               rate, and the recent documents list live on the{" "}
@@ -1093,7 +1110,7 @@ export default async function SettingsPage({
           {/* Members */}
           <section id="members" className="settings-panel mt-10">
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <h2 className="text-lg font-semibold">Members</h2>
+              <h2 className="text-xl font-semibold text-brand-ink">Members</h2>
               {isAdmin && (
                 <AddUsersModal
                   inviteAction={inviteMember.bind(null, org.id)}
@@ -1102,11 +1119,11 @@ export default async function SettingsPage({
               )}
             </div>
 
-            <div className="mt-3 w-80">
-              <SearchInput defaultValue={q} />
+            <div className="mt-3">
+              <MemberFilterInput defaultValue={q} />
             </div>
 
-            <div className="mt-4 overflow-x-auto rounded-lg border border-slate-200 bg-white">
+            <div className="mt-4 overflow-x-auto rounded-lg border border-slate-200 bg-white shadow-elevation-1">
               <table className="w-full text-left text-sm">
                 <thead className="border-b border-slate-200 text-xs uppercase text-slate-500">
                   <tr>
@@ -1115,10 +1132,12 @@ export default async function SettingsPage({
                     <th className="px-4 py-3 font-medium">Role</th>
                     <th className="px-4 py-3 font-medium">Status</th>
                     <th className="px-4 py-3 font-medium">2FA</th>
-                    <th className="px-4 py-3 font-medium">Substitute</th>
-                    <th className="px-4 py-3 font-medium">Start date</th>
-                    <th className="px-4 py-3 font-medium">End date</th>
-                    <th className="px-4 py-3 font-medium">Time zone</th>
+                    {/* Substitute / Start date / End date / Time zone lived
+                        here but had no backing feature yet, so every row
+                        rendered four columns of em dashes — ~350px of dead
+                        width that pushed the table into a horizontal
+                        scrollbar. Add them back with the feature, not
+                        before it. */}
                     {isAdmin && <th className="px-4 py-3 font-medium">Actions</th>}
                   </tr>
                 </thead>
@@ -1179,10 +1198,6 @@ export default async function SettingsPage({
                           )}
                         </span>
                       </td>
-                      <td className="px-4 py-3 text-slate-400">—</td>
-                      <td className="px-4 py-3 text-slate-400">—</td>
-                      <td className="px-4 py-3 text-slate-400">—</td>
-                      <td className="px-4 py-3 text-slate-400">—</td>
                       {isAdmin && (
                         <td className="px-4 py-3">
                           {m.user_id !== user.id && (
@@ -1199,7 +1214,7 @@ export default async function SettingsPage({
                   {visibleMembers.length === 0 && (
                     <tr>
                       <td
-                        colSpan={isAdmin ? 10 : 9}
+                        colSpan={isAdmin ? 6 : 5}
                         className="px-4 py-8 text-center text-slate-400"
                       >
                         No members match &quot;{q}&quot;.

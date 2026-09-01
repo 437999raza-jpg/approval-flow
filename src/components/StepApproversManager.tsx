@@ -89,7 +89,7 @@ export function StepApproversManager({
           onClick={close}
         >
           <div
-            className="flex max-h-[85vh] w-full max-w-6xl flex-col rounded-lg bg-white shadow-xl"
+            className="flex max-h-[85vh] w-full max-w-6xl flex-col rounded-lg bg-white shadow-elevation-3"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex shrink-0 items-center gap-3 border-b border-slate-200 px-5 py-4">
@@ -122,19 +122,19 @@ export function StepApproversManager({
                 </button>
               )}
               <div className="grid grid-cols-[160px_1fr_1fr_1fr_1fr_140px] gap-x-3">
-                <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">
+                <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
                   Approver
                 </div>
-                <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">
+                <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
                   Class
                 </div>
-                <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">
+                <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
                   Category
                 </div>
-                <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">
+                <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
                   Supplier
                 </div>
-                <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">
+                <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
                   Customer
                 </div>
                 <div />

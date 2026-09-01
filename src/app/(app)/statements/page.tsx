@@ -38,10 +38,10 @@ export default async function StatementsPage() {
   const header = (
     <>
       <div>
-        <p className="text-[11px] font-bold uppercase tracking-wide text-brand-green-dark">
+        <p className="text-[11px] font-semibold uppercase tracking-wide text-brand-green-dark">
           {org.name}
         </p>
-        <h1 className="font-display text-2xl font-extrabold text-brand-ink">
+        <h1 className="font-display text-3xl font-extrabold tracking-tight text-brand-ink">
           Statement reconciliation
         </h1>
       </div>
@@ -94,7 +94,7 @@ export default async function StatementsPage() {
       )}
 
       <section className="mt-8">
-        <div className="text-[11px] font-bold uppercase tracking-wide text-brand-muted">
+        <div className="text-[11px] font-semibold uppercase tracking-wide text-brand-muted">
           Past statements
         </div>
         {(statements ?? []).length === 0 ? (

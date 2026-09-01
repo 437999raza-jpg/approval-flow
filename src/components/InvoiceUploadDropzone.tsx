@@ -184,7 +184,7 @@ export function InvoiceUploadDropzone() {
       </div>
 
       {items.length > 0 && (
-        <div className="mt-4 overflow-hidden rounded-lg border border-slate-200 bg-white">
+        <div className="mt-4 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-elevation-1">
           <div className="flex items-center justify-between border-b border-slate-100 px-4 py-2">
             <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">
               Upload queue

@@ -102,7 +102,7 @@ export function MentionComposer({
   return (
     <div className="relative min-w-0 flex-1">
       {query !== null && filtered.length > 0 && (
-        <div className="absolute bottom-full left-0 z-10 mb-1 w-56 rounded-md border border-slate-200 bg-white py-1 shadow-lg">
+        <div className="absolute bottom-full left-0 z-10 mb-1 w-56 rounded-md border border-slate-200 bg-white py-1 shadow-elevation-2">
           {filtered.map((m, i) => (
             <button
               key={m.id}

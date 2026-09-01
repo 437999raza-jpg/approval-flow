@@ -85,7 +85,7 @@ export function MultiSelect({ label, options, selected, onChange }: MultiSelectP
       </button>
 
       {open && (
-        <div className="absolute z-20 mt-1 w-80 rounded-md border border-slate-200 bg-white shadow-lg">
+        <div className="absolute z-20 mt-1 w-80 rounded-md border border-slate-200 bg-white shadow-elevation-2">
           <div className="border-b border-slate-100 p-2">
             <input
               autoFocus

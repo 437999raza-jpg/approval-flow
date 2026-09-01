@@ -85,10 +85,10 @@ export default async function BillingPage({
     <main className="mx-auto w-full max-w-3xl px-6 py-10">
       <div className="flex items-baseline justify-between gap-4">
         <div>
-          <p className="text-[11px] font-bold uppercase tracking-wide text-brand-green-dark">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-brand-green-dark">
             {org.name}
           </p>
-          <h1 className="font-display text-2xl font-extrabold text-brand-ink">
+          <h1 className="font-display text-3xl font-extrabold tracking-tight text-brand-ink">
             Billing &amp; usage
           </h1>
         </div>
@@ -124,7 +124,7 @@ export default async function BillingPage({
 
       {/* Plans */}
       <section className="mt-6">
-        <div className="text-[11px] font-bold uppercase tracking-wide text-brand-muted">
+        <div className="text-[11px] font-semibold uppercase tracking-wide text-brand-muted">
           Plan
         </div>
         <div className="mt-2 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -134,7 +134,7 @@ export default async function BillingPage({
             return (
               <div
                 key={id}
-                className={`flex flex-col rounded-xl border p-5 shadow-sm shadow-brand-ink/5 ${
+                className={`flex flex-col rounded-xl border p-5 shadow-elevation-1 shadow-brand-ink/5 ${
                   active ? "border-brand-green bg-white ring-2 ring-brand-green-light/50" : "border-brand-line bg-white"
                 }`}
               >
@@ -189,8 +189,8 @@ export default async function BillingPage({
 
       {/* Summary */}
       <div className="mt-4 grid grid-cols-2 gap-4">
-        <div className="rounded-xl border border-brand-line bg-white p-5 shadow-sm shadow-brand-ink/5">
-          <div className="text-[11px] font-bold uppercase tracking-wide text-brand-muted">
+        <div className="rounded-xl border border-brand-line bg-white p-5 shadow-elevation-1 shadow-brand-ink/5">
+          <div className="text-[11px] font-semibold uppercase tracking-wide text-brand-muted">
             This month&apos;s documents
           </div>
           <div className="mt-1.5 font-display text-3xl font-extrabold tabular-nums text-brand-ink">
@@ -202,8 +202,8 @@ export default async function BillingPage({
             </div>
           )}
         </div>
-        <div className="rounded-xl border border-brand-line bg-white p-5 shadow-sm shadow-brand-ink/5">
-          <div className="text-[11px] font-bold uppercase tracking-wide text-brand-muted">
+        <div className="rounded-xl border border-brand-line bg-white p-5 shadow-elevation-1 shadow-brand-ink/5">
+          <div className="text-[11px] font-semibold uppercase tracking-wide text-brand-muted">
             This month&apos;s charge
           </div>
           <div className="mt-1.5 font-display text-3xl font-extrabold tabular-nums text-brand-ink">
@@ -216,8 +216,8 @@ export default async function BillingPage({
 
       {/* Usage trend */}
       {chartMonths.length > 0 && (
-        <section className="mt-4 rounded-xl border border-brand-line bg-white p-5 shadow-sm shadow-brand-ink/5">
-          <div className="text-[11px] font-bold uppercase tracking-wide text-brand-muted">
+        <section className="mt-4 rounded-xl border border-brand-line bg-white p-5 shadow-elevation-1 shadow-brand-ink/5">
+          <div className="text-[11px] font-semibold uppercase tracking-wide text-brand-muted">
             Last {chartMonths.length} month{chartMonths.length === 1 ? "" : "s"}
           </div>
           <div className="mt-4 flex h-28 items-end gap-3">
@@ -240,8 +240,8 @@ export default async function BillingPage({
       )}
 
       {/* Payment */}
-      <section className="mt-4 rounded-xl border border-brand-line bg-white p-5 shadow-sm shadow-brand-ink/5">
-        <div className="text-[11px] font-bold uppercase tracking-wide text-brand-muted">
+      <section className="mt-4 rounded-xl border border-brand-line bg-white p-5 shadow-elevation-1 shadow-brand-ink/5">
+        <div className="text-[11px] font-semibold uppercase tracking-wide text-brand-muted">
           Payment
         </div>
         {stripeConfigured ? (
@@ -286,8 +286,8 @@ export default async function BillingPage({
       </section>
 
       {/* By month */}
-      <section className="mt-4 rounded-xl border border-brand-line bg-white p-5 shadow-sm shadow-brand-ink/5">
-        <div className="text-[11px] font-bold uppercase tracking-wide text-brand-muted">
+      <section className="mt-4 rounded-xl border border-brand-line bg-white p-5 shadow-elevation-1 shadow-brand-ink/5">
+        <div className="text-[11px] font-semibold uppercase tracking-wide text-brand-muted">
           By month
         </div>
         <table className="mt-3 w-full text-sm">
@@ -325,7 +325,7 @@ export default async function BillingPage({
       </section>
 
       {/* Recent documents — collapsible since this list can run long */}
-      <div className="mt-4 overflow-hidden rounded-xl border border-brand-line bg-white shadow-sm shadow-brand-ink/5">
+      <div className="mt-4 overflow-hidden rounded-xl border border-brand-line bg-white shadow-elevation-1 shadow-brand-ink/5">
         <CollapsibleSection title="Recent documents" badge={totalCount} defaultOpen={false}>
           <ul className="divide-y divide-slate-100 text-sm">
             {(events ?? []).slice(0, 50).map((e, i) => (

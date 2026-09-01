@@ -110,7 +110,7 @@ export function DocumentSearchModal({
           onClick={() => setOpen(false)}
         >
           <div
-            className="max-h-full w-full max-w-4xl overflow-y-auto rounded-lg bg-white shadow-xl"
+            className="max-h-full w-full max-w-4xl overflow-y-auto rounded-lg bg-white shadow-elevation-3"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4">

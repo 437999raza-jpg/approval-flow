@@ -10,7 +10,7 @@ export const metadata = { title: "Privacy Policy — Flow" };
 export default function PrivacyPage() {
   return (
     <main className="min-h-screen bg-brand-mist px-4 py-12">
-      <div className="mx-auto max-w-3xl overflow-hidden rounded-2xl border border-brand-line bg-white shadow-sm shadow-brand-ink/5">
+      <div className="mx-auto max-w-3xl overflow-hidden rounded-2xl border border-brand-line bg-white shadow-elevation-1 shadow-brand-ink/5">
         <div className="border-b border-brand-line p-8 sm:p-10">
           <Image
             src="/brand/ufirst-wordmark.png"

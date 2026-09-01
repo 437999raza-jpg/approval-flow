@@ -234,7 +234,7 @@ export default async function QueuePage({
             : "Nothing here yet."}
         </p>
       ) : (
-        <ul className="mt-4 divide-y divide-slate-100 rounded-lg border border-slate-200 bg-white">
+        <ul className="mt-4 divide-y divide-slate-100 rounded-lg border border-slate-200 bg-white shadow-elevation-1">
           {filtered.map((r) => (
             <li key={`${r.kind}-${r.id}`} className="px-4 py-3">
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1">

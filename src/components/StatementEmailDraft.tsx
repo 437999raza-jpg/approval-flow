@@ -52,7 +52,7 @@ export function StatementEmailDraft({
 
   return (
     <div className="rounded-lg border border-brand-line bg-white p-4">
-      <label className="text-[11px] font-bold uppercase tracking-wide text-brand-muted">
+      <label className="text-[11px] font-semibold uppercase tracking-wide text-brand-muted">
         To
       </label>
       <input
@@ -62,7 +62,7 @@ export function StatementEmailDraft({
         placeholder="vendor@example.com"
         className="mt-1 w-full rounded-md border border-brand-line px-2 py-1.5 text-sm"
       />
-      <label className="mt-3 block text-[11px] font-bold uppercase tracking-wide text-brand-muted">
+      <label className="mt-3 block text-[11px] font-semibold uppercase tracking-wide text-brand-muted">
         Subject
       </label>
       <input
@@ -71,7 +71,7 @@ export function StatementEmailDraft({
         onChange={(e) => setSubject(e.target.value)}
         className="mt-1 w-full rounded-md border border-brand-line px-2 py-1.5 text-sm"
       />
-      <label className="mt-3 block text-[11px] font-bold uppercase tracking-wide text-brand-muted">
+      <label className="mt-3 block text-[11px] font-semibold uppercase tracking-wide text-brand-muted">
         Message
       </label>
       <textarea

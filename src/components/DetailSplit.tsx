@@ -367,7 +367,7 @@ export function DetailSplit({
             type="button"
             onClick={openDocument}
             title="Show document"
-            className="rounded-md border border-slate-300 bg-white p-2 text-slate-700 shadow-sm hover:border-blue-400 hover:text-blue-600"
+            className="rounded-md border border-slate-300 bg-white p-2 text-slate-700 shadow-elevation-1 hover:border-blue-400 hover:text-blue-600"
           >
             <svg
               width="16"
@@ -459,7 +459,7 @@ export function DetailSplit({
             type="button"
             onClick={() => setBillOpen(true)}
             title="Show bill"
-            className="rounded-md border border-slate-300 bg-white p-2 text-slate-700 shadow-sm hover:border-blue-400 hover:text-blue-600"
+            className="rounded-md border border-slate-300 bg-white p-2 text-slate-700 shadow-elevation-1 hover:border-blue-400 hover:text-blue-600"
           >
             <svg
               width="16"

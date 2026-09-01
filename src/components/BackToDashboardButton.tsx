@@ -8,7 +8,7 @@ export function BackToDashboardButton({ className = "" }: { className?: string }
   return (
     <Link
       href="/dashboard"
-      className={`inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-600 shadow-sm transition-colors duration-150 hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900 ${className}`}
+      className={`inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-600 shadow-elevation-1 transition-colors duration-150 hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900 ${className}`}
     >
       <svg
         width="14"

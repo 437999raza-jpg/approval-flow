@@ -61,7 +61,7 @@ export function StatementUploadForm({
     <div className="rounded-lg border border-brand-line bg-white p-4">
       <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
         <div>
-          <label className="text-[11px] font-bold uppercase tracking-wide text-brand-muted">
+          <label className="text-[11px] font-semibold uppercase tracking-wide text-brand-muted">
             Statement file
           </label>
           <div className="mt-1 flex items-center gap-2">
@@ -94,7 +94,7 @@ export function StatementUploadForm({
         </button>
       </div>
       <div className="mt-3 max-w-xs">
-        <label className="text-[11px] font-bold uppercase tracking-wide text-brand-muted">
+        <label className="text-[11px] font-semibold uppercase tracking-wide text-brand-muted">
           Vendor (optional — only if the statement doesn&apos;t show one clearly)
         </label>
         <Combobox

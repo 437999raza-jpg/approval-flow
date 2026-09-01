@@ -13,7 +13,7 @@ export function AppPageLoading({
         <div className="mt-3 h-4 w-96 max-w-full rounded-full bg-slate-100" />
       </div>
 
-      <div className="mt-8 overflow-hidden rounded-xl border border-brand-line bg-white shadow-sm">
+      <div className="mt-8 overflow-hidden rounded-xl border border-brand-line bg-white shadow-elevation-1">
         <div className="border-b border-brand-line px-5 py-4">
           <div className="text-sm font-semibold text-brand-ink">{title}</div>
           <p className="mt-1 text-sm text-brand-muted">{description}</p>

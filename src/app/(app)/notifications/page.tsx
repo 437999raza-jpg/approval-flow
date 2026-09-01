@@ -97,7 +97,7 @@ export default async function NotificationsPage() {
               <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
                 Unread ({unread.length})
               </h2>
-              <ul className="mt-2 divide-y divide-slate-200 rounded-lg border border-slate-200 bg-white">
+              <ul className="mt-2 divide-y divide-slate-200 rounded-lg border border-slate-200 bg-white shadow-elevation-1">
                 {unread.map(renderRow)}
               </ul>
             </div>
@@ -107,7 +107,7 @@ export default async function NotificationsPage() {
               <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-400">
                 Done ({done.length})
               </h2>
-              <ul className="mt-2 divide-y divide-slate-200 rounded-lg border border-slate-200 bg-white">
+              <ul className="mt-2 divide-y divide-slate-200 rounded-lg border border-slate-200 bg-white shadow-elevation-1">
                 {done.map(renderRow)}
               </ul>
             </div>

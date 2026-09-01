@@ -138,7 +138,7 @@ export function SecurityMfaSection({ initialEnabled }: { initialEnabled: boolean
   };
 
   return (
-    <div className="mt-3 rounded-lg border border-slate-200 bg-white p-4">
+    <div className="mt-3 rounded-lg border border-slate-200 bg-white shadow-elevation-1 p-4">
       {step === "idle" && (
         <div className="flex items-center justify-between gap-3">
           <div className="text-sm">

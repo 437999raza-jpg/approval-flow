@@ -198,7 +198,7 @@ function InvoiceDetailLoading({ invoice }: { invoice: InvoiceListRow }) {
       : "Amount pending";
   return (
     <div className="flex flex-1 items-center justify-center bg-slate-50 p-6">
-      <div className="w-full max-w-2xl overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+      <div className="w-full max-w-2xl overflow-hidden rounded-xl border border-slate-200 bg-white shadow-elevation-1">
         <div className="border-b border-slate-100 px-6 py-5">
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0">
@@ -239,7 +239,7 @@ function InvoiceDetailUnavailable({ invoice, error }: { invoice: InvoiceListRow;
   const message = error instanceof Error ? error.message : "The invoice details could not be loaded.";
   return (
     <div className="flex flex-1 items-center justify-center bg-slate-50 p-6">
-      <div className="max-w-md rounded-xl border border-rose-100 bg-white p-6 text-center shadow-sm">
+      <div className="max-w-md rounded-xl border border-rose-100 bg-white p-6 text-center shadow-elevation-1">
         <div className="text-sm font-semibold text-slate-900">Couldn&apos;t open this invoice</div>
         <p className="mt-2 text-sm text-slate-500">
           {invoice.vendor_name ?? invoice.file_name} is still in the list, but its full detail record did not load.
@@ -616,18 +616,27 @@ export function DashboardClient({ initialListData }: { initialListData: Dashboar
                   key={item.key}
                   type="button"
                   onClick={() => setView(item.key)}
+                  // This list and the app nav below it used to share the
+                  // exact same green-tint active style, so the sidebar
+                  // showed two "you are here" states at once (e.g. "All
+                  // invoices" AND "Dashboard"). Green now means one thing —
+                  // which page you're on — and the view filter uses a
+                  // quieter selected treatment (brand surface + a green
+                  // edge) for which slice you're looking at. The
+                  // transparent border on every item keeps the label from
+                  // shifting 2px when selection moves.
                   className={clsx(
-                    "flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm transition-colors duration-150",
+                    "flex w-full items-center justify-between rounded-lg border-l-2 px-3 py-2 text-left text-sm transition-colors duration-150",
                     view === item.key
-                      ? "bg-brand-green/10 font-medium text-brand-green-dark"
-                      : "text-brand-muted hover:bg-brand-mist hover:text-brand-ink"
+                      ? "border-brand-green bg-brand-mist font-semibold text-brand-ink"
+                      : "border-transparent text-brand-muted hover:bg-brand-mist hover:text-brand-ink"
                   )}
                 >
                   {item.label}
                   <span
                     className={clsx(
                       "rounded-full px-1.5 py-0.5 text-[11px] font-semibold tabular-nums",
-                      view === item.key ? "bg-brand-green/15 text-brand-green-dark" : "bg-slate-100 text-slate-500"
+                      view === item.key ? "bg-white text-brand-ink" : "bg-slate-100 text-slate-500"
                     )}
                   >
                     {counts[item.key]}
@@ -686,12 +695,12 @@ export function DashboardClient({ initialListData }: { initialListData: Dashboar
                 </div>
               )}
               {canReviewNow && (
-                <Link href="/queue" className="rounded-md bg-brand-green px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-brand-green-dark">
+                <Link href="/queue" className="rounded-md bg-brand-green px-4 py-2 text-sm font-medium text-white shadow-elevation-1 hover:bg-brand-green-dark">
                   Queue
                 </Link>
               )}
               {!isAuditor && (
-                <Link href="/invoices/new" className="rounded-md bg-brand-green px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-brand-green-dark">
+                <Link href="/invoices/new" className="rounded-md bg-brand-green px-4 py-2 text-sm font-medium text-white shadow-elevation-1 hover:bg-brand-green-dark">
                   + Add invoice
                 </Link>
               )}

@@ -572,7 +572,7 @@ export function BillPanel({
   return (
     <div className="flex h-full w-full flex-col border-r border-slate-200 bg-white">
       <div className="flex flex-none items-center justify-between border-b border-slate-200 px-4 py-2">
-        <span className="text-xs font-bold uppercase tracking-wide text-slate-400">
+        <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">
           Bill
         </span>
         <button
@@ -604,7 +604,7 @@ export function BillPanel({
         <div className="border-b border-slate-200 bg-slate-50 px-6 py-4">
           {admin.visible && (
             <div className="mb-4 border-b border-slate-200 pb-4">
-              <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
                 Admin
               </div>
               <div className="mt-2 flex flex-wrap items-center gap-x-6 gap-y-2">
@@ -666,7 +666,7 @@ export function BillPanel({
               on one baseline regardless of how the copy above them wraps. */}
           <div className="grid grid-cols-2 items-stretch gap-6">
             <div className="flex flex-col">
-              <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
                 Instructions for accounting
               </div>
               <div className="flex-1">
@@ -682,7 +682,7 @@ export function BillPanel({
             </div>
 
             <div className="flex flex-col">
-              <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
                 Status &amp; approval
               </div>
               <div className="flex flex-1 flex-col">
@@ -865,14 +865,14 @@ export function BillPanel({
                         <div className="mt-auto flex gap-2 pt-3">
                           {invoice.status === "on_review" && canReview && (
                             <form action={approval.reviewComplete} className="flex-1">
-                              <SubmitButton className="w-full rounded-md border border-transparent bg-blue-600 px-4 py-2 text-center text-sm font-semibold text-white hover:bg-blue-700">
+                              <SubmitButton className="w-full rounded-md border border-transparent bg-brand-green px-4 py-2 text-center text-sm font-semibold text-white hover:bg-brand-green-dark">
                                 Review Complete
                               </SubmitButton>
                             </form>
                           )}
                           {approval.canUnhold && (
                             <form action={approval.unhold} className="flex-1">
-                              <SubmitButton className="w-full rounded-md border border-transparent bg-blue-600 px-4 py-2 text-center text-sm font-semibold text-white hover:bg-blue-700">
+                              <SubmitButton className="w-full rounded-md border border-transparent bg-brand-green px-4 py-2 text-center text-sm font-semibold text-white hover:bg-brand-green-dark">
                                 Unhold
                               </SubmitButton>
                             </form>
@@ -906,7 +906,7 @@ export function BillPanel({
                             <form action={admin.syncToQbo} className="flex-1">
                               <SubmitButton
                                 disabled={!qboConnected}
-                                className="w-full rounded-md border border-transparent bg-blue-600 px-4 py-2 text-center text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+                                className="w-full rounded-md border border-transparent bg-brand-green px-4 py-2 text-center text-sm font-semibold text-white hover:bg-brand-green-dark disabled:opacity-50"
                               >
                                 {qboConnected
                                   ? invoice.qbo_sync_status === "error"
@@ -1124,7 +1124,7 @@ export function BillPanel({
             per-line (a bill can split across several projects) rather than
             a single invoice-level field, so it lives here, not above. */}
         <div className="border-b border-slate-200 px-6 py-4">
-          <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">
+          <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
             Category details
           </div>
           {!readOnly && selectedLineIds.size > 0 && (
@@ -1185,7 +1185,7 @@ export function BillPanel({
                     type="button"
                     disabled={bulkSetting}
                     onClick={handleBulkSave}
-                    className="rounded-md bg-blue-600 px-2.5 py-1 font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+                    className="rounded-md bg-brand-green px-2.5 py-1 font-medium text-white hover:bg-brand-green-dark disabled:opacity-50"
                   >
                     {bulkSetting ? "Saving…" : "Save"}
                   </button>

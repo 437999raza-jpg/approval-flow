@@ -33,7 +33,7 @@ export function CollapsibleSection({
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
-        className="flex w-full cursor-pointer select-none items-center justify-between gap-2 bg-slate-50 px-4 py-3 text-xs font-bold uppercase tracking-wide text-slate-800 hover:bg-slate-100"
+        className="flex w-full cursor-pointer select-none items-center justify-between gap-2 bg-slate-50 px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-800 hover:bg-slate-100"
       >
         <span className="flex min-w-0 items-center gap-2">
           <span className="truncate">{title}</span>

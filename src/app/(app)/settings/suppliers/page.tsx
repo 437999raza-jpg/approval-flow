@@ -147,7 +147,7 @@ export default async function SuppliersSettingsPage({
           <Link href="/settings" className="text-sm text-blue-600 hover:underline">
             ← Settings
           </Link>
-          <h1 className="mt-1 text-2xl font-semibold">Suppliers</h1>
+          <h1 className="mt-1 font-display text-3xl font-extrabold tracking-tight text-brand-ink">Suppliers</h1>
           <p className="mt-1 text-sm text-slate-500">
             Read-only from QuickBooks — Flow never creates suppliers. Set
             defaults here once and every future invoice from that supplier
@@ -161,7 +161,7 @@ export default async function SuppliersSettingsPage({
         </div>
       </div>
 
-      <div className="mt-6 overflow-x-auto rounded-lg border border-slate-200 bg-white">
+      <div className="mt-6 overflow-x-auto rounded-lg border border-slate-200 bg-white shadow-elevation-1">
         <table className="w-full min-w-[950px] border-collapse">
           <thead>
             <tr className="border-b border-slate-200 bg-slate-50 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-400">

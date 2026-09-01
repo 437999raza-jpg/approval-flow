@@ -34,7 +34,7 @@ export function AddUsersModal({
           onClick={() => setOpen(false)}
         >
           <div
-            className="w-full max-w-md rounded-lg bg-white shadow-xl"
+            className="w-full max-w-md rounded-lg bg-white shadow-elevation-3"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4">
