@@ -4,7 +4,7 @@ import { getCurrentOrg } from "@/lib/current-org";
 import { SubmitButton } from "@/components/SubmitButton";
 import { DirtySaveButton } from "@/components/DirtySaveButton";
 import { categoryDisplayName } from "@/lib/qbo";
-import { termCopy, detectRetainageLines, type RetainageTerm } from "@/lib/retainage";
+import { termCopy, isRetainageAccountLine, type RetainageTerm } from "@/lib/retainage";
 import { HoldbackReport } from "@/components/HoldbackReport";
 import {
   saveRetainageSettings,
@@ -102,7 +102,7 @@ export default async function HoldbackPage({
   // account, and report them — no scan to run first.
   const { data: invoices } = await supabase
     .from("invoices")
-    .select("id, invoice_number, vendor_name, supplier_id, project_id, currency")
+    .select("id, invoice_number, vendor_name, supplier_id, project_id, currency, bill_date, due_date, qbo_payment_status, status")
     .eq("organization_id", org.id)
     .limit(5000);
 
@@ -129,26 +129,39 @@ export default async function HoldbackPage({
   const projectName = new Map((projects ?? []).map((p) => [p.id, p.name]));
   const defaultRate = Number(orgRow?.retainage_default_rate) || null;
 
+  // Every line coded to the holdback account, both directions.
+  //
+  // Withholding posts a credit (a negative line on the bill); the sub's
+  // later invoice claiming it back posts the matching debit (positive).
+  // Flipping the sign here puts it in the same orientation as the QBO
+  // report: positive = still held from them, negative = they invoiced it
+  // back. A vendor netting to zero has invoiced for everything.
+  //
+  // Detection is not used for the report — that pairs deductions to work
+  // lines, which is only needed to infer a rate. The account coding
+  // alone decides what belongs here.
   const rows = [];
   for (const inv of invoices ?? []) {
-    for (const hit of detectRetainageLines(
-      linesByInvoice.get(inv.id) ?? [],
-      defaultRate,
-      accountRef
-    )) {
-      const state = ledgerByLine.get(hit.lineItemId);
+    for (const l of linesByInvoice.get(inv.id) ?? []) {
+      if (!isRetainageAccountLine(l.category, accountLabel, account?.acct_num)) continue;
+      const amount = Number(l.amount);
+      if (!Number.isFinite(amount) || amount === 0) continue;
+      const state = ledgerByLine.get(l.id);
       if (state?.status === "released" || state?.status === "written_off") continue;
-      const projectId = hit.projectId ?? inv.project_id ?? null;
+      const projectId = l.project_id ?? inv.project_id ?? null;
       rows.push({
-        id: hit.lineItemId,
+        id: l.id,
         supplierId: inv.supplier_id ?? inv.vendor_name ?? "unknown",
         supplierName: inv.vendor_name ?? "Unknown supplier",
         projectId,
         projectName: projectId ? projectName.get(projectId) ?? null : null,
         invoiceNumber: inv.invoice_number,
-        amount: hit.amount,
-        rate: hit.rate,
-        status: state?.status ?? "accrued",
+        billDate: inv.bill_date,
+        dueDate: inv.due_date,
+        // Comes from QuickBooks via the payment-sync cron, so it stays
+        // null until the bill has actually been pushed there.
+        paidStatus: inv.qbo_payment_status,
+        amount: -amount,
       });
     }
   }
