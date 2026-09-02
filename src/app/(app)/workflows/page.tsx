@@ -904,15 +904,24 @@ export default async function WorkflowsPage() {
                                     <option value="all">Require all matching approvers</option>
                                     <option value="any">Require any one approver</option>
                                   </select>
-                                  <input
-                                    type="number"
-                                    name="deadline_days"
-                                    min={1}
-                                    defaultValue={s.deadline_days ?? ""}
-                                    placeholder="Deadline (days)"
-                                    title="Days before this step is flagged overdue in the daily digest and, after the grace period, escalated. Leave blank for no deadline."
-                                    className="w-32 rounded-md border border-slate-300 px-2 py-1 text-xs"
-                                  />
+                                  {/* Real label, not a placeholder: the
+                                      placeholder disappeared the moment a
+                                      value was typed, so a configured row
+                                      just showed a bare "3" with nothing
+                                      saying what it measured. */}
+                                  <label className="flex items-center gap-1.5 whitespace-nowrap text-xs text-brand-muted">
+                                    Overdue after
+                                    <input
+                                      type="number"
+                                      name="deadline_days"
+                                      min={1}
+                                      defaultValue={s.deadline_days ?? ""}
+                                      placeholder="—"
+                                      title="Days on this step before it's flagged overdue in the daily digest and, after the grace period, escalated. Leave blank for no deadline."
+                                      className="w-14 rounded-md border border-slate-300 px-2 py-1 text-center text-xs tabular-nums text-brand-ink"
+                                    />
+                                    days
+                                  </label>
                                   <select
                                     name="escalate_to_user_id"
                                     defaultValue={s.escalate_to_user_id ?? ""}
@@ -1015,14 +1024,18 @@ export default async function WorkflowsPage() {
                           <option value="all">Require all matching approvers</option>
                           <option value="any">Require any one approver</option>
                         </select>
-                        <input
-                          type="number"
-                          name="deadline_days"
-                          min={1}
-                          placeholder="Deadline (days)"
-                          title="Days before this step is flagged overdue in the daily digest and, after a grace period, escalated to admins. Leave blank for no deadline."
-                          className="w-32 rounded-md border border-slate-300 px-2 py-1 text-xs"
-                        />
+                        <label className="flex items-center gap-1.5 whitespace-nowrap text-xs text-brand-muted">
+                          Overdue after
+                          <input
+                            type="number"
+                            name="deadline_days"
+                            min={1}
+                            placeholder="—"
+                            title="Days on this step before it's flagged overdue in the daily digest and, after the grace period, escalated. Leave blank for no deadline."
+                            className="w-14 rounded-md border border-slate-300 px-2 py-1 text-center text-xs tabular-nums text-brand-ink"
+                          />
+                          days
+                        </label>
                         <SubmitButton className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">
                           Add step
                         </SubmitButton>
