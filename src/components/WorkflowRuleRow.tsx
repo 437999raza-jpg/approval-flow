@@ -9,6 +9,7 @@ import {
   type RuleType,
 } from "@/lib/workflow-rules";
 import { SubmitButton } from "@/components/SubmitButton";
+import { DirtySaveButton } from "@/components/DirtySaveButton";
 
 // One editable workflow rule row (ApprovalMax-style "workflow item"):
 // field (Total Amount / Requester / Supplier / …) + operator + value(s).
@@ -96,9 +97,11 @@ export function WorkflowRuleRow({
             className={`${inputCls} w-36`}
           />
         )}
-        <SubmitButton className="rounded-md bg-slate-800 px-2.5 py-1 text-xs font-medium text-white hover:bg-slate-700">
-          {isNew ? "Add item" : "Save"}
-        </SubmitButton>
+        <DirtySaveButton
+          className="px-2.5"
+          saveLabel={isNew ? "Add item" : "Save"}
+          savedLabel={isNew ? "Add item" : "Saved"}
+        />
       </form>
       {!isNew && deleteRule && (
         <form action={deleteRule.bind(null, ruleId)}>

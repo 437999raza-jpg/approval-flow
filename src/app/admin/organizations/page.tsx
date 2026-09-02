@@ -5,6 +5,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { isPlatformAdmin } from "@/lib/platform-admin";
 import { createOrganizationAction, joinOrganizationAction, extendTrialAction, setOrgPlanAction } from "@/lib/admin-actions";
 import { SubmitButton } from "@/components/SubmitButton";
+import { DirtySaveButton } from "@/components/DirtySaveButton";
 import { isTrialActive, PLAN_ORDER, PLANS } from "@/lib/plans";
 import { BackToDashboardButton } from "@/components/BackToDashboardButton";
 
@@ -199,12 +200,7 @@ export default async function AdminOrganizationsPage({
                         </option>
                       ))}
                     </select>
-                    <button
-                      type="submit"
-                      className="rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
-                    >
-                      Save
-                    </button>
+                    <DirtySaveButton />
                   </form>
                 </td>
                 <td className="py-1.5 pr-3 text-slate-500">

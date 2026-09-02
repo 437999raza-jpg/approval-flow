@@ -9,6 +9,7 @@ import { WorkflowRuleRow } from "@/components/WorkflowRuleRow";
 import { StepApproversManager } from "@/components/StepApproversManager";
 import { CollapsibleWorkflowSection } from "@/components/CollapsibleWorkflowSection";
 import { SubmitButton } from "@/components/SubmitButton";
+import { DirtySaveButton } from "@/components/DirtySaveButton";
 import type { RowCondition as StepApproverCondition } from "@/components/StepApproverMatrixRow";
 import {
   RULE_TYPE_VALUES,
@@ -724,9 +725,7 @@ export default async function WorkflowsPage() {
               <span className="text-sm text-brand-ink">
                 day(s) after its own deadline passes.
               </span>
-              <SubmitButton className="rounded-md bg-brand-green px-3 py-1 text-xs font-medium text-white hover:bg-brand-green-dark">
-                Save
-              </SubmitButton>
+              <DirtySaveButton className="px-3" />
               <span className="w-full text-xs text-brand-muted">
                 The daily digest already flags a bill as overdue the moment its
                 step deadline passes. This is the extra wait before the
@@ -858,9 +857,7 @@ export default async function WorkflowsPage() {
                               />
                               default
                             </label>
-                            <SubmitButton className="rounded-md bg-slate-800 px-2 py-1 text-xs font-medium text-white hover:bg-slate-700">
-                              Save
-                            </SubmitButton>
+                            <DirtySaveButton />
                           </form>
                           <form action={deleteWorkflow.bind(null, w.id)}>
                             <SubmitButton className="text-xs text-red-500 hover:underline">
@@ -929,9 +926,12 @@ export default async function WorkflowsPage() {
                                       </option>
                                     ))}
                                   </select>
-                                  <SubmitButton className="rounded-md bg-slate-800 px-2 py-1 text-xs font-medium text-white hover:bg-slate-700">
-                                    Save
-                                  </SubmitButton>
+                                  {/* Greys out to "Saved" until something
+                                      actually changes — this row's Save
+                                      used to look identical either way,
+                                      so typing the step deadlines and
+                                      moving on silently discarded them. */}
+                                  <DirtySaveButton />
                                 </form>
                               ) : (
                                 <span className="text-sm font-medium text-slate-700">

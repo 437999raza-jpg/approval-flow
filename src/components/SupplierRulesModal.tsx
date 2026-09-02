@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Combobox } from "@/components/Combobox";
-import { SubmitButton } from "@/components/SubmitButton";
+import { DirtySaveButton } from "@/components/DirtySaveButton";
 
 export interface SupplierDefaultsValues {
   category: string;
@@ -179,9 +179,7 @@ export function SupplierRulesModal({
                 >
                   Cancel
                 </button>
-                <SubmitButton className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700">
-                  Save
-                </SubmitButton>
+                <DirtySaveButton className="px-4 py-2 text-sm" />
               </div>
             </form>
           </div>

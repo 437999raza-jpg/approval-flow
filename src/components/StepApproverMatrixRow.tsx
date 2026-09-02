@@ -4,6 +4,7 @@ import { useState } from "react";
 import { ConditionCell } from "@/components/ConditionCell";
 import type { TagOption } from "@/components/TagInput";
 import { SubmitButton } from "@/components/SubmitButton";
+import { DirtySaveButton } from "@/components/DirtySaveButton";
 
 export interface RowCondition {
   field: "class" | "customer" | "supplier" | "category";
@@ -189,9 +190,11 @@ export function StepApproverMatrixRow({
           />
           default
         </label>
-        <SubmitButton className="rounded-md bg-slate-800 px-2 py-1 text-[11px] font-medium text-white hover:bg-slate-700">
-          {isNew ? "Add" : "Save"}
-        </SubmitButton>
+        <DirtySaveButton
+          className="text-[11px]"
+          saveLabel={isNew ? "Add" : "Save"}
+          savedLabel={isNew ? "Add" : "Saved"}
+        />
         {!isNew && deleteApprover && (
           <SubmitButton
             formAction={deleteApprover.bind(null, approverRowId)}
