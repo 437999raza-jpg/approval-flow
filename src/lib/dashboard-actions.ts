@@ -3556,6 +3556,7 @@ export async function syncQboSuppliers() {
             .replace(/[^a-z0-9]+/g, " ")
             .trim(),
           active: s.active,
+          email: s.email,
           synced_at: new Date().toISOString(),
         })),
         { onConflict: "organization_id,qbo_vendor_id" }
@@ -3789,6 +3790,7 @@ export async function refreshQboData() {
           name: s.name,
           name_normalized: s.name.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim(),
           active: s.active,
+          email: s.email,
           synced_at: new Date().toISOString(),
         })),
         { onConflict: "organization_id,qbo_vendor_id" }

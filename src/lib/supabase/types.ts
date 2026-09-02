@@ -61,6 +61,12 @@ export interface Database {
           custom_plan: unknown;
           // House account (migration 0096): full access, never billed.
           is_internal: boolean;
+          // Retainage / holdback config (migration 0097). retainage_term
+          // is the word this org's people see; the columns are named
+          // neutrally because the concept has three names by market.
+          retainage_term: "holdback" | "retainage" | "retention";
+          retainage_default_rate: number | null;
+          retainage_account_qbo_id: string | null;
           setup_fee_usd: number | null;
           setup_fee_label: string | null;
           setup_fee_paid_at: string | null;
@@ -103,6 +109,11 @@ export interface Database {
           qbo_id: string | null;
           source: "manual" | "qbo";
           active: boolean;
+          // Retainage per job (migration 0097): a rate overriding the org
+          // default, and the two dates that decide when it's releasable.
+          retainage_rate: number | null;
+          substantial_performance_at: string | null;
+          retainage_released_at: string | null;
           created_at: string;
           first_seen_at: string;
         };
@@ -110,6 +121,31 @@ export interface Database {
           Database["public"]["Tables"]["projects"]["Row"]
         > & { organization_id: string; name: string };
         Update: Partial<Database["public"]["Tables"]["projects"]["Row"]>;
+        Relationships: [];
+      };
+      invoice_retainage: {
+        Row: {
+          id: string;
+          organization_id: string;
+          invoice_id: string;
+          project_id: string | null;
+          supplier_id: string | null;
+          amount: number;
+          rate: number | null;
+          // Did the sub show the deduction on their invoice, or did we
+          // withhold it ourselves? Different conversations six months on.
+          source: "billed" | "withheld";
+          status: "accrued" | "claim_requested" | "released" | "written_off";
+          claim_requested_at: string | null;
+          released_at: string | null;
+          release_invoice_id: string | null;
+          notes: string | null;
+          created_at: string;
+        };
+        Insert: Partial<
+          Database["public"]["Tables"]["invoice_retainage"]["Row"]
+        > & { organization_id: string; invoice_id: string; amount: number };
+        Update: Partial<Database["public"]["Tables"]["invoice_retainage"]["Row"]>;
         Relationships: [];
       };
       approval_workflow_rules: {
@@ -504,6 +540,9 @@ export interface Database {
           name: string;
           name_normalized: string;
           active: boolean;
+          // From QBO's Vendor.PrimaryEmailAddr — needed to ask a
+          // subcontractor to invoice for their retainage (migration 0097).
+          email: string | null;
           synced_at: string;
           integration: string;
           first_seen_at: string;

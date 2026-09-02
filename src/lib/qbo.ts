@@ -183,6 +183,10 @@ export interface QboSupplier {
   qboVendorId: string;
   name: string; // QBO DisplayName
   active: boolean;
+  // Needed to ask a subcontractor to invoice for their retainage — see
+  // src/lib/retainage.ts. QBO nests it as PrimaryEmailAddr.Address, and
+  // plenty of vendor records simply don't have one.
+  email: string | null;
 }
 
 export async function listSuppliers(
@@ -194,7 +198,7 @@ export async function listSuppliers(
   let startPosition = 1;
   while (all.length < limit) {
     const pageSize = Math.min(1000, limit - all.length);
-    const q = `select Id, DisplayName, Active from Vendor where Active = true order by DisplayName startposition ${startPosition} maxresults ${pageSize}`;
+    const q = `select Id, DisplayName, PrimaryEmailAddr, Active from Vendor where Active = true order by DisplayName startposition ${startPosition} maxresults ${pageSize}`;
     const res = await qboFetch(conn, `/query?query=${encodeURIComponent(q)}`);
     if (!res.ok) {
       const body = await res.text();
@@ -204,7 +208,12 @@ export async function listSuppliers(
     }
     const json = (await res.json()) as {
       QueryResponse?: {
-        Vendor?: { Id: string; DisplayName?: string; Active?: boolean }[];
+        Vendor?: {
+          Id: string;
+          DisplayName?: string;
+          PrimaryEmailAddr?: { Address?: string };
+          Active?: boolean;
+        }[];
       };
     };
     const rows = json.QueryResponse?.Vendor ?? [];
@@ -215,6 +224,7 @@ export async function listSuppliers(
         qboVendorId: v.Id,
         name: v.DisplayName ?? "",
         active: v.Active ?? true,
+        email: v.PrimaryEmailAddr?.Address?.trim() || null,
       });
     }
     if (rows.length < pageSize) break;
