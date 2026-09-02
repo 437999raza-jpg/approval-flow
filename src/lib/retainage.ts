@@ -243,14 +243,42 @@ export interface DetectedRetainage {
   matchesExpected: boolean;
 }
 
+// Definitive detection: the line is coded to the org's holdback account.
+//
+// This beats every heuristic below it. Fluid codes the deduction line to
+// "2-1031 - HB Payable" — the same account configured on the settings —
+// and a line posted to the holdback account IS holdback, by definition.
+// No wording to guess at and no ratio to check: on Senoz 4564 as it now
+// stands, both lines have a null description and the category is the
+// only thing that identifies which is which.
+//
+// invoice_line_items.category holds the display string QBO shows
+// ("2-1031 - HB Payable"), so match on that, and fall back to the bare
+// account number for a line coded before the name was edited.
+export function isRetainageAccountLine(
+  category: string | null | undefined,
+  accountLabel: string | null | undefined,
+  accountNumber?: string | null
+): boolean {
+  if (!category) return false;
+  const c = category.trim().toLowerCase();
+  if (!c) return false;
+  if (accountLabel && c === accountLabel.trim().toLowerCase()) return true;
+  const num = (accountNumber ?? "").trim().toLowerCase();
+  if (num && (c === num || c.startsWith(`${num} `) || c.startsWith(`${num}-`))) return true;
+  return false;
+}
+
 export function detectRetainageLines(
   lines: readonly {
     id: string;
     description: string | null;
+    category?: string | null;
     amount: number | string | null;
     project_id?: string | null;
   }[],
-  expectedRate: number | null
+  expectedRate: number | null,
+  account?: { label: string | null; number: string | null }
 ): DetectedRetainage[] {
   const found: DetectedRetainage[] = [];
   let lastPositive: { amount: number; projectId: string | null } | null = null;
@@ -259,12 +287,27 @@ export function detectRetainageLines(
     const amount = Number(line.amount);
     if (!Number.isFinite(amount)) continue;
 
+    const codedToAccount = isRetainageAccountLine(
+      line.category,
+      account?.label,
+      account?.number
+    );
+
+    // A positive line is work — unless it's coded to the holdback
+    // account, in which case it's a release, not something to withhold
+    // against. Either way it isn't the "line above" for a deduction.
     if (amount > 0) {
-      lastPositive = { amount, projectId: line.project_id ?? null };
+      if (!codedToAccount) {
+        lastPositive = { amount, projectId: line.project_id ?? null };
+      }
       continue;
     }
     if (amount >= 0) continue;
-    if (!looksLikeRetainageLine(line.description)) continue;
+
+    // The account is definitive; the wording is only a fallback for
+    // bills where nobody coded the line. Senoz 4564 has null
+    // descriptions on both lines, so wording alone would find nothing.
+    if (!codedToAccount && !looksLikeRetainageLine(line.description)) continue;
     if (!lastPositive) continue; // a deduction with nothing above it isn't a pair
 
     const pair = pairWithPrecedingLine(lastPositive.amount, amount, expectedRate);
@@ -275,7 +318,9 @@ export function detectRetainageLines(
       amount: pair.retainageAmount,
       rate: pair.impliedRate,
       grossAmount: pair.grossAmount,
-      projectId: lastPositive.projectId,
+      // The deduction's own project wins when it has one — on a coded
+      // bill both lines carry it — falling back to the work line above.
+      projectId: line.project_id ?? lastPositive.projectId,
       matchesExpected: pair.matchesExpected,
     });
   }

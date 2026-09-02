@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentOrg } from "@/lib/current-org";
 import { sendHoldbackClaimEmail } from "@/lib/notify";
+import { categoryDisplayName } from "@/lib/qbo";
 import {
   detectRetainageLines,
   resolveRetainageRate,
@@ -139,9 +140,25 @@ export async function rescanRetainage(): Promise<void> {
 
   const { data: orgRow } = await supabase
     .from("organizations")
-    .select("retainage_default_rate")
+    .select("retainage_default_rate, retainage_account_qbo_id")
     .eq("id", org.id)
     .single();
+
+  // The holdback account is how a line is actually identified — Fluid
+  // codes the deduction to "2-1031 - HB Payable" and leaves the
+  // description empty. Resolve its display label once here rather than
+  // per line.
+  const { data: account } = orgRow?.retainage_account_qbo_id
+    ? await supabase
+        .from("qbo_categories")
+        .select("acct_num, name")
+        .eq("organization_id", org.id)
+        .eq("qbo_account_id", orgRow.retainage_account_qbo_id)
+        .maybeSingle()
+    : { data: null };
+  const accountRef = account
+    ? { label: categoryDisplayName({ acctNum: account.acct_num, name: account.name }), number: account.acct_num }
+    : undefined;
 
   const { data: subcontractors } = await supabase
     .from("suppliers")
@@ -174,7 +191,7 @@ export async function rescanRetainage(): Promise<void> {
   for (const inv of invoices ?? []) {
     const { data: lines } = await supabase
       .from("invoice_line_items")
-      .select("id, description, amount, project_id")
+      .select("id, description, category, amount, project_id")
       .eq("invoice_id", inv.id)
       .order("line_order");
     if (!lines?.length) continue;
@@ -185,7 +202,7 @@ export async function rescanRetainage(): Promise<void> {
       { is_subcontractor: true } // already filtered to subcontractors above
     );
 
-    for (const hit of detectRetainageLines(lines, expected)) {
+    for (const hit of detectRetainageLines(lines, expected, accountRef)) {
       const { error } = await admin.from("invoice_retainage").upsert(
         {
           organization_id: org.id,

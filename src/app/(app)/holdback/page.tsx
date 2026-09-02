@@ -5,7 +5,8 @@ import { SubmitButton } from "@/components/SubmitButton";
 import { DirtySaveButton } from "@/components/DirtySaveButton";
 import { SubcontractorPicker } from "@/components/SubcontractorPicker";
 import { JobRetainageList } from "@/components/JobRetainageList";
-import { termCopy, isReleasable, type RetainageTerm } from "@/lib/retainage";
+import { termCopy, isReleasable, isRetainageAccountLine, type RetainageTerm } from "@/lib/retainage";
+import { categoryDisplayName } from "@/lib/qbo";
 import {
   saveSubcontractors,
   saveRetainageSettings,
@@ -131,6 +132,41 @@ export default async function HoldbackPage({
     addJob(supplierByInvoice.get(l.invoice_id) ?? null, l.project_id);
   }
 
+  // Who has ALREADY billed holdback, found by the account their
+  // deduction line is coded to rather than by anything they wrote in the
+  // description. This is positive evidence rather than a guess: a
+  // supplier with a line posted to the holdback account is a
+  // subcontractor, whatever the flag currently says — so the picker
+  // pre-selects them instead of asking someone to recall who they are.
+  const holdbackAccount = (accounts ?? []).find(
+    (a) => a.qbo_account_id === orgRow?.retainage_account_qbo_id
+  );
+  const accountLabel = holdbackAccount
+    ? categoryDisplayName({ acctNum: holdbackAccount.acct_num, name: holdbackAccount.name })
+    : null;
+
+  const { data: codedLines } = accountLabel
+    ? await supabase
+        .from("invoice_line_items")
+        .select("invoice_id, category, amount, project_id")
+        .not("category", "is", null)
+        .limit(20000)
+    : { data: [] as { invoice_id: string; category: string | null; amount: number; project_id: string | null }[] };
+
+  const suppliersWithHoldback = new Set<string>();
+  const holdbackJobsBySupplier = new Map<string, Set<string>>();
+  for (const l of codedLines ?? []) {
+    if (!isRetainageAccountLine(l.category, accountLabel, holdbackAccount?.acct_num)) continue;
+    const supplierId = supplierByInvoice.get(l.invoice_id);
+    if (!supplierId) continue;
+    suppliersWithHoldback.add(supplierId);
+    if (l.project_id) {
+      const set = holdbackJobsBySupplier.get(supplierId) ?? new Set<string>();
+      set.add(l.project_id);
+      holdbackJobsBySupplier.set(supplierId, set);
+    }
+  }
+
   // The flagging list is every supplier we have actually received a bill
   // from, plus anyone already flagged — not the whole vendor list.
   //
@@ -197,10 +233,6 @@ export default async function HoldbackPage({
     const key = r.project_id ?? "unassigned";
     outstandingByProject.set(key, (outstandingByProject.get(key) ?? 0) + Number(r.amount));
   }
-
-  const holdbackAccount = (accounts ?? []).find(
-    (a) => a.qbo_account_id === orgRow?.retainage_account_qbo_id
-  );
 
   const card = "rounded-xl border border-brand-line bg-white p-5 shadow-elevation-1 shadow-brand-ink/5";
   const label = "text-[11px] font-semibold uppercase tracking-wide text-brand-muted";
@@ -418,8 +450,13 @@ export default async function HoldbackPage({
             suppliers={rankedSuppliers.map((s) => ({
               id: s.id,
               name: s.name,
-              isSubcontractor: s.is_subcontractor,
+              // Already flagged, OR proven by having billed holdback.
+              isSubcontractor: s.is_subcontractor || suppliersWithHoldback.has(s.id),
+              hasBilledHoldback: suppliersWithHoldback.has(s.id),
               projectIds: [...(jobsBySupplier.get(s.id) ?? [])],
+              // Jobs where this supplier actually billed holdback —
+              // what "pick a job" should tick first.
+              holdbackProjectIds: [...(holdbackJobsBySupplier.get(s.id) ?? [])],
             }))}
             projects={(projects ?? []).map((p) => ({ id: p.id, name: p.name }))}
             termNoun={term.noun}

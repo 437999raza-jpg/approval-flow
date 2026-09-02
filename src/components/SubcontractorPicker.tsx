@@ -26,7 +26,14 @@ export interface PickerSupplier {
   id: string;
   name: string;
   isSubcontractor: boolean;
+  // Has a line coded to the holdback account on one of their bills.
+  // Positive evidence, not a guess — they billed holdback, so they are
+  // a subcontractor whatever the flag says.
+  hasBilledHoldback: boolean;
   projectIds: string[];
+  // The jobs they billed holdback ON, which is what a job selection
+  // should tick before falling back to "everyone who invoiced it".
+  holdbackProjectIds: string[];
 }
 
 export function SubcontractorPicker({
@@ -66,9 +73,16 @@ export function SubcontractorPicker({
     if (added.length === 0 || readOnly) return;
     setSelected((prev) => {
       const merged = new Set(prev);
-      for (const s of suppliers) {
-        if (s.projectIds.some((p) => added.includes(p))) merged.add(s.id);
-      }
+      // Anyone who billed holdback on this job is certain. If nobody
+      // did, fall back to everyone who invoiced it at all — a job that
+      // hasn't been coded yet still needs its subs picked.
+      const proven = suppliers.filter((s) =>
+        s.holdbackProjectIds.some((p) => added.includes(p))
+      );
+      const pool = proven.length
+        ? proven
+        : suppliers.filter((s) => s.projectIds.some((p) => added.includes(p)));
+      for (const s of pool) merged.add(s.id);
       return [...merged];
     });
   }
@@ -111,6 +125,14 @@ export function SubcontractorPicker({
               className="inline-flex items-center gap-1 rounded-full bg-brand-mist py-0.5 pl-2.5 pr-1 text-xs text-brand-ink"
             >
               {byId.get(id)?.name ?? "Unknown"}
+              {byId.get(id)?.hasBilledHoldback && (
+                <span
+                  title="Has a line coded to the holdback account"
+                  className="rounded-full bg-brand-green/15 px-1.5 text-[10px] font-semibold uppercase text-brand-green-dark"
+                >
+                  billed
+                </span>
+              )}
               {!readOnly && (
                 <button
                   type="button"
@@ -139,7 +161,9 @@ export function SubcontractorPicker({
             Save {selected.length} subcontractor{selected.length === 1 ? "" : "s"}
           </SubmitButton>
           <span className="text-xs text-brand-muted">
-            {termNoun} is only ever withheld from these suppliers.
+            {termNoun} is only ever withheld from these suppliers. Ones marked
+            &ldquo;billed&rdquo; already have a line coded to your {termNoun.toLowerCase()}{" "}
+            account.
           </span>
         </div>
       )}
