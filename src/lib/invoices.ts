@@ -2,7 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database, InvoiceSource } from "@/lib/supabase/types";
 import { extractInvoiceFields, type ExtractedInvoiceData } from "@/lib/extract-invoice";
 import { selectWorkflowForInvoice } from "@/lib/workflow-routing";
-import { matchProjectFromPoNumber } from "@/lib/matching";
+import { matchProject } from "@/lib/project-matching";
 import { matchSupplier } from "@/lib/qbo";
 import { fetchAllQboSuppliers } from "@/lib/qbo-all";
 import { computeLineItemTotals } from "@/lib/invoice-totals";
@@ -309,22 +309,35 @@ export async function createInvoiceFromFile({
   const orgDefaultTaxCodeId = org?.default_tax_code_id ?? null;
   const isSimpleMode = extractionModeForOrg(org) === "simple";
 
-  // Project detection from the PO number: suppliers commonly put their job
-  // number on the PO ("2022-589-PO-1234" starts with project code 2022-58).
-  // Project is always a per-bill choice (a supplier can work on many jobs),
-  // so it comes from the PO match, never from a supplier rule.
+  // Which job this bill belongs to. Projects come from QuickBooks (or are
+  // created by hand in Flow — both count), and the supplier usually cites
+  // the job somewhere: on the PO, in a line description, in the memo.
+  // Project is always a per-bill choice — a supplier works on many jobs —
+  // so it is never taken from a supplier rule.
+  //
+  // Only a high or medium confidence match is applied. A low one means
+  // the job's NAME was spotted in free text, which is a reasonable hint
+  // for a human and a poor reason to file a bill automatically: an
+  // unassigned job gets noticed and fixed, a wrongly assigned one gets
+  // approved.
   let detectedProjectId: string | null = null;
-  if (extracted?.po_number) {
+  const projectSignals = [
+    extracted?.po_number,
+    ...(extracted?.line_items ?? []).map((li) => li.description),
+  ].filter(Boolean);
+  if (projectSignals.length > 0) {
     const { data: orgProjects } = await supabase
       .from("projects")
       .select("id, name")
       .eq("organization_id", organizationId)
-      .eq("source", "qbo")
       .eq("active", true);
-    detectedProjectId = matchProjectFromPoNumber(
-      orgProjects ?? [],
-      extracted.po_number
-    );
+    const match = matchProject(orgProjects ?? [], {
+      poNumber: extracted?.po_number ?? null,
+      texts: (extracted?.line_items ?? []).map((li) => li.description),
+    });
+    if (match && match.confidence !== "low") {
+      detectedProjectId = match.projectId;
+    }
   }
   const projectId = detectedProjectId ?? null;
 
