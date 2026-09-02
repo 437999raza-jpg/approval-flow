@@ -266,7 +266,7 @@ export async function requestHoldbackClaims(formData: FormData): Promise<void> {
   const invoiceIds = [...new Set(rows.map((r) => r.invoice_id))];
 
   const [{ data: suppliers }, { data: invoices }] = await Promise.all([
-    supabase.from("suppliers").select("id, name, qbo_vendor_id").in("id", supplierIds),
+    supabase.from("suppliers").select("id, name, qbo_vendor_id, email").in("id", supplierIds),
     supabase.from("invoices").select("id, invoice_number, currency, created_at").in("id", invoiceIds),
   ]);
 
@@ -283,11 +283,32 @@ export async function requestHoldbackClaims(formData: FormData): Promise<void> {
   const emailByVendorId = new Map(
     (qboVendors ?? []).map((v) => [v.qbo_vendor_id, v.email])
   );
+
   const invoiceById = new Map((invoices ?? []).map((i) => [i.id, i]));
   const supplierById = new Map((suppliers ?? []).map((s) => [s.id, s]));
 
   const admin = createAdminClient();
   const term = termCopy(orgRow?.retainage_term as RetainageTerm);
+
+  // Addresses typed into the dialog. Saved against Flow's own supplier
+  // row (migration 0101) rather than the QBO mirror, which the next
+  // supplier sync would overwrite — so an address is typed once, not
+  // once per send.
+  const typedEmails = new Map<string, string>();
+  for (const [key, value] of formData.entries()) {
+    if (!key.startsWith("email_")) continue;
+    const email = String(value).trim();
+    if (email) typedEmails.set(key.slice("email_".length), email);
+  }
+  for (const [supplierId, email] of typedEmails) {
+    if (email === (suppliers ?? []).find((s) => s.id === supplierId)?.email) continue;
+    await admin
+      .from("suppliers")
+      .update({ email })
+      .eq("id", supplierId)
+      .eq("organization_id", org.id);
+  }
+
 
   // Ticking "save as default" makes this send's wording the template for
   // next time, so a customer's own instructions are typed once.
@@ -313,9 +334,11 @@ export async function requestHoldbackClaims(formData: FormData): Promise<void> {
 
   for (const supplierId of supplierIds) {
     const supplier = supplierById.get(supplierId);
-    const email = supplier?.qbo_vendor_id
-      ? emailByVendorId.get(supplier.qbo_vendor_id)
-      : null;
+    // Typed now wins, then Flow's own record, then the QBO mirror.
+    const email =
+      typedEmails.get(supplierId) ??
+      supplier?.email ??
+      (supplier?.qbo_vendor_id ? emailByVendorId.get(supplier.qbo_vendor_id) : null);
     const mine = rows.filter((r) => r.supplier_id === supplierId);
     if (!supplier || !email || mine.length === 0) {
       skipped += 1; // no address on file — surfaced on the page, not silently dropped

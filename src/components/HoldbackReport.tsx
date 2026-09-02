@@ -297,6 +297,7 @@ export function HoldbackReport({
                       recipients={job.vendors
                         .filter((v) => v.state === "not_invoiced")
                         .map((v) => ({
+                          supplierId: v.id,
                           supplierName: v.name,
                           email: v.rows.find((r) => r.supplierEmail)?.supplierEmail ?? null,
                           amount: v.total,

@@ -952,6 +952,9 @@ export interface Database {
           name: string;
           name_normalized: string;
           qbo_vendor_id: string | null;
+          // Contact address owned by Flow, preferred over the QBO
+          // mirror because a supplier sync overwrites that (0101).
+          email: string | null;
           // Works under a contract, so holdback applies (migration 0098).
           // Materials and rental suppliers are false — and false is the
           // default, since withholding from a supplier who was never owed

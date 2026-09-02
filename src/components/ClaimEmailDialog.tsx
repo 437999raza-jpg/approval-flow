@@ -18,6 +18,7 @@ import { SubmitButton } from "./SubmitButton";
 // Authored by Araza.
 
 export interface ClaimRecipient {
+  supplierId: string;
   supplierName: string;
   email: string | null;
   amount: number;
@@ -49,13 +50,19 @@ export function ClaimEmailDialog({
 }) {
   const [open, setOpen] = useState(false);
   const [note, setNote] = useState(defaultNote);
+  const [emails, setEmails] = useState<Record<string, string>>(() =>
+    Object.fromEntries(recipients.map((r) => [r.supplierId, r.email ?? ""]))
+  );
 
   const money = (n: number) =>
     n.toLocaleString(undefined, { style: "currency", currency });
   const term = termNoun.toLowerCase();
 
-  const sendable = recipients.filter((r) => r.email);
-  const missing = recipients.filter((r) => !r.email);
+  // Sendable is judged on what's in the boxes now, not on what was on
+  // file when the page loaded — typing an address makes that vendor
+  // sendable immediately.
+  const sendable = recipients.filter((r) => (emails[r.supplierId] ?? "").trim());
+  const missing = recipients.filter((r) => !(emails[r.supplierId] ?? "").trim());
 
   return (
     <>
@@ -159,47 +166,52 @@ export function ClaimEmailDialog({
                 </div>
               </div>
 
-              {/* Who gets it, and for how much. */}
+              {/* Who gets it, for how much, and at which address.
+                  Editable inline: a missing address is a thirty-second
+                  fix here, versus editing the vendor in QuickBooks and
+                  re-running a supplier sync. What's typed is saved
+                  against the supplier, so it's only ever typed once. */}
               <div className="mt-4">
                 <p className="text-[11px] font-semibold uppercase tracking-wide text-brand-muted">
                   Recipients
                 </p>
                 <ul className="mt-1 divide-y divide-brand-line/60 rounded-lg border border-brand-line">
-                  {sendable.map((r) => (
-                    <li
-                      key={r.supplierName}
-                      className="flex flex-wrap items-baseline justify-between gap-2 px-3 py-2 text-sm"
-                    >
-                      <span className="min-w-0">
-                        <span className="font-medium text-brand-ink">{r.supplierName}</span>{" "}
-                        <span className="text-brand-muted">{r.email}</span>
-                      </span>
-                      <span className="tabular-nums text-brand-ink">{money(r.amount)}</span>
+                  {recipients.map((r) => (
+                    <li key={r.supplierId} className="px-3 py-2">
+                      <div className="flex flex-wrap items-baseline justify-between gap-2 text-sm">
+                        <span className="font-medium text-brand-ink">{r.supplierName}</span>
+                        <span className="tabular-nums text-brand-ink">{money(r.amount)}</span>
+                      </div>
+                      <input
+                        type="email"
+                        name={`email_${r.supplierId}`}
+                        value={emails[r.supplierId] ?? ""}
+                        onChange={(e) =>
+                          setEmails((prev) => ({ ...prev, [r.supplierId]: e.target.value }))
+                        }
+                        placeholder="no address on file — type one to send"
+                        className={`mt-1 w-full rounded-lg border px-2.5 py-1 text-sm text-brand-ink placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-brand-green-light/30 ${
+                          (emails[r.supplierId] ?? "").trim()
+                            ? "border-brand-line focus:border-brand-green"
+                            : "border-amber-300 bg-amber-50"
+                        }`}
+                      />
                     </li>
                   ))}
-                  {sendable.length === 0 && (
+                  {recipients.length === 0 && (
                     <li className="px-3 py-2 text-sm text-brand-muted">
-                      Nobody here has an email address on file.
+                      Nobody on this job is still owed {term}.
                     </li>
                   )}
                 </ul>
+                {missing.length > 0 && (
+                  <p className="mt-1.5 text-xs text-amber-700">
+                    {missing.length} vendor{missing.length === 1 ? "" : "s"} still need
+                    an address. Anyone left blank is skipped; what you type is saved
+                    for next time.
+                  </p>
+                )}
               </div>
-
-              {missing.length > 0 && (
-                <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-                  <p className="font-medium">
-                    {missing.length} vendor{missing.length === 1 ? "" : "s"} will be
-                    skipped — no email address in QuickBooks
-                  </p>
-                  <p className="mt-0.5">
-                    {missing.map((r) => `${r.supplierName} (${money(r.amount)})`).join(", ")}
-                  </p>
-                  <p className="mt-1 text-xs">
-                    Add it on their vendor record in QuickBooks, run Settings → Data →
-                    Sync suppliers, then send again.
-                  </p>
-                </div>
-              )}
 
               <div className="mt-5 flex flex-wrap items-center justify-end gap-3 border-t border-brand-line pt-4">
                 <button
