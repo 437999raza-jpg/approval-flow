@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isPlatformAdmin } from "@/lib/platform-admin";
-import { createOrganizationAction, joinOrganizationAction, extendTrialAction, setOrgPlanAction, setOrgCustomPlanAction, setOrgSetupFeeAction, setOrgInternalAction } from "@/lib/admin-actions";
+import { createOrganizationAction, joinOrganizationAction, extendTrialAction, endTrialAction, setOrgPlanAction, setOrgCustomPlanAction, setOrgSetupFeeAction, setOrgInternalAction } from "@/lib/admin-actions";
 import { SubmitButton } from "@/components/SubmitButton";
 import { DirtySaveButton } from "@/components/DirtySaveButton";
 import { isTrialActive, PLAN_ORDER, PLANS, parseCustomPlan, resolveSetupFee } from "@/lib/plans";
@@ -33,6 +33,7 @@ const ERRORS: Record<string, string> = {
   "create-failed": "Could not create the organization.",
   "invite-failed": "Organization created, but the admin account could not be created — invite them manually from that org's Settings page.",
   "bad-extend": "Enter a valid number of days to extend the trial by.",
+  "bad-trial-days": "Trial length must be a number of days between 0 and 3650 (0 for no trial).",
   "bad-plan": "Could not update the plan.",
   "bad-org": "No organization was identified.",
   "bad-custom-plan": "A custom plan needs a name, a monthly price, an included-document count and an overage rate.",
@@ -164,6 +165,20 @@ export default async function AdminOrganizationsPage({
               <label className={adminLabelCls}>Their name (optional)</label>
               <input name="admin_name" placeholder="Jane Doe" className={adminFieldCls} />
             </div>
+            <div>
+              <label className={adminLabelCls}>Trial length (days)</label>
+              <input
+                name="trial_days"
+                type="number"
+                min="0"
+                max="3650"
+                defaultValue="14"
+                className={adminFieldCls}
+              />
+              <p className="mt-1 text-[11px] text-brand-muted">
+                14 is the rule. 0 gives them no trial clock at all.
+              </p>
+            </div>
           </div>
           <p className="text-xs text-brand-muted">
             Leave the inbound address blank for a random token address — the org&apos;s own
@@ -266,14 +281,39 @@ export default async function AdminOrganizationsPage({
                     </select>
                     <DirtySaveButton />
                   </form>
-                  {org.trial_ends_at && !org.plan && !custom && (
-                    <form action={extendTrialAction}>
-                      <input type="hidden" name="org_id" value={org.id} />
-                      <input type="hidden" name="days" value="14" />
-                      <button type="submit" className={adminGhostBtnCls}>
-                        +14 days
-                      </button>
-                    </form>
+                  {/* Trial controls. Shown while the org has no plan of its
+                      own — once they're paying, the trial clock is moot.
+                      extendTrialAction doubles as "start": with no trial
+                      set it bases off today. */}
+                  {!org.plan && !custom && !org.is_internal && (
+                    <>
+                      <form action={extendTrialAction} className="flex items-center gap-1">
+                        <input type="hidden" name="org_id" value={org.id} />
+                        <input
+                          name="days"
+                          type="number"
+                          min="1"
+                          max="3650"
+                          defaultValue={14}
+                          aria-label="Days to extend the trial by"
+                          className="w-14 rounded-lg border border-brand-line bg-white px-2 py-1.5 text-xs tabular-nums text-brand-ink"
+                        />
+                        <button type="submit" className={adminGhostBtnCls}>
+                          {org.trial_ends_at ? "Extend" : "Start trial"}
+                        </button>
+                      </form>
+                      {trialing && (
+                        <form action={endTrialAction}>
+                          <input type="hidden" name="org_id" value={org.id} />
+                          <button
+                            type="submit"
+                            className="rounded-lg border border-rose-200 bg-white px-2.5 py-1.5 text-xs font-medium text-rose-700 transition-colors hover:bg-rose-50"
+                          >
+                            End trial
+                          </button>
+                        </form>
+                      )}
+                    </>
                   )}
                   <form action={joinOrganizationAction}>
                     <input type="hidden" name="org_id" value={org.id} />

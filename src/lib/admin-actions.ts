@@ -8,6 +8,10 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { isPlatformAdmin } from "@/lib/platform-admin";
 import { isPlanId, type CustomPlanConfig } from "@/lib/plans";
 
+// The standard trial, applied however an org is created. Mirrors
+// TRIAL_DAYS in src/lib/onboarding.ts, which covers the self-signup path.
+const DEFAULT_TRIAL_DAYS = 14;
+
 const ACTIVE_ORG_COOKIE = "active_org_id";
 
 function setActiveOrgCookie(orgId: string) {
@@ -134,6 +138,19 @@ export async function createOrganizationAction(formData: FormData) {
   }
   const inboundLocal = inboundLocalRaw || null;
 
+  // Fourteen days is the rule, however the org was created. It used to be
+  // self-signup only, which meant an org we set up for a customer had no
+  // clock at all — nothing to extend, nothing to end, and no pressure to
+  // ever pick a plan. The form can override it; 0 means no trial, which
+  // is the old behaviour. Validated here with the rest of the input,
+  // BEFORE the auth user is created below — a bad value further down
+  // would leave an account behind with no organization attached to it.
+  const trialDaysRaw = String(formData.get("trial_days") ?? "").trim();
+  const trialDays = trialDaysRaw === "" ? DEFAULT_TRIAL_DAYS : Number(trialDaysRaw);
+  if (!Number.isFinite(trialDays) || trialDays < 0 || trialDays > 3650) {
+    redirect("/admin/organizations?error=bad-trial-days");
+  }
+
   const admin = createAdminClient();
 
   // Create (or reuse) the first admin's auth account — same approach as the
@@ -166,7 +183,10 @@ export async function createOrganizationAction(formData: FormData) {
     name: orgName,
     inboundLocal,
     adminUserId: userId,
-    trialEndsAt: null, // platform-admin-provisioned orgs aren't on a trial clock
+    trialEndsAt:
+      trialDays > 0
+        ? new Date(Date.now() + trialDays * 24 * 60 * 60 * 1000).toISOString()
+        : null,
   });
   if ("error" in result) {
     redirect(`/admin/organizations?error=${result.error}`);
@@ -255,6 +275,34 @@ export async function switchOrgAction(formData: FormData) {
 // extending an already-active trial adds time on top instead of
 // (if it had already lapsed) resetting the clock to start from a past
 // date and leaving it still expired.
+// End a trial now, rather than waiting it out. Sets the expiry to this
+// moment, which makes isOrgLocked (plans.ts) true for an org that never
+// picked a plan — read-only, everything still visible, approving and
+// adding invoices blocked until they choose one. That's the whole point:
+// it's the lever that turns "still deciding" into a decision.
+//
+// Safe on an org that already has a plan — a chosen plan overrides trial
+// messaging and isOrgLocked everywhere, so nothing changes for them.
+export async function endTrialAction(formData: FormData) {
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user || !isPlatformAdmin(user.email)) redirect("/login");
+
+  const orgId = String(formData.get("org_id") ?? "");
+  if (!orgId) redirect("/admin/organizations?error=bad-org");
+
+  const admin = createAdminClient();
+  await admin
+    .from("organizations")
+    .update({ trial_ends_at: new Date().toISOString() })
+    .eq("id", orgId);
+
+  revalidatePath("/admin/organizations");
+  redirect("/admin/organizations");
+}
+
 export async function extendTrialAction(formData: FormData) {
   const supabase = createClient();
   const {
@@ -276,6 +324,10 @@ export async function extendTrialAction(formData: FormData) {
     .single();
   if (!org) redirect("/admin/organizations?error=create-failed");
 
+  // Adds to the LATER of now or the current expiry, so extending an
+  // already-lapsed trial gives a full N days from today rather than N
+  // days from a date in the past. With no trial at all this bases off
+  // now, which is what makes the same action double as "start a trial".
   const currentExpiry = org.trial_ends_at ? new Date(org.trial_ends_at) : new Date();
   const base = currentExpiry > new Date() ? currentExpiry : new Date();
   const newExpiry = new Date(base.getTime() + days * 24 * 60 * 60 * 1000);
