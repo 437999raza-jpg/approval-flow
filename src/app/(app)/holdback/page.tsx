@@ -66,7 +66,7 @@ export default async function HoldbackPage({
     await Promise.all([
       supabase
         .from("organizations")
-        .select("retainage_term, retainage_default_rate, retainage_account_qbo_id")
+        .select("retainage_term, retainage_default_rate, retainage_account_qbo_id, retainage_claim_note, retainage_claim_to_email, inbound_email_local, inbound_email_token")
         .eq("id", org.id)
         .single(),
       supabase
@@ -196,6 +196,16 @@ export default async function HoldbackPage({
   }
 
   const currency = invoices?.[0]?.currency ?? "CAD";
+
+  // Where subcontractors are told to send their holdback invoice.
+  // Defaults to this org's own inbound address, so the claim invoice is
+  // ingested and extracted automatically instead of landing in a mailbox.
+  const inboundDomain = process.env.INBOUND_EMAIL_DOMAIN;
+  const inboundAddress =
+    inboundDomain && (orgRow?.inbound_email_local || orgRow?.inbound_email_token)
+      ? `${orgRow.inbound_email_local ?? orgRow.inbound_email_token}@${inboundDomain}`
+      : null;
+  const sendInvoiceTo = orgRow?.retainage_claim_to_email?.trim() || inboundAddress;
   const jobsWithHoldback = [...new Set(rows.map((r) => r.projectId).filter(Boolean))] as string[];
 
   const field =
@@ -273,6 +283,8 @@ export default async function HoldbackPage({
             termNoun={term.noun}
             isAdmin={isAdmin}
             organizationName={org.name}
+            defaultNote={orgRow?.retainage_claim_note ?? ""}
+            sendInvoiceTo={sendInvoiceTo}
             requestClaims={requestHoldbackClaims}
             release={releaseProjectRetainage}
           />
@@ -334,6 +346,37 @@ export default async function HoldbackPage({
                   <option value="retainage">Retainage (US)</option>
                   <option value="retention">Retention (UK / AU)</option>
                 </select>
+              </div>
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div>
+                <label className="mb-1 block text-[11px] font-medium text-brand-muted">
+                  Where subcontractors send their invoice
+                </label>
+                <input
+                  name="retainage_claim_to_email"
+                  type="email"
+                  defaultValue={orgRow?.retainage_claim_to_email ?? ""}
+                  placeholder={inboundAddress ?? "ap@yourcompany.com"}
+                  className={field}
+                />
+                <p className="mt-1 text-[11px] text-brand-muted">
+                  {inboundAddress
+                    ? `Leave blank to use ${inboundAddress} — invoices sent there are picked up by Flow automatically.`
+                    : "Set an address for claim invoices to be sent to."}
+                </p>
+              </div>
+              <div>
+                <label className="mb-1 block text-[11px] font-medium text-brand-muted">
+                  Default message to vendors
+                </label>
+                <textarea
+                  name="retainage_claim_note"
+                  rows={3}
+                  defaultValue={orgRow?.retainage_claim_note ?? ""}
+                  placeholder="Quote the PO number on your invoice. Invoices received after the 25th go into the following month's payment run."
+                  className={field}
+                />
               </div>
             </div>
             <DirtySaveButton />

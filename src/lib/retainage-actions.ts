@@ -89,6 +89,9 @@ export async function saveRetainageSettings(formData: FormData) {
       retainage_default_rate: rate,
       retainage_account_qbo_id:
         String(formData.get("retainage_account_qbo_id") ?? "").trim() || null,
+      retainage_claim_note: String(formData.get("retainage_claim_note") ?? "").trim() || null,
+      retainage_claim_to_email:
+        String(formData.get("retainage_claim_to_email") ?? "").trim() || null,
     })
     .eq("id", org.id);
 
@@ -240,12 +243,13 @@ export async function requestHoldbackClaims(formData: FormData): Promise<void> {
   const { supabase, org } = await requireAdmin();
   const projectId = String(formData.get("project_id") ?? "");
   const note = String(formData.get("note") ?? "").slice(0, 2000);
+  const saveTemplate = formData.get("save_template") === "on";
   if (!projectId) redirect("/holdback?error=bad-project");
 
   const [{ data: orgRow }, { data: project }, { data: rows }] = await Promise.all([
     supabase
       .from("organizations")
-      .select("name, retainage_term, statement_reply_to")
+      .select("name, retainage_term, statement_reply_to, retainage_claim_note, retainage_claim_to_email, inbound_email_local, inbound_email_token")
       .eq("id", org.id)
       .single(),
     supabase.from("projects").select("name").eq("id", projectId).single(),
@@ -284,6 +288,26 @@ export async function requestHoldbackClaims(formData: FormData): Promise<void> {
 
   const admin = createAdminClient();
   const term = termCopy(orgRow?.retainage_term as RetainageTerm);
+
+  // Ticking "save as default" makes this send's wording the template for
+  // next time, so a customer's own instructions are typed once.
+  if (saveTemplate) {
+    await admin
+      .from("organizations")
+      .update({ retainage_claim_note: note || null })
+      .eq("id", org.id);
+  }
+
+  // Where the sub should send the invoice. Defaults to the org's own
+  // inbound address, because an invoice mailed there is ingested and
+  // extracted automatically — the claim comes back into the system that
+  // asked for it, rather than into somebody's mailbox.
+  const inboundDomain = process.env.INBOUND_EMAIL_DOMAIN;
+  const inboundAddress =
+    inboundDomain && (orgRow?.inbound_email_local || orgRow?.inbound_email_token)
+      ? `${orgRow.inbound_email_local ?? orgRow.inbound_email_token}@${inboundDomain}`
+      : null;
+  const sendInvoiceTo = orgRow?.retainage_claim_to_email?.trim() || inboundAddress;
   let sent = 0;
   let skipped = 0;
 
@@ -316,6 +340,7 @@ export async function requestHoldbackClaims(formData: FormData): Promise<void> {
         };
       }),
       replyTo: orgRow?.statement_reply_to ?? null,
+      sendInvoiceTo,
       note,
     });
 

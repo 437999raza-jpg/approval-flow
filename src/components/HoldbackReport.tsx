@@ -56,6 +56,8 @@ export function HoldbackReport({
   requestClaims,
   release,
   organizationName,
+  defaultNote,
+  sendInvoiceTo,
 }: {
   rows: ReportRow[];
   projects: { id: string; name: string }[];
@@ -65,6 +67,8 @@ export function HoldbackReport({
   requestClaims: (formData: FormData) => void | Promise<void>;
   release: (projectId: string) => Promise<void>;
   organizationName: string;
+  defaultNote: string;
+  sendInvoiceTo: string | null;
 }) {
   const [jobs, setJobs] = useState<string[]>([]);
   const [vendors, setVendors] = useState<string[]>([]);
@@ -286,6 +290,8 @@ export function HoldbackReport({
                       projectId={job.key}
                       projectName={job.name}
                       organizationName={organizationName}
+                      defaultNote={defaultNote}
+                      sendInvoiceTo={sendInvoiceTo}
                       currency={currency}
                       termNoun={termNoun}
                       recipients={job.vendors

@@ -67,6 +67,10 @@ export interface Database {
           retainage_term: "holdback" | "retainage" | "retention";
           retainage_default_rate: number | null;
           retainage_account_qbo_id: string | null;
+          // Saved claim-email template and where subs should send the
+          // invoice (migration 0100).
+          retainage_claim_note: string | null;
+          retainage_claim_to_email: string | null;
           setup_fee_usd: number | null;
           setup_fee_label: string | null;
           setup_fee_paid_at: string | null;

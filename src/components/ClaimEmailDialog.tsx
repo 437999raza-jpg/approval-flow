@@ -32,6 +32,8 @@ export function ClaimEmailDialog({
   currency,
   termNoun,
   organizationName,
+  defaultNote,
+  sendInvoiceTo,
 }: {
   action: (formData: FormData) => void | Promise<void>;
   projectId: string;
@@ -40,9 +42,13 @@ export function ClaimEmailDialog({
   currency: string;
   termNoun: string;
   organizationName: string;
+  // Saved per org — a customer's own instructions typed once rather than
+  // retyped on every send, which is how they end up inconsistent.
+  defaultNote: string;
+  sendInvoiceTo: string | null;
 }) {
   const [open, setOpen] = useState(false);
-  const [note, setNote] = useState("");
+  const [note, setNote] = useState(defaultNote);
 
   const money = (n: number) =>
     n.toLocaleString(undefined, { style: "currency", currency });
@@ -93,7 +99,7 @@ export function ClaimEmailDialog({
               <input type="hidden" name="project_id" value={projectId} />
 
               <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-brand-muted">
-                Add a line (optional)
+                Your instructions to the vendor
               </label>
               <textarea
                 name="note"
@@ -104,6 +110,15 @@ export function ClaimEmailDialog({
                 placeholder="e.g. We're closing this job out at the end of the month — please send your invoice by the 25th."
                 className="w-full rounded-lg border border-brand-line bg-white px-3 py-2 text-sm text-brand-ink placeholder:text-slate-400 focus:border-brand-green focus:outline-none focus:ring-2 focus:ring-brand-green-light/30"
               />
+              <label className="mt-1.5 flex items-center gap-2 text-xs text-brand-muted">
+                <input
+                  type="checkbox"
+                  name="save_template"
+                  defaultChecked={note.trim() !== defaultNote.trim()}
+                  className="h-3.5 w-3.5 rounded border-brand-line"
+                />
+                Save this as the default for future requests
+              </label>
 
               {/* The message, as each vendor will read it. */}
               <div className="mt-4 rounded-lg border border-brand-line bg-brand-mist p-4 text-sm text-brand-ink">
@@ -130,9 +145,16 @@ export function ClaimEmailDialog({
                   </p>
                   <p className="text-brand-muted">
                     Please add applicable taxes to your invoice — tax on {term} is
-                    payable when it is released, not when it was originally withheld.
-                    Reply to this email with the invoice attached and it will reach our
-                    accounts payable directly.
+                    payable when it is released, not when it was originally withheld.{" "}
+                    {sendInvoiceTo ? (
+                      <>
+                        Email the invoice to{" "}
+                        <span className="font-medium text-brand-ink">{sendInvoiceTo}</span>{" "}
+                        and it will reach our accounts payable directly.
+                      </>
+                    ) : (
+                      "Reply to this email with the invoice attached and it will reach our accounts payable directly."
+                    )}
                   </p>
                 </div>
               </div>

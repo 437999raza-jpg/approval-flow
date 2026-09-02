@@ -396,6 +396,7 @@ export async function sendHoldbackClaimEmail({
   currency,
   lines,
   replyTo,
+  sendInvoiceTo,
   note,
 }: {
   to: string;
@@ -407,6 +408,9 @@ export async function sendHoldbackClaimEmail({
   currency: string;
   lines: { invoiceNumber: string | null; date: string | null; amount: number }[];
   replyTo?: string | null;
+  // Where the subcontractor should send their invoice. Normally the
+  // org's own inbound address, so the claim is ingested automatically.
+  sendInvoiceTo?: string | null;
   // A line the sender adds before sending — "we're closing this job out
   // at month end", a contact name, whatever the standard wording can't
   // know. Shown above the table, escaped like everything else.
@@ -461,9 +465,12 @@ export async function sendHoldbackClaimEmail({
     </table>
     <p style="margin:0;font-size:12.5px;line-height:1.6;color:#64748b;">
       Please add applicable taxes to your invoice — tax on ${term} is payable
-      when it is released, not when it was originally withheld. Reply to this
-      email with the invoice attached and it will reach our accounts payable
-      directly.
+      when it is released, not when it was originally withheld.
+      ${
+        sendInvoiceTo
+          ? `Email the invoice to <a href="mailto:${escapeHtml(sendInvoiceTo)}" style="color:#3E7D36;">${escapeHtml(sendInvoiceTo)}</a> and it will reach our accounts payable directly.`
+          : "Reply to this email with the invoice attached and it will reach our accounts payable directly."
+      }
     </p>`;
 
   try {
@@ -483,8 +490,8 @@ export async function sendHoldbackClaimEmail({
           eyebrow: organizationName,
           headline: `Please invoice for your ${term}`,
           bodyHtml,
-          ctaLabel: "Reply with your invoice",
-          ctaUrl: `mailto:${replyTo ?? from}`,
+          ctaLabel: "Send your invoice",
+          ctaUrl: `mailto:${sendInvoiceTo ?? replyTo ?? from}`,
         }),
       }),
     });
