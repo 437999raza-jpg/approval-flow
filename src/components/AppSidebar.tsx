@@ -88,6 +88,13 @@ const icons = {
       <path d="M2 10h20" />
     </svg>
   ),
+  // A percentage held back — a slice withheld from a whole.
+  holdback: (
+    <svg {...iconProps}>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 3a9 9 0 0 1 8.5 6.1L12 12z" />
+    </svg>
+  ),
   statements: (
     <svg {...iconProps}>
       <path d="M9 11l3 3L22 4" />
@@ -330,6 +337,7 @@ export function AppSidebar({
       ...(isAdminOrOwner ? [{ href: "/workflows", active: is("/workflows"), icon: icons.workflows, label: "Workflows" }] : []),
       ...(isAdminOrOwner ? [{ href: "/billing", active: is("/billing"), icon: icons.billing, label: "Billing" }] : []),
       ...(isAdminOrOwner ? [{ href: "/statements", active: is("/statements"), icon: icons.statements, label: "Statements" }] : []),
+      ...(isAdminOrOwner ? [{ href: "/holdback", active: is("/holdback"), icon: icons.holdback, label: "Holdback" }] : []),
       { href: "/reports", active: is("/reports"), icon: icons.reports, label: "Reports" },
       { href: "/settings", active: is("/settings"), icon: icons.settings, label: "Settings" },
       ...(isPlatformAdmin

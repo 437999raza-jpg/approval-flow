@@ -221,3 +221,64 @@ export function pairWithPrecedingLine(
         : Math.abs(impliedRate - expectedRate) <= tolerancePercent,
   };
 }
+
+// Walk a bill's lines and pull out every holdback deduction, pairing
+// each with the work line it belongs to.
+//
+// Real bills interleave them — Senoz Electric 4564 runs work, holdback,
+// work, holdback for seven pairs — so a deduction belongs to the nearest
+// POSITIVE line above it, not to the invoice as a whole. That pairing is
+// what carries the job across: a work line has its own project_id, and
+// the holdback inherits it.
+//
+// Three conditions must all hold, and the wording is the weakest of
+// them: the description has to look like a holdback, the amount has to
+// be negative, and there has to be a work line above it to attach to.
+export interface DetectedRetainage {
+  lineItemId: string;
+  amount: number;          // positive
+  rate: number | null;     // implied by the pairing, not assumed
+  grossAmount: number;
+  projectId: string | null; // inherited from the work line
+  matchesExpected: boolean;
+}
+
+export function detectRetainageLines(
+  lines: readonly {
+    id: string;
+    description: string | null;
+    amount: number | string | null;
+    project_id?: string | null;
+  }[],
+  expectedRate: number | null
+): DetectedRetainage[] {
+  const found: DetectedRetainage[] = [];
+  let lastPositive: { amount: number; projectId: string | null } | null = null;
+
+  for (const line of lines) {
+    const amount = Number(line.amount);
+    if (!Number.isFinite(amount)) continue;
+
+    if (amount > 0) {
+      lastPositive = { amount, projectId: line.project_id ?? null };
+      continue;
+    }
+    if (amount >= 0) continue;
+    if (!looksLikeRetainageLine(line.description)) continue;
+    if (!lastPositive) continue; // a deduction with nothing above it isn't a pair
+
+    const pair = pairWithPrecedingLine(lastPositive.amount, amount, expectedRate);
+    if (!pair) continue;
+
+    found.push({
+      lineItemId: line.id,
+      amount: pair.retainageAmount,
+      rate: pair.impliedRate,
+      grossAmount: pair.grossAmount,
+      projectId: lastPositive.projectId,
+      matchesExpected: pair.matchesExpected,
+    });
+  }
+
+  return found;
+}
