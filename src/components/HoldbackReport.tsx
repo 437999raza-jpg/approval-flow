@@ -42,6 +42,9 @@ export interface ReportRow {
   supplierEmail: string | null;
   billDate: string | null;
   dueDate: string | null;
+  // True when the due date came from the supplier's payment terms
+  // because the bill itself carried none.
+  dueDateDerived: boolean;
   paidStatus: string | null;
   // Positive = withheld from them. Negative = they invoiced it back.
   amount: number;
@@ -361,7 +364,17 @@ export function HoldbackReport({
                         <tr key={r.id} className="text-brand-muted">
                           <td className="py-0.5 tabular-nums">{date(r.billDate)}</td>
                           <td className="py-0.5 text-brand-ink">{r.invoiceNumber ?? "—"}</td>
-                          <td className="py-0.5 tabular-nums">{date(r.dueDate)}</td>
+                          <td className="py-0.5 tabular-nums">
+                            {date(r.dueDate)}
+                            {r.dueDateDerived && (
+                              <span
+                                title="From this supplier's payment terms — the bill had no due date"
+                                className="ml-1 text-[10px] text-brand-muted"
+                              >
+                                ~
+                              </span>
+                            )}
+                          </td>
                           <td className="py-0.5">{r.paidStatus ?? "—"}</td>
                           <td
                             className={`py-0.5 text-right tabular-nums ${

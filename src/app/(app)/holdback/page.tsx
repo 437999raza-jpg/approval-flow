@@ -149,6 +149,33 @@ export default async function HoldbackPage({
         .in("qbo_vendor_id", vendorIds)
     : { data: [] as { qbo_vendor_id: string; email: string | null }[] };
   const emailByVendorId = new Map((qboVendors ?? []).map((v) => [v.qbo_vendor_id, v.email]));
+
+  // Payment terms, so a blank due date can be derived rather than shown
+  // empty. due_date is written once at ingestion, so a bill that arrived
+  // before its supplier had terms set keeps a null forever — and this
+  // column is exactly what a CFO plans payment from.
+  const { data: termRows } = supplierIdsOnBills.length
+    ? await supabase
+        .from("supplier_defaults")
+        .select("supplier_id, payment_terms_days")
+        .eq("organization_id", org.id)
+        .in("supplier_id", supplierIdsOnBills)
+    : { data: [] as { supplier_id: string | null; payment_terms_days: number | null }[] };
+  const termsBySupplier = new Map(
+    (termRows ?? [])
+      .filter((t) => t.supplier_id && t.payment_terms_days != null)
+      .map((t) => [t.supplier_id as string, t.payment_terms_days as number])
+  );
+  const derivedDueDate = (
+    billDate: string | null,
+    supplierId: string | null
+  ): { date: string | null; derived: boolean } => {
+    const terms = supplierId ? termsBySupplier.get(supplierId) : undefined;
+    if (!billDate || terms == null) return { date: null, derived: false };
+    const d = new Date(`${billDate}T00:00:00Z`);
+    d.setUTCDate(d.getUTCDate() + terms);
+    return { date: d.toISOString().slice(0, 10), derived: true };
+  };
   // Flow's own address wins over the QBO mirror — same precedence the
   // send action uses. Without this, an address typed into the claim
   // dialog was saved to suppliers.email and then never read back, so it
@@ -190,7 +217,11 @@ export default async function HoldbackPage({
         invoiceNumber: inv.invoice_number,
         supplierEmail: inv.supplier_id ? emailBySupplierId.get(inv.supplier_id) ?? null : null,
         billDate: inv.bill_date,
-        dueDate: inv.due_date,
+        dueDate: inv.due_date ?? derivedDueDate(inv.bill_date, inv.supplier_id).date,
+        // Flagged so the report can show it as inferred from terms
+        // rather than read off the bill.
+        dueDateDerived: inv.due_date == null &&
+          derivedDueDate(inv.bill_date, inv.supplier_id).derived,
         // Comes from QuickBooks via the payment-sync cron, so it stays
         // null until the bill has actually been pushed there.
         paidStatus: inv.qbo_payment_status,

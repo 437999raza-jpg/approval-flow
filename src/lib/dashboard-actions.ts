@@ -1088,11 +1088,15 @@ export async function saveSupplierDefaults(
   );
 
   if (formData.get("apply_to_inbox") === "on" && supplier) {
+    // Anything not yet pushed to QuickBooks, not just what's still on
+    // review. A bill already out for approval still needs its due date —
+    // that's the number the CFO plans payment from, and it was being
+    // skipped purely because the invoice had moved one step along.
     const { data: candidates } = await supabase
       .from("invoices")
       .select("id, bill_date, supplier_id")
       .eq("organization_id", org.id)
-      .eq("status", "on_review");
+      .is("qbo_bill_id", null);
 
     const matches = (candidates ?? []).filter((i) => i.supplier_id === supplier.id);
 
