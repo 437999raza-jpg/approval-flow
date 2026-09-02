@@ -4,7 +4,7 @@ import { getCurrentOrg } from "@/lib/current-org";
 import { SubmitButton } from "@/components/SubmitButton";
 import { DirtySaveButton } from "@/components/DirtySaveButton";
 import { SubcontractorPicker } from "@/components/SubcontractorPicker";
-import { ConfirmSubmitButton } from "@/components/ConfirmSubmitButton";
+import { JobRetainageList } from "@/components/JobRetainageList";
 import { termCopy, isReleasable, type RetainageTerm } from "@/lib/retainage";
 import {
   saveSubcontractors,
@@ -376,90 +376,31 @@ export default async function HoldbackPage({
       <section className="mt-8 scroll-mt-6" id="projects">
         <h2 className={label}>Jobs</h2>
         <p className="mt-1 text-sm text-brand-muted">
-          Set the substantial performance date to start the release clock. When a
-          job closes, ask its subcontractors to invoice for what&apos;s being held —
-          most never do on their own, which is why it sits on the books.
+          Jobs with {term.nounLower} outstanding, or a date already set. Search to
+          reach any of the others. Set the substantial performance date to start
+          the release clock — then ask that job&apos;s subcontractors to invoice for
+          what&apos;s being held, since most never do on their own, which is why it
+          sits on the books for years.
         </p>
-        <div className="mt-2 space-y-3">
-          {(projects ?? []).map((p) => {
-            const outstandingHere = outstandingByProject.get(p.id) ?? 0;
-            const releasable = isReleasable(p);
-            return (
-              <div key={p.id} className={card}>
-                <div className="flex flex-wrap items-baseline justify-between gap-3">
-                  <h3 className="font-display text-sm font-extrabold text-brand-ink">
-                    {p.name}
-                  </h3>
-                  <span className="font-display text-base font-extrabold tabular-nums text-brand-ink">
-                    {money(outstandingHere)}
-                  </span>
-                </div>
-                {isAdmin && (
-                  <div className="mt-3 flex flex-wrap items-end gap-3">
-                    <form
-                      action={saveProjectRetainage}
-                      className="flex flex-wrap items-end gap-2"
-                    >
-                      <input type="hidden" name="project_id" value={p.id} />
-                      <div>
-                        <label className="mb-1 block text-[11px] font-medium text-brand-muted">
-                          Rate %
-                        </label>
-                        <input
-                          name="retainage_rate"
-                          type="number"
-                          step="0.01"
-                          min="0"
-                          max="100"
-                          defaultValue={p.retainage_rate ?? ""}
-                          placeholder={String(orgRow?.retainage_default_rate ?? "10")}
-                          className={`${field} w-20`}
-                        />
-                      </div>
-                      <div>
-                        <label className="mb-1 block text-[11px] font-medium text-brand-muted">
-                          Substantial performance
-                        </label>
-                        <input
-                          name="substantial_performance_at"
-                          type="date"
-                          defaultValue={p.substantial_performance_at ?? ""}
-                          className={`${field} w-40`}
-                        />
-                      </div>
-                      <DirtySaveButton />
-                    </form>
-
-                    {outstandingHere > 0 && (
-                      <ConfirmSubmitButton
-                        action={requestHoldbackClaims.bind(null, p.id)}
-                        confirmMessage={`Email every subcontractor still owed ${term.nounLower} on ${p.name}, asking them to invoice for it?`}
-                        className="rounded-lg border border-brand-line bg-white px-3 py-1.5 text-xs font-medium text-brand-ink hover:bg-brand-mist"
-                      >
-                        Request claims
-                      </ConfirmSubmitButton>
-                    )}
-
-                    {outstandingHere > 0 && releasable && (
-                      <ConfirmSubmitButton
-                        action={releaseProjectRetainage.bind(null, p.id)}
-                        confirmMessage={`Mark all ${term.nounLower} on ${p.name} as released? This closes out ${money(outstandingHere)}.`}
-                        className="rounded-lg bg-brand-green px-3 py-1.5 text-xs font-display font-bold text-white hover:bg-brand-green-dark"
-                      >
-                        Release
-                      </ConfirmSubmitButton>
-                    )}
-                  </div>
-                )}
-                {p.retainage_released_at && (
-                  <p className="mt-2 text-xs text-brand-muted">
-                    Released {new Date(p.retainage_released_at).toLocaleDateString()}
-                  </p>
-                )}
-              </div>
-            );
-          })}
-        </div>
+        <JobRetainageList
+          jobs={(projects ?? []).map((p) => ({
+            id: p.id,
+            name: p.name,
+            rate: p.retainage_rate,
+            substantialPerformanceAt: p.substantial_performance_at,
+            releasedAt: p.retainage_released_at,
+            outstanding: outstandingByProject.get(p.id) ?? 0,
+            releasable: isReleasable(p),
+          }))}
+          termNoun={term.noun}
+          termLower={term.nounLower}
+          defaultRate={String(orgRow?.retainage_default_rate ?? "10")}
+          currency={currency}
+          isAdmin={isAdmin}
+          saveAction={saveProjectRetainage}
+          requestClaims={requestHoldbackClaims}
+          release={releaseProjectRetainage}
+        />
       </section>
 
       {/* Subcontractor flags */}
