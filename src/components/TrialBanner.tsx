@@ -43,7 +43,12 @@ export function TrialBanner({ org }: { org: OrgPlanContext | null | undefined })
           button: "bg-amber-600 text-white hover:bg-amber-700",
         }
       : {
-          strip: "border-brand-line bg-brand-mist text-brand-navy",
+          // A wash of the brand green rather than the neutral mist — at 8%
+          // it reads as "on trial, all good" instead of a system notice,
+          // and it ties the strip to the green the button and the rest of
+          // the app already use. Any stronger and a banner that sits on
+          // every page all day starts competing with the content.
+          strip: "border-brand-green/25 bg-brand-green/[0.08] text-brand-navy",
           dot: "bg-brand-green",
           button: "bg-brand-green text-white hover:bg-brand-green-dark",
         };
