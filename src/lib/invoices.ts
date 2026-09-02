@@ -126,7 +126,10 @@ export function taxCodeIdFor(
 // the category is HB Payable (2-1031 in QBO) — regardless of sign. The
 // caller also negates a positive holdback amount (the model sometimes reads
 // the deduction as positive), so the bill math stays correct. Matches
-// "HB", "hold back", "hold-back", "holdback", "less 10%", "10% hold".
+// "HB", "hold back", "hold-back", "holdback", "less 10%", "5% hold" —
+// ANY percentage, not ten. Ontario holdback is 10%, but US retainage is
+// commonly 5% and often steps down mid-project, so a hardcoded 10 would
+// simply have stopped recognising the line for anyone outside Ontario.
 export function holdbackCategoryFor(
   li: { description: string | null },
   // The org's own holdback account label, e.g. "2-1031 - HB Payable".
@@ -138,7 +141,7 @@ export function holdbackCategoryFor(
 ): string | null {
   if (!accountLabel) return null;
   const desc = (li.description ?? "").toLowerCase();
-  return /\bhb\b|hold\s*-?\s*back|less\s*10\s*%|10\s*%\s*hold/.test(desc)
+  return /\bhb\b|hold\s*-?\s*back|less\s*\d+(\.\d+)?\s*%|\d+(\.\d+)?\s*%\s*hold/.test(desc)
     ? accountLabel
     : null;
 }

@@ -3142,7 +3142,7 @@ export async function saveInboundEmailLocal(
     return {
       ok: false,
       error:
-        'Use lowercase letters, numbers, dashes, dots or underscores — e.g. "fluidconstruction".',
+        'Use lowercase letters, numbers, dashes, dots or underscores — e.g. "yourcompany".',
     };
   }
 
