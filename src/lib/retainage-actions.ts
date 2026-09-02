@@ -160,22 +160,19 @@ export async function rescanRetainage(): Promise<void> {
     ? { label: categoryDisplayName({ acctNum: account.acct_num, name: account.name }), number: account.acct_num }
     : undefined;
 
-  const { data: subcontractors } = await supabase
-    .from("suppliers")
-    .select("id")
-    .eq("organization_id", org.id)
-    .eq("is_subcontractor", true);
-  const subIds = (subcontractors ?? []).map((s) => s.id);
-  if (subIds.length === 0) {
-    revalidatePath("/holdback");
-    redirect("/holdback?scanned=0");
-  }
-
+  // Every invoice, not just flagged subcontractors'.
+  //
+  // Detection is by the account a line is coded to, and that IS the
+  // answer: money posted to the holdback account is holdback, whoever
+  // sent the bill. Requiring someone to first flag the supplier meant
+  // the page showed nothing until a list was curated, for no gain —
+  // Home Depot never gets a line coded to 2-1031, so there was nothing
+  // to protect against.
   const { data: invoices } = await supabase
     .from("invoices")
     .select("id, supplier_id, project_id")
     .eq("organization_id", org.id)
-    .in("supplier_id", subIds);
+    .limit(5000);
 
   const { data: projects } = await supabase
     .from("projects")
@@ -196,10 +193,13 @@ export async function rescanRetainage(): Promise<void> {
       .order("line_order");
     if (!lines?.length) continue;
 
+    // is_subcontractor is passed as true because the account coding has
+    // already established this is holdback; the flag's job was to gate
+    // the guesswork detector, and there is no guesswork left.
     const expected = resolveRetainageRate(
       orgRow,
       { retainage_rate: rateByProject.get(inv.project_id ?? "") ?? null },
-      { is_subcontractor: true } // already filtered to subcontractors above
+      { is_subcontractor: true }
     );
 
     for (const hit of detectRetainageLines(lines, expected, accountRef)) {
