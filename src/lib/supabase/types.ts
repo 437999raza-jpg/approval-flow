@@ -59,6 +59,8 @@ export interface Database {
           // by parseCustomPlan() in src/lib/plans.ts — JSONB here, so
           // `unknown` is the honest type.
           custom_plan: unknown;
+          // House account (migration 0096): full access, never billed.
+          is_internal: boolean;
           setup_fee_usd: number | null;
           setup_fee_label: string | null;
           setup_fee_paid_at: string | null;

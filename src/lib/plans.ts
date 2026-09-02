@@ -106,6 +106,9 @@ export interface OrgPlanContext {
   plan?: string | null;
   custom_plan?: unknown;
   trial_ends_at?: string | null;
+  // House account (migration 0096) — full access, never billed, never
+  // locked, never shown trial or payment messaging.
+  is_internal?: boolean | null;
 }
 
 // custom_plan is JSONB, so it carries no type guarantees at all — a
@@ -186,6 +189,7 @@ export function isTrialActive(trialEndsAt: string | null | undefined): boolean {
 // negotiated custom plan counts as a plan, so an org we built for is
 // never locked out of the thing we built.
 export function isOrgLocked(org: OrgPlanContext): boolean {
+  if (org.is_internal) return false;
   return (
     org.trial_ends_at != null &&
     !isTrialActive(org.trial_ends_at) &&
@@ -197,6 +201,7 @@ export function isOrgLocked(org: OrgPlanContext): boolean {
 // during an active trial is the point of the trial, so it passes here
 // too, independent of plan.
 export function hasStatementReconciliation(org: OrgPlanContext | null | undefined): boolean {
+  if (org?.is_internal) return true;
   if (isTrialActive(org?.trial_ends_at)) return true;
   return resolvePlan(org)?.statementReconciliation === true;
 }
@@ -206,6 +211,7 @@ export function hasStatementReconciliation(org: OrgPlanContext | null | undefine
 // promises, with no way for the two to drift apart. An active trial gets
 // "complex" too, same as every other trial-time feature.
 export function extractionModeForOrg(org: OrgPlanContext | null | undefined): ExtractionMode {
+  if (org?.is_internal) return "complex";
   if (isTrialActive(org?.trial_ends_at)) return "complex";
   return resolvePlan(org)?.extraction ?? "simple";
 }

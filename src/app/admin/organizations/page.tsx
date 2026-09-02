@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isPlatformAdmin } from "@/lib/platform-admin";
-import { createOrganizationAction, joinOrganizationAction, extendTrialAction, setOrgPlanAction, setOrgCustomPlanAction, setOrgSetupFeeAction } from "@/lib/admin-actions";
+import { createOrganizationAction, joinOrganizationAction, extendTrialAction, setOrgPlanAction, setOrgCustomPlanAction, setOrgSetupFeeAction, setOrgInternalAction } from "@/lib/admin-actions";
 import { SubmitButton } from "@/components/SubmitButton";
 import { DirtySaveButton } from "@/components/DirtySaveButton";
 import { isTrialActive, PLAN_ORDER, PLANS, parseCustomPlan, resolveSetupFee } from "@/lib/plans";
@@ -57,7 +57,7 @@ export default async function AdminOrganizationsPage({
 
   const { data: orgs } = await admin
     .from("organizations")
-    .select("id, name, slug, inbound_email_token, inbound_email_local, trial_ends_at, plan, custom_plan, setup_fee_usd, setup_fee_label, setup_fee_paid_at, created_at")
+    .select("id, name, slug, inbound_email_token, inbound_email_local, trial_ends_at, plan, custom_plan, is_internal, setup_fee_usd, setup_fee_label, setup_fee_paid_at, created_at")
     .order("created_at", { ascending: false });
 
   const { data: memberRows } = await admin
@@ -204,6 +204,7 @@ export default async function AdminOrganizationsPage({
                     <h3 className="font-display text-base font-extrabold text-brand-ink">
                       {org.name}
                     </h3>
+                    {org.is_internal && <span className={chipCls("emerald")}>Internal</span>}
                     {custom ? (
                       <span className={chipCls("emerald")}>Custom · ${custom.priceUsd}/mo</span>
                     ) : org.plan ? (
@@ -384,6 +385,26 @@ export default async function AdminOrganizationsPage({
                           <option value="simple">Simple</option>
                         </select>
                       </div>
+                      <DirtySaveButton />
+                    </div>
+                  </form>
+
+                  <form action={setOrgInternalAction} className="lg:col-span-2">
+                    <input type="hidden" name="org_id" value={org.id} />
+                    <div className="flex flex-wrap items-center gap-3 rounded-lg border border-brand-line bg-white px-3 py-2">
+                      <label className="flex items-center gap-2 text-xs text-brand-ink">
+                        <input
+                          type="checkbox"
+                          name="is_internal"
+                          defaultChecked={org.is_internal}
+                          className="h-3.5 w-3.5 rounded border-brand-line"
+                        />
+                        <span className="font-medium">House account</span>
+                      </label>
+                      <span className="flex-1 text-[11px] text-brand-muted">
+                        Full access to everything, never billed, never trial-locked. All
+                        payment UI disappears from their Billing page.
+                      </span>
                       <DirtySaveButton />
                     </div>
                   </form>

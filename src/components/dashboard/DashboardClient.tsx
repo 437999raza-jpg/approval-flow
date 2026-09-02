@@ -603,6 +603,7 @@ export function DashboardClient({ initialListData }: { initialListData: Dashboar
           org={{
             plan: data.trialPlan,
             custom_plan: data.trialCustomPlan,
+            is_internal: data.trialIsInternal,
             trial_ends_at: data.trialEndsAt,
           }}
         />

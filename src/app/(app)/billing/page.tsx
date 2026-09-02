@@ -43,7 +43,7 @@ export default async function BillingPage({
     supabase
       .from("organizations")
       .select(
-        "plan, custom_plan, plan_selected_at, trial_ends_at, setup_fee_usd, setup_fee_label, setup_fee_paid_at"
+        "plan, custom_plan, is_internal, plan_selected_at, trial_ends_at, setup_fee_usd, setup_fee_label, setup_fee_paid_at"
       )
       .eq("id", org.id)
       .single(),
@@ -57,8 +57,13 @@ export default async function BillingPage({
       ? await confirmSetupFeePayment(searchParams.session_id)
       : false;
 
+  // A house account (Ufirst's own production org) has full access and is
+  // never invoiced. Everything that asks it for money is suppressed
+  // rather than shown-and-ignored — a "Pay now" button for money that
+  // will never move is just a trap for whoever clicks it.
+  const isInternal = orgRow?.is_internal === true;
   const currentPlan = resolvePlan(orgRow);
-  const setupFee = resolveSetupFee(
+  const setupFee = isInternal ? null : resolveSetupFee(
     setupFeeJustPaid
       ? { ...orgRow, setup_fee_paid_at: new Date().toISOString() }
       : orgRow
@@ -109,21 +114,26 @@ export default async function BillingPage({
           </h1>
         </div>
       </div>
+      {/* The USD note is highlighted deliberately: every price on this
+          page is USD, but the app shows CAD throughout (invoices, totals,
+          the usage charge), so this is exactly the line a reader skims
+          past and queries later. A house account never pays, so the
+          currency it would pay in is noise. */}
       <p className="mt-1 text-sm text-brand-muted">
-        {currentPlan
-          ? `On the ${currentPlan.name} plan — ${currentPlan.includedDocs} documents/month included.`
-          : trialing
-            ? `${trialDaysLeft} day${trialDaysLeft === 1 ? "" : "s"} left in your free trial — full access, no plan needed yet.`
-            : trialLapsed
-              ? "Your trial has ended — choose a plan below to keep approving and adding invoices."
-              : "Choose a plan below to get started."}{" "}
-        {/* Highlighted deliberately: every price on this page is USD, but
-            the app otherwise shows CAD amounts throughout (invoices,
-            totals, the usage charge), so this is exactly the line a
-            reader skims past and then queries later. */}
-        <mark className="rounded bg-amber-200/70 px-1 py-0.5 font-medium text-brand-ink">
-          Always billed in USD, wherever you&apos;re based.
-        </mark>
+        {isInternal
+          ? "Internal account — full access to everything, never billed."
+          : currentPlan
+            ? `On the ${currentPlan.name} plan — ${currentPlan.includedDocs} documents/month included.`
+            : trialing
+              ? `${trialDaysLeft} day${trialDaysLeft === 1 ? "" : "s"} left in your free trial — full access, no plan needed yet.`
+              : trialLapsed
+                ? "Your trial has ended — choose a plan below to keep approving and adding invoices."
+                : "Choose a plan below to get started."}{" "}
+        {!isInternal && (
+          <mark className="rounded bg-amber-200/70 px-1 py-0.5 font-medium text-brand-ink">
+            Always billed in USD, wherever you&apos;re based.
+          </mark>
+        )}
       </p>
 
       {searchParams.payment === "success" && (
@@ -149,7 +159,22 @@ export default async function BillingPage({
         <div className="text-[11px] font-semibold uppercase tracking-wide text-brand-muted">
           Plan
         </div>
-        {currentPlan?.isCustom ? (
+        {isInternal ? (
+          <div className="mt-2 rounded-xl border border-brand-line bg-white p-6 shadow-elevation-1 shadow-brand-ink/5">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-display text-lg font-extrabold text-brand-ink">
+                {currentPlan?.name ?? "Full access"}
+              </span>
+              <span className="rounded-full bg-brand-green/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-brand-green-dark">
+                Internal account
+              </span>
+            </div>
+            <p className="mt-2 text-sm text-brand-muted">
+              This is a house account. Every feature is on, nothing is metered
+              against a limit, and no invoice is ever raised for it.
+            </p>
+          </div>
+        ) : currentPlan?.isCustom ? (
           /* A negotiated plan replaces the tier grid outright. Showing
              four standard tiers underneath an agreed deal invites exactly
              the question we don't want ("am I on the wrong one?") — and
@@ -311,9 +336,11 @@ export default async function BillingPage({
             This month&apos;s charge
           </div>
           <div className="mt-1.5 font-display text-3xl font-extrabold tabular-nums text-brand-ink">
-            {currentPlan
-              ? totalCharge.toLocaleString(undefined, { style: "currency", currency: "USD" })
-              : "—"}
+            {isInternal
+              ? "Not billed"
+              : currentPlan
+                ? totalCharge.toLocaleString(undefined, { style: "currency", currency: "USD" })
+                : "—"}
           </div>
         </div>
       </div>
@@ -343,7 +370,9 @@ export default async function BillingPage({
         </section>
       )}
 
-      {/* Payment */}
+      {/* Payment — absent entirely for a house account rather than
+          disabled: there is no card to add and no charge to settle. */}
+      {!isInternal && (
       <section className="mt-4 rounded-xl border border-brand-line bg-white p-5 shadow-elevation-1 shadow-brand-ink/5">
         <div className="text-[11px] font-semibold uppercase tracking-wide text-brand-muted">
           Payment
@@ -412,6 +441,7 @@ export default async function BillingPage({
           </p>
         )}
       </section>
+      )}
 
       {/* By month */}
       <section className="mt-4 rounded-xl border border-brand-line bg-white p-5 shadow-elevation-1 shadow-brand-ink/5">
@@ -423,7 +453,9 @@ export default async function BillingPage({
             <tr className="border-b border-brand-line text-left text-xs text-brand-muted">
               <th className="py-1.5 font-medium">Month</th>
               <th className="py-1.5 text-right font-medium">Documents</th>
-              <th className="py-1.5 text-right font-medium">Est. charge</th>
+              {!isInternal && (
+                <th className="py-1.5 text-right font-medium">Est. charge</th>
+              )}
             </tr>
           </thead>
           <tbody>
@@ -433,17 +465,19 @@ export default async function BillingPage({
                 <tr key={month} className="border-b border-slate-100">
                   <td className="py-1.5">{month}</td>
                   <td className="py-1.5 text-right tabular-nums">{count}</td>
-                  <td className="py-1.5 text-right tabular-nums">
-                    {cost !== null
-                      ? cost.toLocaleString(undefined, { style: "currency", currency: "USD" })
-                      : "—"}
-                  </td>
+                  {!isInternal && (
+                    <td className="py-1.5 text-right tabular-nums">
+                      {cost !== null
+                        ? cost.toLocaleString(undefined, { style: "currency", currency: "USD" })
+                        : "—"}
+                    </td>
+                  )}
                 </tr>
               );
             })}
             {months.length === 0 && (
               <tr>
-                <td colSpan={3} className="py-4 text-center text-brand-muted">
+                <td colSpan={isInternal ? 2 : 3} className="py-4 text-center text-brand-muted">
                   No documents processed yet.
                 </td>
               </tr>

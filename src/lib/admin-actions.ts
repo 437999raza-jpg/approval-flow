@@ -289,6 +289,31 @@ export async function extendTrialAction(formData: FormData) {
   redirect("/admin/organizations");
 }
 
+// Platform-admin only: mark an org as a house account (migration 0096).
+// Ufirst runs its own production work on Flow and is never invoiced for
+// it; before this the only way to say so was to put it on a paid plan
+// and quietly never charge, which left its Billing page advertising a
+// charge that was never going to be collected.
+export async function setOrgInternalAction(formData: FormData) {
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user || !isPlatformAdmin(user.email)) redirect("/login");
+
+  const orgId = String(formData.get("org_id") ?? "");
+  if (!orgId) redirect("/admin/organizations?error=bad-org");
+
+  const admin = createAdminClient();
+  await admin
+    .from("organizations")
+    .update({ is_internal: formData.get("is_internal") === "on" })
+    .eq("id", orgId);
+
+  revalidatePath("/admin/organizations");
+  redirect("/admin/organizations");
+}
+
 // Platform-admin only: write (or clear) an org's negotiated plan and its
 // one-time build fee. Deliberately not exposed to the org's own admin —
 // these are the terms of a deal we agreed, not a self-serve setting; the

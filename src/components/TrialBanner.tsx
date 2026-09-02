@@ -20,7 +20,7 @@ const URGENT_DAYS = 3;
 
 export function TrialBanner({ org }: { org: OrgPlanContext | null | undefined }) {
   const trialEndsAt = org?.trial_ends_at ?? null;
-  if (!org || trialEndsAt == null) return null;
+  if (!org || org.is_internal || trialEndsAt == null) return null;
   if (resolvePlan(org) != null) return null; // a chosen plan overrides trial messaging
 
   const active = isTrialActive(trialEndsAt);

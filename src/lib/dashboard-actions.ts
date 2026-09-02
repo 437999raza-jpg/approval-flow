@@ -2843,13 +2843,19 @@ export async function createUsageCheckout(): Promise<{ ok: boolean; url?: string
       .gte("created_at", monthStart.toISOString()),
     supabase
       .from("organizations")
-      .select("plan, custom_plan, name, setup_fee_usd, setup_fee_label, setup_fee_paid_at")
+      .select("plan, custom_plan, is_internal, name, setup_fee_usd, setup_fee_label, setup_fee_paid_at")
       .eq("id", org.id)
       .single(),
     ensureStripeCustomer(supabase, secret, org),
   ]);
   if (!customer.ok) return { ok: false, error: customer.error };
 
+  // The Billing page hides every payment control for a house account,
+  // but hiding a button is not the same as refusing the action — this is
+  // the server-side half of that rule.
+  if (orgRow?.is_internal) {
+    return { ok: false, error: "This is an internal account — it is never billed." };
+  }
   const plan = resolvePlan(orgRow);
   if (!plan) {
     return { ok: false, error: "Choose a plan below before paying." };

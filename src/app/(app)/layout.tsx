@@ -53,7 +53,7 @@ export default async function AppLayout({
         .eq("read", false),
       supabase
         .from("organizations")
-        .select("plan, custom_plan, trial_ends_at")
+        .select("plan, custom_plan, is_internal, trial_ends_at")
         .eq("id", org.id)
         .single(),
     ]);
