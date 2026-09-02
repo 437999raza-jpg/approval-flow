@@ -1,12 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { completeSelfSignup } from "@/lib/auth-actions";
 import { TurnstileWidget } from "@/components/TurnstileWidget";
+import { isBusinessEmail, BUSINESS_EMAIL_MESSAGE } from "@/lib/business-email";
 
 const TURNSTILE_SITE_KEY = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
 
@@ -24,6 +25,41 @@ type SignInMode = "password" | "magic";
 // (Azure AD/Entra ID under the hood), "apple" covers Sign in with Apple
 // (which an iCloud-email user would use).
 type OAuthProvider = "google" | "azure" | "apple";
+
+// The auth routes (/auth/callback, /auth/confirm) can only report back
+// through a redirect, so they append ?error=<code>. Kept in one map so the
+// wording lives next to the codes that produce it.
+const REDIRECT_ERRORS: Record<string, string> = {
+  business_email: BUSINESS_EMAIL_MESSAGE,
+  auth_callback_failed: "That sign-in link didn't work. Please try again.",
+  auth_confirm_failed: "That confirmation link has expired or was already used. Request a new one below.",
+};
+
+// The pitch, as data — the panel below renders it, the condensed mobile
+// strip renders the same leads. The last one is the bespoke/custom-build
+// offer, which is the actual differentiator versus the off-the-shelf tools.
+const HERO_POINTS = [
+  {
+    lead: "Routed automatically.",
+    rest: "Every bill reaches the right approver by project, class or supplier — no manual reassigning.",
+  },
+  {
+    lead: "Read automatically.",
+    rest: "Vendor, line items, totals and tax pulled off the invoice. No data entry, ever.",
+  },
+  {
+    lead: "Chased automatically.",
+    rest: "Anything past its deadline gets reminders and escalates to a manager, so nothing goes quiet.",
+  },
+  {
+    lead: "Audited automatically.",
+    rest: "Every approval, rejection and comment logged — a clean trail whenever someone asks.",
+  },
+  {
+    lead: "Built for you.",
+    rest: "Need it to match your process exactly? We build custom rules, fields and integrations to fit.",
+  },
+];
 
 export default function LoginPage() {
   const router = useRouter();
@@ -46,6 +82,16 @@ export default function LoginPage() {
   const [oauthPending, setOauthPending] = useState<OAuthProvider | null>(null);
   const [turnstileToken, setTurnstileToken] = useState("");
   const pending = magicLinkPending || passwordPending || signupPending || oauthPending !== null;
+
+  // Surface ?error= from an auth redirect once, then strip it from the URL so
+  // a refresh doesn't re-show a stale message. replaceState (not the router)
+  // — nothing here needs a re-render.
+  useEffect(() => {
+    const code = new URLSearchParams(window.location.search).get("error");
+    if (!code) return;
+    setError(REDIRECT_ERRORS[code] ?? "Sign-in failed. Please try again.");
+    window.history.replaceState(null, "", window.location.pathname);
+  }, []);
 
   async function continueWithProvider(provider: OAuthProvider) {
     setError(null);
@@ -116,6 +162,10 @@ export default function LoginPage() {
   async function signUp(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+    if (!isBusinessEmail(email)) {
+      setError(BUSINESS_EMAIL_MESSAGE);
+      return;
+    }
     setSignupPending(true);
     try {
       const supabase = createClient();
@@ -230,22 +280,28 @@ export default function LoginPage() {
   return (
     <main className="flex min-h-screen items-center justify-center bg-brand-mist px-4 py-12">
       <div className="grid w-full max-w-4xl overflow-hidden rounded-2xl border border-brand-line bg-white shadow-elevation-1 shadow-brand-ink/5 md:grid-cols-2">
-        {/* Hero panel — hidden on narrow screens, the form alone still
-            carries the wordmark below. */}
+        {/* Hero panel — the whole pitch, since there's no marketing site in
+            front of this page yet. Deliberately no pricing: the plans live
+            behind sign-in on /billing, and a number here only gives someone
+            a reason to leave before they've seen what it does. Hidden on
+            narrow screens, where the condensed strip below carries it. */}
         <div className="relative hidden flex-col bg-gradient-to-br from-brand-ink to-brand-navy p-10 text-white md:flex">
-          <h1 className="font-display text-[27px] font-extrabold italic leading-tight">
-            No more chasing down who approves what.
+          <p className="text-[10.5px] font-semibold uppercase tracking-[0.16em] text-brand-green-light">
+            Invoice approvals, on autopilot
+          </p>
+          <h1 className="mt-3 font-display text-[27px] font-extrabold italic leading-tight">
+            Stop chasing down who approves what.
             <br />
             Flow already knows — <span className="text-brand-green-light">automatically.</span>
           </h1>
+          <p className="mt-3 text-[13.5px] leading-relaxed text-[#C4D0DE]">
+            Bills arrive, get read, and land in front of the right person the
+            same minute. Nobody re-types an invoice. Nobody forwards a chase
+            email.
+          </p>
           <ul className="mt-6 space-y-3 text-[13.5px] leading-relaxed text-[#C4D0DE]">
-            {[
-              "Routes each bill to the right approver by project, class, or supplier — no manual reassigning.",
-              "Reads every invoice automatically — vendor, line items, totals — no manual data entry.",
-              "Flags anything sitting past its deadline, with reminders and escalation so nothing goes quiet.",
-              "Every approval, rejection, and comment logged automatically — a clean audit trail, always.",
-            ].map((line) => (
-              <li key={line} className="flex items-start gap-2.5">
+            {HERO_POINTS.map(({ lead, rest }) => (
+              <li key={lead} className="flex items-start gap-2.5">
                 <svg
                   viewBox="0 0 24 24"
                   fill="none"
@@ -259,10 +315,24 @@ export default function LoginPage() {
                     strokeLinejoin="round"
                   />
                 </svg>
-                <span>{line}</span>
+                <span>
+                  <span className="font-semibold text-white">{lead}</span> {rest}
+                </span>
               </li>
             ))}
           </ul>
+          <div className="mt-7 rounded-xl border border-white/10 bg-white/[0.06] p-4">
+            <p className="font-display text-[13px] font-bold text-white">
+              Built around your process — not the other way round.
+            </p>
+            <p className="mt-1.5 text-[12.5px] leading-relaxed text-[#C4D0DE]">
+              Approval rules, custom fields and integrations shaped to how your
+              team already works. Tell us the process, we build it.
+            </p>
+          </div>
+          <p className="mt-7 text-[12px] font-medium text-[#8FA3BA]">
+            14-day free trial · No credit card · Live in an afternoon
+          </p>
           <div className="brand-rule absolute bottom-0 left-0 right-0" />
         </div>
 
@@ -280,6 +350,22 @@ export default function LoginPage() {
               {authMode === "signup"
                 ? "Create your account"
                 : "Sign in to review and approve invoices"}
+            </p>
+          </div>
+
+          <div className="mb-6 rounded-xl border border-brand-line bg-brand-mist p-4 md:hidden">
+            <p className="font-display text-[13px] font-bold leading-snug text-brand-ink">
+              Stop chasing down who approves what.
+            </p>
+            <ul className="mt-2.5 space-y-1.5 text-[12.5px] leading-snug text-brand-muted">
+              {HERO_POINTS.map(({ lead, rest }) => (
+                <li key={lead}>
+                  <span className="font-semibold text-brand-navy">{lead}</span> {rest}
+                </li>
+              ))}
+            </ul>
+            <p className="mt-3 text-[11.5px] font-medium text-brand-green-dark">
+              14-day free trial · No credit card
             </p>
           </div>
 
@@ -401,7 +487,7 @@ export default function LoginPage() {
                       />
                     </div>
                     <div>
-                      <label className={labelCls}>Email</label>
+                      <label className={labelCls}>Work email</label>
                       <input
                         type="email"
                         required
@@ -410,6 +496,10 @@ export default function LoginPage() {
                         onChange={(e) => setEmail(e.target.value)}
                         className={inputCls}
                       />
+                      <p className="mt-1.5 text-[11px] text-brand-muted">
+                        Your company domain — personal mailboxes (Gmail, Outlook,
+                        iCloud) can&apos;t be used to create an account.
+                      </p>
                     </div>
                     <div>
                       <label className={labelCls}>Password</label>
@@ -452,8 +542,11 @@ export default function LoginPage() {
                       className={primaryBtnCls(signupPending)}
                     >
                       {signupPending && <Spinner />}
-                      {signupPending ? "Creating account…" : "Create account"}
+                      {signupPending ? "Creating account…" : "Start free 14-day trial"}
                     </button>
+                    <p className="text-center text-[11.5px] text-brand-muted">
+                      No credit card required · Cancel any time
+                    </p>
                   </form>
                 ) : signInMode === "magic" ? (
                   <form onSubmit={sendMagicLink} className="space-y-4">

@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import type { EmailOtpType } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
 import { ensureOrgForNewUser } from "@/lib/onboarding";
+import { isBusinessEmail } from "@/lib/business-email";
+import { isPlatformAdmin } from "@/lib/platform-admin";
 
 // Companion to /auth/callback: handles the `token_hash` + `type` form of
 // email confirmation links (Supabase's documented pattern for OTP/magic-link
@@ -21,6 +23,20 @@ export async function GET(request: Request) {
       token_hash: tokenHash,
     });
     if (!error) {
+      // Same business-domain rule as /auth/callback — see the comment
+      // there. Enforced on both routes because either can be the one that
+      // first establishes a session for a brand-new account.
+      // isPlatformAdmin bypasses it: the operator account in
+      // PLATFORM_ADMIN_EMAILS is not a tenant and may legitimately be on
+      // any domain — locking it out would lock us out of /admin.
+      if (
+        data.user &&
+        !isBusinessEmail(data.user.email) &&
+        !isPlatformAdmin(data.user.email)
+      ) {
+        await supabase.auth.signOut();
+        return NextResponse.redirect(`${origin}/login?error=business_email`);
+      }
       if (data.user) await ensureOrgForNewUser(supabase, data.user);
       return NextResponse.redirect(`${origin}${next}`);
     }
@@ -32,6 +48,10 @@ export async function GET(request: Request) {
       data: { user },
     } = await supabase.auth.getUser();
     if (user) {
+      if (!isBusinessEmail(user.email) && !isPlatformAdmin(user.email)) {
+        await supabase.auth.signOut();
+        return NextResponse.redirect(`${origin}/login?error=business_email`);
+      }
       await ensureOrgForNewUser(supabase, user);
       return NextResponse.redirect(`${origin}${next}`);
     }

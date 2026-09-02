@@ -2,6 +2,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/types";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { bootstrapOrganization } from "@/lib/admin-actions";
+import { isBusinessEmail } from "@/lib/business-email";
+import { isPlatformAdmin } from "@/lib/platform-admin";
 
 const TRIAL_DAYS = 14;
 
@@ -21,6 +23,13 @@ export async function ensureOrgForNewUser(
   supabase: SupabaseClient<Database>,
   user: { id: string; email?: string | null; user_metadata?: Record<string, unknown> }
 ): Promise<void> {
+  // Belt and braces on the business-domain rule. /auth/callback and
+  // /auth/confirm both reject a personal mailbox and sign the session out
+  // before reaching this, but this is the single point every provisioning
+  // path funnels through — so refusing here means no future caller can
+  // accidentally hand a consumer account a free org and trial.
+  if (!isBusinessEmail(user.email) && !isPlatformAdmin(user.email)) return;
+
   const { data: existing } = await supabase
     .from("organization_members")
     .select("organization_id")

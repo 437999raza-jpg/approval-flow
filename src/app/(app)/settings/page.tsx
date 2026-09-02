@@ -25,6 +25,7 @@ import { ScrollRestorer } from "@/components/ScrollRestorer";
 import { StickyHeader } from "@/components/StickyHeader";
 import { LocalTime } from "@/components/LocalTime";
 import { membersTag } from "@/lib/org-cache";
+import { isBusinessEmail, BUSINESS_EMAIL_MESSAGE } from "@/lib/business-email";
 import type { Database } from "@/lib/supabase/types";
 
 type OrgRole =
@@ -40,6 +41,7 @@ const ROLE_LABELS: Record<OrgRole, string> = {
 const SETTINGS_ERRORS: Record<string, string> = {
   "invite-failed": "Could not invite that user (no Supabase account found).",
   "already-member": "That user is already a member of this organization.",
+  "personal-email": BUSINESS_EMAIL_MESSAGE,
 };
 
 // Invite a teammate: create the auth user (if needed), attach a profile
@@ -57,6 +59,9 @@ async function inviteMember(orgId: string, formData: FormData) {
   const fullName = String(formData.get("full_name") ?? "").trim() || null;
   const role = String(formData.get("role") ?? "approver") as OrgRole;
   if (!email || !ROLES.includes(role)) return;
+  // Teammates go through the same business-domain rule as signup —
+  // otherwise the front door is locked while the side door isn't.
+  if (!isBusinessEmail(email)) redirect("/settings?error=personal-email#members");
 
   const admin = createAdminClient();
   let userId: string | null = null;
