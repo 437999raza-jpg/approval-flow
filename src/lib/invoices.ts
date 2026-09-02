@@ -7,6 +7,8 @@ import { matchSupplier } from "@/lib/qbo";
 import { fetchAllQboSuppliers } from "@/lib/qbo-all";
 import { computeLineItemTotals } from "@/lib/invoice-totals";
 import { extractionModeForOrg } from "@/lib/plans";
+import { categoryDisplayName } from "@/lib/qbo";
+import { syncInvoiceRetainage } from "@/lib/retainage-sync";
 import { resolveSupplier } from "@/lib/suppliers";
 
 const INVOICE_BUCKET = "invoices";
@@ -125,12 +127,19 @@ export function taxCodeIdFor(
 // caller also negates a positive holdback amount (the model sometimes reads
 // the deduction as positive), so the bill math stays correct. Matches
 // "HB", "hold back", "hold-back", "holdback", "less 10%", "10% hold".
-export function holdbackCategoryFor(li: {
-  description: string | null;
-}): string | null {
+export function holdbackCategoryFor(
+  li: { description: string | null },
+  // The org's own holdback account label, e.g. "2-1031 - HB Payable".
+  // This used to be that exact string hardcoded — Fluid's account, in
+  // shared code, applied to every tenant. Any other customer's bills
+  // would have been coded to an account their QuickBooks has never
+  // heard of. Null (no account configured) means don't guess at all.
+  accountLabel: string | null
+): string | null {
+  if (!accountLabel) return null;
   const desc = (li.description ?? "").toLowerCase();
   return /\bhb\b|hold\s*-?\s*back|less\s*10\s*%|10\s*%\s*hold/.test(desc)
-    ? "2-1031 - HB Payable"
+    ? accountLabel
     : null;
 }
 
@@ -272,10 +281,28 @@ export async function createInvoiceFromFile({
   // extraction.
   const { data: org } = await supabase
     .from("organizations")
-    .select("default_tax_rate, default_tax_code_id, plan, custom_plan, trial_ends_at")
+    .select("default_tax_rate, default_tax_code_id, plan, custom_plan, trial_ends_at, retainage_account_qbo_id")
     .eq("id", organizationId)
     .single();
   const orgDefaultTaxRate = org?.default_tax_rate ?? null;
+
+  // The org's holdback account, resolved once. Extraction only auto-codes
+  // a deduction line when the org actually has one configured.
+  let retainageAccountLabel: string | null = null;
+  if (org?.retainage_account_qbo_id) {
+    const { data: hbAccount } = await supabase
+      .from("qbo_categories")
+      .select("acct_num, name")
+      .eq("organization_id", organizationId)
+      .eq("qbo_account_id", org.retainage_account_qbo_id)
+      .maybeSingle();
+    if (hbAccount) {
+      retainageAccountLabel = categoryDisplayName({
+        acctNum: hbAccount.acct_num,
+        name: hbAccount.name,
+      });
+    }
+  }
   const orgDefaultTaxCodeId = org?.default_tax_code_id ?? null;
   const isSimpleMode = extractionModeForOrg(org) === "simple";
 
@@ -324,7 +351,7 @@ export async function createInvoiceFromFile({
     ? extracted!.line_items.map((li) => {
         // A holdback read as a positive amount is still a deduction — negate
         // it so the bill math stays right (the category rule matches it).
-        const hbCat = holdbackCategoryFor(li);
+        const hbCat = holdbackCategoryFor(li, retainageAccountLabel);
         const appliedRate =
           supplierDefaults?.tax_rate ??
           orgDefaultTaxRate ??
@@ -466,6 +493,9 @@ export async function createInvoiceFromFile({
 
   if (lineItemsToInsert.length > 0) {
     await supabase.from("invoice_line_items").insert(lineItemsToInsert);
+    // Record any holdback on this bill now, so the Holdback report reads
+    // a table rather than rescanning every invoice on each page load.
+    await syncInvoiceRetainage(supabase, organizationId, invoice.id);
   }
 
   await supabase.from("audit_log").insert({

@@ -42,6 +42,8 @@ import { buildQboAttachmentBundle } from "@/lib/qbo-attachments";
 import { pdfPageCount, reorderPdfPages } from "@/lib/merge-documents";
 import { buildMergedInvoicePdf } from "@/lib/invoice-export";
 import { qboTag, INVOICES_TAG } from "@/lib/org-cache";
+import { syncInvoiceRetainage } from "@/lib/retainage-sync";
+import { categoryDisplayName } from "@/lib/qbo";
 import { PLANS, isPlanId, hasStatementReconciliation, isOrgLocked, extractionModeForOrg, resolvePlan, resolveSetupFee } from "@/lib/plans";
 import { extractStatementLines } from "@/lib/extract-statement";
 import { getAppUrl } from "@/lib/app-url";
@@ -2156,6 +2158,10 @@ export async function saveLineItem(
   }
 
   revalidateTag(INVOICES_TAG);
+
+  // Keep the retainage ledger in step with the line just changed,
+  // so the Holdback report reads a table instead of rescanning bills.
+  await syncInvoiceRetainage(supabase, invoice.organization_id, invoiceId);
 }
 
 export async function deleteLineItem(invoiceId: string, lineItemId: string) {
@@ -2196,6 +2202,10 @@ export async function deleteLineItem(invoiceId: string, lineItemId: string) {
   });
 
   revalidateTag(INVOICES_TAG);
+
+  // Keep the retainage ledger in step with the line just changed,
+  // so the Holdback report reads a table instead of rescanning bills.
+  await syncInvoiceRetainage(supabase, invoice.organization_id, invoiceId);
 }
 
 // Duplicate a line item exactly (same category/description/tax/class/
@@ -2259,6 +2269,10 @@ export async function cloneLineItem(invoiceId: string, lineItemId: string) {
   });
 
   revalidateTag(INVOICES_TAG);
+
+  // Keep the retainage ledger in step with the line just changed,
+  // so the Holdback report reads a table instead of rescanning bills.
+  await syncInvoiceRetainage(supabase, invoice.organization_id, invoiceId);
 }
 
 // Manual escape hatch for an invoice that came in fully line-by-line but
@@ -2332,6 +2346,10 @@ export async function collapseInvoiceToOneLine(invoiceId: string, lineItemIds: s
   });
 
   revalidateTag(INVOICES_TAG);
+
+  // Keep the retainage ledger in step with the line just changed,
+  // so the Holdback report reads a table instead of rescanning bills.
+  await syncInvoiceRetainage(supabase, invoice.organization_id, invoiceId);
 }
 
 // Shared core of re-extraction: downloads the invoice's primary document,
@@ -2440,12 +2458,32 @@ async function reExtractInvoiceCore(
     .eq("invoice_id", invoiceId);
   const { data: orgDefault } = await supabase
     .from("organizations")
-    .select("default_tax_rate, default_tax_code_id, plan, custom_plan, trial_ends_at")
+    .select("default_tax_rate, default_tax_code_id, plan, custom_plan, trial_ends_at, retainage_account_qbo_id")
     .eq("id", invoice.organization_id)
     .single();
   const supplierDefaults = supplierDefaultsForInvoice;
   const orgDefaultTaxRate = orgDefault?.default_tax_rate ?? null;
   const orgDefaultTaxCodeId = orgDefault?.default_tax_code_id ?? null;
+
+  // Same per-org holdback account as ingestion uses — never a hardcoded
+  // account number, which would code another customer's bills to an
+  // account their QuickBooks doesn't have.
+  let retainageAccountLabel: string | null = null;
+  if (orgDefault?.retainage_account_qbo_id) {
+    const { data: hbAccount } = await supabase
+      .from("qbo_categories")
+      .select("acct_num, name")
+      .eq("organization_id", invoice.organization_id)
+      .eq("qbo_account_id", orgDefault.retainage_account_qbo_id)
+      .maybeSingle();
+    if (hbAccount) {
+      retainageAccountLabel = categoryDisplayName({
+        acctNum: hbAccount.acct_num,
+        name: hbAccount.name,
+      });
+    }
+  }
+
   if (extractionModeForOrg(orgDefault) === "simple") {
     // Same one-line-per-invoice rule as initial ingestion (see
     // buildSimpleLineItem/invoices.ts) — Project/Class are per-line human
@@ -2485,12 +2523,15 @@ async function reExtractInvoiceCore(
           invoice_id: invoiceId,
           description: li.description,
           amount:
-            holdbackCategoryFor(li) && (li.amount ?? 0) > 0
+            holdbackCategoryFor(li, retainageAccountLabel) && (li.amount ?? 0) > 0
               ? -(li.amount ?? 0)
               : li.amount,
           tax_rate: appliedRate,
           qbo_tax_code_id: taxCodeIdFor(appliedRate, orgDefaultTaxRate, orgDefaultTaxCodeId),
-          category: holdbackCategoryFor(li) ?? supplierDefaults?.category ?? li.category,
+          category:
+            holdbackCategoryFor(li, retainageAccountLabel) ??
+            supplierDefaults?.category ??
+            li.category,
           class: classByOrder.get(i + 1) ?? null,
           project_id: projectByOrder.get(i + 1) ?? null,
           line_order: i + 1,

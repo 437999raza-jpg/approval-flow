@@ -9,7 +9,7 @@ import {
   DEFAULT_CLAIM_SUBJECT,
   DEFAULT_CLAIM_BODY,
 } from "@/lib/claim-template";
-import { termCopy, isRetainageAccountLine, type RetainageTerm } from "@/lib/retainage";
+import { termCopy, type RetainageTerm } from "@/lib/retainage";
 import { HoldbackReport } from "@/components/HoldbackReport";
 import {
   saveRetainageSettings,
@@ -88,8 +88,9 @@ export default async function HoldbackPage({
         .limit(1000),
       supabase
         .from("invoice_retainage")
-        .select("line_item_id, status, claim_requested_at")
-        .eq("organization_id", org.id),
+        .select("id, invoice_id, line_item_id, project_id, supplier_id, amount, status")
+        .eq("organization_id", org.id)
+        .in("status", ["accrued", "claim_requested"]),
     ]);
 
   const term = termCopy(orgRow?.retainage_term as RetainageTerm);
@@ -99,32 +100,22 @@ export default async function HoldbackPage({
   const accountLabel = account
     ? categoryDisplayName({ acctNum: account.acct_num, name: account.name })
     : null;
-  const accountRef = accountLabel
-    ? { label: accountLabel, number: account?.acct_num ?? null }
-    : undefined;
 
   // Live detection. Read the bills, find the lines coded to the holdback
   // account, and report them — no scan to run first.
-  const { data: invoices } = await supabase
-    .from("invoices")
-    .select("id, invoice_number, vendor_name, supplier_id, project_id, currency, bill_date, due_date, qbo_payment_status, status")
-    .eq("organization_id", org.id)
-    .limit(5000);
-
-  const { data: lines } = (invoices ?? []).length
+  // Only the bills the ledger actually references. This used to read
+  // every invoice and every line item on the org and re-detect holdback
+  // on each page load — fine at seventeen bills, a full table walk per
+  // viewer at a few thousand. The ledger is kept current by
+  // syncInvoiceRetainage on every path that writes line items, so the
+  // page is now a read of one indexed table plus the bills it names.
+  const ledgerInvoiceIds = [...new Set((ledger ?? []).map((r) => r.invoice_id))];
+  const { data: invoices } = ledgerInvoiceIds.length
     ? await supabase
-        .from("invoice_line_items")
-        .select("id, invoice_id, description, category, amount, project_id")
-        .in("invoice_id", (invoices ?? []).map((i) => i.id))
-        .order("line_order")
-    : { data: [] as { id: string; invoice_id: string; description: string | null; category: string | null; amount: number | null; project_id: string | null }[] };
-
-  const linesByInvoice = new Map<string, NonNullable<typeof lines>>();
-  for (const l of lines ?? []) {
-    const arr = linesByInvoice.get(l.invoice_id) ?? [];
-    arr.push(l);
-    linesByInvoice.set(l.invoice_id, arr);
-  }
+        .from("invoices")
+        .select("id, invoice_number, vendor_name, supplier_id, project_id, currency, bill_date, due_date, qbo_payment_status")
+        .in("id", ledgerInvoiceIds)
+    : { data: [] as { id: string; invoice_number: string | null; vendor_name: string | null; supplier_id: string | null; project_id: string | null; currency: string; bill_date: string | null; due_date: string | null; qbo_payment_status: string | null }[] };
 
   // Ledger state overlays the live rows: which have been chased, which
   // released. Released ones drop out of outstanding entirely.
@@ -193,29 +184,18 @@ export default async function HoldbackPage({
   );
   const defaultRate = Number(orgRow?.retainage_default_rate) || null;
 
-  // Every line coded to the holdback account, both directions.
-  //
-  // Withholding posts a credit (a negative line on the bill); the sub's
-  // later invoice claiming it back posts the matching debit (positive).
-  // Flipping the sign here puts it in the same orientation as the QBO
-  // report: positive = still held from them, negative = they invoiced it
-  // back. A vendor netting to zero has invoiced for everything.
-  //
-  // Detection is not used for the report — that pairs deductions to work
-  // lines, which is only needed to infer a rate. The account coding
-  // alone decides what belongs here.
-  const rows = [];
-  for (const inv of invoices ?? []) {
-    for (const l of linesByInvoice.get(inv.id) ?? []) {
-      if (!isRetainageAccountLine(l.category, accountLabel, account?.acct_num)) continue;
-      const amount = Number(l.amount);
-      if (!Number.isFinite(amount) || amount === 0) continue;
-      const state = ledgerByLine.get(l.id);
-      if (state?.status === "released" || state?.status === "written_off") continue;
-      const projectId = l.project_id ?? inv.project_id ?? null;
-      rows.push({
-        id: l.id,
-        supplierId: inv.supplier_id ?? inv.vendor_name ?? "unknown",
+  // Straight from the ledger. Amounts are already signed there:
+  // positive = withheld from the vendor, negative = they invoiced it
+  // back, so a vendor nets to zero once they have claimed everything.
+  const invoiceById = new Map((invoices ?? []).map((i) => [i.id, i]));
+  const rows = (ledger ?? []).flatMap((r) => {
+    const inv = invoiceById.get(r.invoice_id);
+    if (!inv) return [];
+    const projectId = r.project_id ?? inv.project_id ?? null;
+    return [
+      {
+        id: r.id,
+        supplierId: r.supplier_id ?? inv.vendor_name ?? "unknown",
         supplierName: inv.vendor_name ?? "Unknown supplier",
         projectId,
         projectName: projectId ? projectName.get(projectId) ?? null : null,
@@ -223,17 +203,13 @@ export default async function HoldbackPage({
         supplierEmail: inv.supplier_id ? emailBySupplierId.get(inv.supplier_id) ?? null : null,
         billDate: inv.bill_date,
         dueDate: inv.due_date ?? derivedDueDate(inv.bill_date, inv.supplier_id).date,
-        // Flagged so the report can show it as inferred from terms
-        // rather than read off the bill.
-        dueDateDerived: inv.due_date == null &&
-          derivedDueDate(inv.bill_date, inv.supplier_id).derived,
-        // Comes from QuickBooks via the payment-sync cron, so it stays
-        // null until the bill has actually been pushed there.
+        dueDateDerived:
+          inv.due_date == null && derivedDueDate(inv.bill_date, inv.supplier_id).derived,
         paidStatus: inv.qbo_payment_status,
-        amount: -amount,
-      });
-    }
-  }
+        amount: Number(r.amount),
+      },
+    ];
+  });
 
   const currency = invoices?.[0]?.currency ?? "CAD";
 
