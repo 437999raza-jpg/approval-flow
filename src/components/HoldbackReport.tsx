@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { MultiSelect } from "./MultiSelect";
 import { ConfirmSubmitButton } from "./ConfirmSubmitButton";
+import { ClaimEmailDialog } from "./ClaimEmailDialog";
 
 // Holdback outstanding, laid out like the QBO report it replaces:
 // job, then vendor, then the bills, with a subtotal at each level.
@@ -37,6 +38,8 @@ export interface ReportRow {
   projectId: string | null;
   projectName: string | null;
   invoiceNumber: string | null;
+  // Where a claim request would go — from the QBO vendor record.
+  supplierEmail: string | null;
   billDate: string | null;
   dueDate: string | null;
   paidStatus: string | null;
@@ -52,14 +55,16 @@ export function HoldbackReport({
   isAdmin,
   requestClaims,
   release,
+  organizationName,
 }: {
   rows: ReportRow[];
   projects: { id: string; name: string }[];
   currency: string;
   termNoun: string;
   isAdmin: boolean;
-  requestClaims: (projectId: string) => Promise<void>;
+  requestClaims: (formData: FormData) => void | Promise<void>;
   release: (projectId: string) => Promise<void>;
+  organizationName: string;
 }) {
   const [jobs, setJobs] = useState<string[]>([]);
   const [vendors, setVendors] = useState<string[]>([]);
@@ -276,13 +281,28 @@ export function HoldbackReport({
               <div className="flex flex-wrap items-center gap-2">
                 {isAdmin && job.key !== "__none" && job.total > 0 && (
                   <>
-                    <ConfirmSubmitButton
-                      action={requestClaims.bind(null, job.key)}
-                      confirmMessage={`Email the ${job.vendors.filter((v) => !v.settled).length} vendor(s) who haven't invoiced for their ${termNoun.toLowerCase()} on ${job.name}?`}
-                      className="rounded-lg border border-brand-line bg-white px-2.5 py-1 text-xs font-medium text-brand-ink hover:bg-brand-mist"
-                    >
-                      Email for invoices
-                    </ConfirmSubmitButton>
+                    <ClaimEmailDialog
+                      action={requestClaims}
+                      projectId={job.key}
+                      projectName={job.name}
+                      organizationName={organizationName}
+                      currency={currency}
+                      termNoun={termNoun}
+                      recipients={job.vendors
+                        .filter((v) => v.state === "not_invoiced")
+                        .map((v) => ({
+                          supplierName: v.name,
+                          email: v.rows.find((r) => r.supplierEmail)?.supplierEmail ?? null,
+                          amount: v.total,
+                          bills: v.rows
+                            .filter((r) => r.amount > 0)
+                            .map((r) => ({
+                              invoiceNumber: r.invoiceNumber,
+                              date: r.billDate,
+                              amount: r.amount,
+                            })),
+                        }))}
+                    />
                     <ConfirmSubmitButton
                       action={release.bind(null, job.key)}
                       confirmMessage={`Mark ${termNoun.toLowerCase()} on ${job.name} closed? Use this only when it's settled outside the normal invoice.`}

@@ -127,6 +127,34 @@ export default async function HoldbackPage({
     (ledger ?? []).map((r) => [r.line_item_id ?? "", r])
   );
   const projectName = new Map((projects ?? []).map((p) => [p.id, p.name]));
+
+  // Vendor addresses for the claim request, from the QBO mirror. Null
+  // for everyone until a supplier sync has run since migration 0097
+  // added the column — the dialog says so rather than failing quietly.
+  const supplierIdsOnBills = [
+    ...new Set((invoices ?? []).map((i) => i.supplier_id).filter(Boolean)),
+  ] as string[];
+  const { data: supplierRows } = supplierIdsOnBills.length
+    ? await supabase
+        .from("suppliers")
+        .select("id, qbo_vendor_id")
+        .in("id", supplierIdsOnBills)
+    : { data: [] as { id: string; qbo_vendor_id: string | null }[] };
+  const vendorIds = (supplierRows ?? []).map((s) => s.qbo_vendor_id).filter(Boolean) as string[];
+  const { data: qboVendors } = vendorIds.length
+    ? await supabase
+        .from("qbo_suppliers")
+        .select("qbo_vendor_id, email")
+        .eq("organization_id", org.id)
+        .in("qbo_vendor_id", vendorIds)
+    : { data: [] as { qbo_vendor_id: string; email: string | null }[] };
+  const emailByVendorId = new Map((qboVendors ?? []).map((v) => [v.qbo_vendor_id, v.email]));
+  const emailBySupplierId = new Map(
+    (supplierRows ?? []).map((s) => [
+      s.id,
+      s.qbo_vendor_id ? emailByVendorId.get(s.qbo_vendor_id) ?? null : null,
+    ])
+  );
   const defaultRate = Number(orgRow?.retainage_default_rate) || null;
 
   // Every line coded to the holdback account, both directions.
@@ -156,6 +184,7 @@ export default async function HoldbackPage({
         projectId,
         projectName: projectId ? projectName.get(projectId) ?? null : null,
         invoiceNumber: inv.invoice_number,
+        supplierEmail: inv.supplier_id ? emailBySupplierId.get(inv.supplier_id) ?? null : null,
         billDate: inv.bill_date,
         dueDate: inv.due_date,
         // Comes from QuickBooks via the payment-sync cron, so it stays
@@ -243,6 +272,7 @@ export default async function HoldbackPage({
             currency={currency}
             termNoun={term.noun}
             isAdmin={isAdmin}
+            organizationName={org.name}
             requestClaims={requestHoldbackClaims}
             release={releaseProjectRetainage}
           />

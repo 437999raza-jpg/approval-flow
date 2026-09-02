@@ -396,6 +396,7 @@ export async function sendHoldbackClaimEmail({
   currency,
   lines,
   replyTo,
+  note,
 }: {
   to: string;
   termNoun: string; // "Holdback" / "Retainage" / "Retention"
@@ -406,6 +407,10 @@ export async function sendHoldbackClaimEmail({
   currency: string;
   lines: { invoiceNumber: string | null; date: string | null; amount: number }[];
   replyTo?: string | null;
+  // A line the sender adds before sending — "we're closing this job out
+  // at month end", a contact name, whatever the standard wording can't
+  // know. Shown above the table, escaped like everything else.
+  note?: string | null;
 }): Promise<{ ok: boolean; error?: string }> {
   const apiKey = process.env.RESEND_API_KEY;
   const from = process.env.RESEND_FROM_EMAIL;
@@ -426,6 +431,12 @@ export async function sendHoldbackClaimEmail({
     )
     .join("");
 
+  const noteHtml = note?.trim()
+    ? `<p style="margin:0 0 14px 0;font-size:14px;line-height:1.6;color:#334155;">${escapeHtml(
+        note.trim()
+      ).replace(/\n/g, "<br />")}</p>`
+    : "";
+
   const bodyHtml = `
     <p style="margin:0 0 14px 0;font-size:14px;line-height:1.6;color:#334155;">
       Hello ${escapeHtml(supplierName)},
@@ -435,6 +446,7 @@ export async function sendHoldbackClaimEmail({
       and we are holding ${term} from your previous invoices. Please send us an
       invoice for the amount below so we can release it.
     </p>
+    ${noteHtml}
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 14px 0;border-top:1px solid #e2e8f0;">
       <tr>
         <td style="padding:8px 0 4px 0;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:#94a3b8;">Invoice</td>

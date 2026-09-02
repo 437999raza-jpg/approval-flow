@@ -236,8 +236,10 @@ export async function rescanRetainage(): Promise<void> {
 // A send that fails leaves the row untouched rather than marking it
 // requested, because a row wrongly marked as chased is one nobody ever
 // chases again.
-export async function requestHoldbackClaims(projectId: string): Promise<void> {
+export async function requestHoldbackClaims(formData: FormData): Promise<void> {
   const { supabase, org } = await requireAdmin();
+  const projectId = String(formData.get("project_id") ?? "");
+  const note = String(formData.get("note") ?? "").slice(0, 2000);
   if (!projectId) redirect("/holdback?error=bad-project");
 
   const [{ data: orgRow }, { data: project }, { data: rows }] = await Promise.all([
@@ -314,6 +316,7 @@ export async function requestHoldbackClaims(projectId: string): Promise<void> {
         };
       }),
       replyTo: orgRow?.statement_reply_to ?? null,
+      note,
     });
 
     if (!result.ok) {
