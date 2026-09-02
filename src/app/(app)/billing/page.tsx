@@ -101,7 +101,13 @@ export default async function BillingPage({
             : trialLapsed
               ? "Your trial has ended — choose a plan below to keep approving and adding invoices."
               : "Choose a plan below to get started."}{" "}
-        Always billed in USD, wherever you&apos;re based.
+        {/* Highlighted deliberately: every price on this page is USD, but
+            the app otherwise shows CAD amounts throughout (invoices,
+            totals, the usage charge), so this is exactly the line a
+            reader skims past and then queries later. */}
+        <mark className="rounded bg-amber-200/70 px-1 py-0.5 font-medium text-brand-ink">
+          Always billed in USD, wherever you&apos;re based.
+        </mark>
       </p>
 
       {searchParams.payment === "success" && (
@@ -148,9 +154,13 @@ export default async function BillingPage({
                     </span>
                   )}
                 </div>
+                {/* "USD" sits on the price itself, not just in the note
+                    above: invoices elsewhere in the app render as
+                    CA$1,053.39, so a bare "$299" on the same screen
+                    family is genuinely ambiguous to a Canadian reader. */}
                 <div className="mt-2 font-display text-2xl font-extrabold tabular-nums text-brand-ink">
                   ${plan.priceUsd}
-                  <span className="text-sm font-medium text-brand-muted">/mo</span>
+                  <span className="text-sm font-medium text-brand-muted"> USD/mo</span>
                 </div>
                 <p className="mt-1 text-xs text-brand-muted">
                   {plan.includedDocs} documents included, then ${plan.overageRatePerDoc.toFixed(2)}/doc.
