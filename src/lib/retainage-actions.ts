@@ -180,7 +180,7 @@ export async function rescanRetainage(): Promise<void> {
   // to protect against.
   const { data: invoices } = await supabase
     .from("invoices")
-    .select("id, supplier_id, project_id")
+    .select("id, supplier_id, project_id, bill_date, due_date, qbo_bill_id")
     .eq("organization_id", org.id)
     .limit(5000);
 
@@ -194,6 +194,62 @@ export async function rescanRetainage(): Promise<void> {
 
   const admin = createAdminClient();
   let written = 0;
+
+  // Refresh is where the reconciliation work happens, so the page can
+  // just read columns instead of deriving them on every load. Two
+  // things get settled here rather than recomputed per view:
+  //
+  //   Due dates — written once at ingestion from the terms in force
+  //   then, so a bill that arrived before its supplier had terms keeps a
+  //   null forever. Fill it from the supplier's terms for anything not
+  //   yet pushed to QuickBooks; after that QBO owns the date.
+  //
+  //   Supplier emails — the QBO mirror is overwritten by every supplier
+  //   sync, so copy the address onto Flow's own supplier row where we
+  //   don't already have one. That address then survives, and the page
+  //   reads one column instead of joining two tables.
+  const { data: allSuppliers } = await supabase
+    .from("suppliers")
+    .select("id, qbo_vendor_id, email")
+    .eq("organization_id", org.id);
+  const missingEmail = (allSuppliers ?? []).filter((s) => !s.email && s.qbo_vendor_id);
+  if (missingEmail.length > 0) {
+    const { data: mirrored } = await supabase
+      .from("qbo_suppliers")
+      .select("qbo_vendor_id, email")
+      .eq("organization_id", org.id)
+      .in("qbo_vendor_id", missingEmail.map((s) => s.qbo_vendor_id as string))
+      .not("email", "is", null);
+    const byVendor = new Map((mirrored ?? []).map((v) => [v.qbo_vendor_id, v.email]));
+    for (const s of missingEmail) {
+      const email = byVendor.get(s.qbo_vendor_id as string);
+      if (!email) continue;
+      await admin.from("suppliers").update({ email }).eq("id", s.id);
+    }
+  }
+
+  const { data: termRows } = await supabase
+    .from("supplier_defaults")
+    .select("supplier_id, payment_terms_days")
+    .eq("organization_id", org.id)
+    .not("payment_terms_days", "is", null);
+  const termsBySupplier = new Map(
+    (termRows ?? [])
+      .filter((t) => t.supplier_id)
+      .map((t) => [t.supplier_id as string, t.payment_terms_days as number])
+  );
+  for (const inv of invoices ?? []) {
+    if (inv.due_date || !inv.bill_date || !inv.supplier_id) continue;
+    if (inv.qbo_bill_id) continue; // QuickBooks owns it once synced
+    const days = termsBySupplier.get(inv.supplier_id);
+    if (days == null) continue;
+    const d = new Date(`${inv.bill_date}T00:00:00Z`);
+    d.setUTCDate(d.getUTCDate() + days);
+    await admin
+      .from("invoices")
+      .update({ due_date: d.toISOString().slice(0, 10) })
+      .eq("id", inv.id);
+  }
 
   for (const inv of invoices ?? []) {
     const { data: lines } = await supabase
