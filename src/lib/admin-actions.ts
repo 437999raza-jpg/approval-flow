@@ -6,7 +6,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isPlatformAdmin } from "@/lib/platform-admin";
-import { isPlanId } from "@/lib/plans";
+import { isPlanId, type CustomPlanConfig } from "@/lib/plans";
 
 const ACTIVE_ORG_COOKIE = "active_org_id";
 
@@ -283,6 +283,110 @@ export async function extendTrialAction(formData: FormData) {
   await admin
     .from("organizations")
     .update({ trial_ends_at: newExpiry.toISOString() })
+    .eq("id", orgId);
+
+  revalidatePath("/admin/organizations");
+  redirect("/admin/organizations");
+}
+
+// Platform-admin only: write (or clear) an org's negotiated plan and its
+// one-time build fee. Deliberately not exposed to the org's own admin —
+// these are the terms of a deal we agreed, not a self-serve setting; the
+// org's Billing page shows them read-only.
+//
+// custom_plan is stored as JSONB (migration 0095), but it's assembled
+// from typed form fields here rather than accepting pasted JSON: a
+// malformed blob would leave the org's Billing page resolving to no plan
+// at all, which reads to the customer as "your plan disappeared".
+export async function setOrgCustomPlanAction(formData: FormData) {
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user || !isPlatformAdmin(user.email)) redirect("/login");
+
+  const orgId = String(formData.get("org_id") ?? "");
+  if (!orgId) redirect("/admin/organizations?error=bad-org");
+
+  const admin = createAdminClient();
+  const name = String(formData.get("custom_name") ?? "").trim();
+
+  // An empty name is the "remove the custom plan" gesture — the org
+  // falls back to whatever fixed tier the Plan column holds.
+  if (!name) {
+    await admin.from("organizations").update({ custom_plan: null }).eq("id", orgId);
+    revalidatePath("/admin/organizations");
+    redirect("/admin/organizations");
+  }
+
+  const priceUsd = Number(formData.get("custom_price") ?? NaN);
+  const includedDocs = Number(formData.get("custom_docs") ?? NaN);
+  const overageRatePerDoc = Number(formData.get("custom_overage") ?? NaN);
+  if (
+    !Number.isFinite(priceUsd) ||
+    priceUsd < 0 ||
+    !Number.isFinite(includedDocs) ||
+    includedDocs < 0 ||
+    !Number.isFinite(overageRatePerDoc) ||
+    overageRatePerDoc < 0
+  ) {
+    redirect("/admin/organizations?error=bad-custom-plan");
+  }
+
+  const customPlan: CustomPlanConfig = {
+    name,
+    priceUsd,
+    includedDocs: Math.round(includedDocs),
+    overageRatePerDoc,
+    blurb: String(formData.get("custom_blurb") ?? "").trim() || undefined,
+    statementReconciliation: formData.get("custom_statements") === "on",
+    extraction: formData.get("custom_extraction") === "simple" ? "simple" : "complex",
+  };
+
+  await admin
+    .from("organizations")
+    .update({ custom_plan: customPlan })
+    .eq("id", orgId);
+
+  revalidatePath("/admin/organizations");
+  redirect("/admin/organizations");
+}
+
+// Platform-admin only: set, clear, or manually settle the one-time setup
+// fee. The manual "mark paid" exists because not every fee goes through
+// Stripe — a bespoke build is often invoiced and paid by transfer — and
+// because the Stripe path only stamps the fee if the customer actually
+// lands back on /billing after Checkout.
+export async function setOrgSetupFeeAction(formData: FormData) {
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user || !isPlatformAdmin(user.email)) redirect("/login");
+
+  const orgId = String(formData.get("org_id") ?? "");
+  if (!orgId) redirect("/admin/organizations?error=bad-org");
+
+  const raw = String(formData.get("setup_fee") ?? "").trim();
+  const amount = raw === "" ? null : Number(raw);
+  if (amount !== null && (!Number.isFinite(amount) || amount < 0 || amount > 1_000_000)) {
+    redirect("/admin/organizations?error=bad-setup-fee");
+  }
+
+  const markPaid = formData.get("setup_fee_paid") === "on";
+  const admin = createAdminClient();
+
+  // Clearing the amount clears the paid stamp too — the DB check
+  // constraint rejects paid-with-no-fee, and leaving a stale timestamp
+  // behind would silently mark the NEXT fee as already settled.
+  await admin
+    .from("organizations")
+    .update({
+      setup_fee_usd: amount,
+      setup_fee_label: String(formData.get("setup_fee_label") ?? "").trim() || null,
+      setup_fee_paid_at:
+        amount === null ? null : markPaid ? new Date().toISOString() : null,
+    })
     .eq("id", orgId);
 
   revalidatePath("/admin/organizations");

@@ -1,11 +1,11 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentOrg } from "@/lib/current-org";
-import { selectPlan, createUsageCheckout, createBillingPortalSession } from "@/lib/dashboard-actions";
+import { selectPlan, createUsageCheckout, createBillingPortalSession, confirmSetupFeePayment } from "@/lib/dashboard-actions";
 import { StripeCheckoutButton } from "@/components/StripeCheckoutButton";
 import { CollapsibleSection } from "@/components/CollapsibleSection";
 import { SubmitButton } from "@/components/SubmitButton";
-import { PLANS, PLAN_ORDER, isPlanId, isTrialActive } from "@/lib/plans";
+import { PLANS, PLAN_ORDER, isTrialActive, resolvePlan, resolveSetupFee } from "@/lib/plans";
 
 // Flow's billing: a fixed monthly plan (Starter/Growth/Scale) rather than
 // an admin-editable $/document rate — see src/lib/plans.ts for how these
@@ -18,7 +18,7 @@ import { PLANS, PLAN_ORDER, isPlanId, isTrialActive } from "@/lib/plans";
 export default async function BillingPage({
   searchParams,
 }: {
-  searchParams: { payment?: string; error?: string };
+  searchParams: { payment?: string; error?: string; session_id?: string };
 }) {
   const supabase = createClient();
   const {
@@ -42,11 +42,27 @@ export default async function BillingPage({
       .limit(500),
     supabase
       .from("organizations")
-      .select("plan, plan_selected_at, trial_ends_at")
+      .select(
+        "plan, custom_plan, plan_selected_at, trial_ends_at, setup_fee_usd, setup_fee_label, setup_fee_paid_at"
+      )
       .eq("id", org.id)
       .single(),
   ]);
-  const currentPlan = isPlanId(orgRow?.plan) ? PLANS[orgRow.plan] : null;
+  // Returning from Stripe with a session that included the setup fee —
+  // stamp it paid before rendering. orgRow was read before that write
+  // landed, so apply the same stamp locally rather than re-querying, and
+  // only when the confirmation actually succeeded.
+  const setupFeeJustPaid =
+    searchParams.payment === "success" && searchParams.session_id
+      ? await confirmSetupFeePayment(searchParams.session_id)
+      : false;
+
+  const currentPlan = resolvePlan(orgRow);
+  const setupFee = resolveSetupFee(
+    setupFeeJustPaid
+      ? { ...orgRow, setup_fee_paid_at: new Date().toISOString() }
+      : orgRow
+  );
   const planSelectedAt = orgRow?.plan_selected_at ?? null;
   const trialEndsAt = orgRow?.trial_ends_at ?? null;
   const trialing = trialEndsAt != null && !currentPlan && isTrialActive(trialEndsAt);
@@ -133,6 +149,38 @@ export default async function BillingPage({
         <div className="text-[11px] font-semibold uppercase tracking-wide text-brand-muted">
           Plan
         </div>
+        {currentPlan?.isCustom ? (
+          /* A negotiated plan replaces the tier grid outright. Showing
+             four standard tiers underneath an agreed deal invites exactly
+             the question we don't want ("am I on the wrong one?") — and
+             switching to a fixed tier is a conversation, not a button. */
+          <div className="mt-2 rounded-xl border-2 border-brand-green bg-white p-6 shadow-elevation-2 shadow-brand-ink/5">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-display text-lg font-extrabold text-brand-ink">
+                {currentPlan.name}
+              </span>
+              <span className="rounded-full bg-brand-green/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-brand-green-dark">
+                Custom plan
+              </span>
+            </div>
+            <div className="mt-2 font-display text-3xl font-extrabold tabular-nums text-brand-ink">
+              ${currentPlan.priceUsd.toLocaleString()}
+              <span className="text-sm font-medium text-brand-muted"> USD/mo</span>
+            </div>
+            <p className="mt-1 text-sm text-brand-muted">
+              {currentPlan.includedDocs.toLocaleString()} documents included, then $
+              {currentPlan.overageRatePerDoc.toFixed(2)}/doc.
+            </p>
+            <p className="mt-3 text-sm text-brand-muted">{currentPlan.blurb}</p>
+            <p className="mt-4 border-t border-brand-line pt-3 text-xs text-brand-muted">
+              This plan was agreed with you directly. To change it, talk to us —{" "}
+              <a href="mailto:hello@ufirst.co" className="font-medium text-brand-green-dark underline">
+                hello@ufirst.co
+              </a>
+              .
+            </p>
+          </div>
+        ) : (
         <div className="mt-2 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {PLAN_ORDER.map((id) => {
             const plan = PLANS[id];
@@ -185,6 +233,7 @@ export default async function BillingPage({
             );
           })}
         </div>
+        )}
         {!isAdmin && !currentPlan && (
           <p className="mt-2 text-sm text-brand-muted">
             No plan selected yet — ask an admin to choose one.
@@ -196,6 +245,51 @@ export default async function BillingPage({
           </p>
         )}
       </section>
+
+      {/* One-time build fee. Deliberately its own card rather than a line
+          in "this month's charge" — it is not monthly, and folding it in
+          would make the recurring number look like it jumped. */}
+      {setupFee && (
+        <section
+          className={`mt-4 rounded-xl border p-5 shadow-elevation-1 shadow-brand-ink/5 ${
+            setupFee.outstanding ? "border-amber-300 bg-amber-50" : "border-brand-line bg-white"
+          }`}
+        >
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-brand-muted">
+                One-time setup fee
+              </div>
+              <p className="mt-1 font-display text-lg font-extrabold text-brand-ink">
+                {setupFee.label}
+              </p>
+              <p className="mt-1 text-sm text-brand-muted">
+                {setupFee.outstanding
+                  ? "Charged once, on your next payment — not part of the monthly plan."
+                  : `Paid on ${new Date(setupFee.paidAt!).toLocaleDateString()}.`}
+              </p>
+            </div>
+            <div className="text-right">
+              <div className="font-display text-2xl font-extrabold tabular-nums text-brand-ink">
+                {setupFee.amountUsd.toLocaleString(undefined, {
+                  style: "currency",
+                  currency: "USD",
+                  maximumFractionDigits: 0,
+                })}
+              </div>
+              <span
+                className={`mt-1 inline-block rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${
+                  setupFee.outstanding
+                    ? "bg-amber-200 text-amber-900"
+                    : "bg-brand-green/15 text-brand-green-dark"
+                }`}
+              >
+                {setupFee.outstanding ? "Due" : "Paid"}
+              </span>
+            </div>
+          </div>
+        </section>
+      )}
 
       {/* Summary */}
       <div className="mt-4 grid grid-cols-2 gap-4">
@@ -257,17 +351,41 @@ export default async function BillingPage({
         {stripeConfigured ? (
           <>
             {canPay ? (
-              <p className="mt-2 text-sm text-slate-600">
-                Pay this month&apos;s charge of{" "}
-                <strong className="text-brand-ink">
-                  {totalCharge.toLocaleString(undefined, {
-                    style: "currency",
-                    currency: "USD",
-                  })}
-                </strong>{" "}
-                ({currentPlan!.name} plan{overageDocs > 0 ? ` + ${overageDocs} overage doc${overageDocs === 1 ? "" : "s"}` : ""}),
-                or manage your saved payment method and past receipts any time.
-              </p>
+              <>
+                <p className="mt-2 text-sm text-slate-600">
+                  Pay this month&apos;s charge of{" "}
+                  <strong className="text-brand-ink">
+                    {totalCharge.toLocaleString(undefined, {
+                      style: "currency",
+                      currency: "USD",
+                    })}
+                  </strong>{" "}
+                  ({currentPlan!.name} plan{overageDocs > 0 ? ` + ${overageDocs} overage doc${overageDocs === 1 ? "" : "s"}` : ""}),
+                  or manage your saved payment method and past receipts any time.
+                </p>
+                {/* The one-time fee rides on the same Checkout session, so
+                    the button charges more than the monthly figure above —
+                    say so here rather than letting Stripe be the first
+                    place they find out. */}
+                {setupFee?.outstanding && (
+                  <p className="mt-2 text-sm font-medium text-amber-800">
+                    Plus the one-time {setupFee.label} fee of{" "}
+                    {setupFee.amountUsd.toLocaleString(undefined, {
+                      style: "currency",
+                      currency: "USD",
+                      maximumFractionDigits: 0,
+                    })}
+                    {" — "}
+                    <strong className="text-brand-ink">
+                      {(totalCharge + setupFee.amountUsd).toLocaleString(undefined, {
+                        style: "currency",
+                        currency: "USD",
+                      })}
+                    </strong>{" "}
+                    total on this payment.
+                  </p>
+                )}
+              </>
             ) : (
               <p className="mt-2 text-sm text-brand-muted">
                 Choose a plan above before paying. You can still add a payment

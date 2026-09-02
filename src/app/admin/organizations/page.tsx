@@ -1,13 +1,17 @@
+import { Fragment } from "react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isPlatformAdmin } from "@/lib/platform-admin";
-import { createOrganizationAction, joinOrganizationAction, extendTrialAction, setOrgPlanAction } from "@/lib/admin-actions";
+import { createOrganizationAction, joinOrganizationAction, extendTrialAction, setOrgPlanAction, setOrgCustomPlanAction, setOrgSetupFeeAction } from "@/lib/admin-actions";
 import { SubmitButton } from "@/components/SubmitButton";
 import { DirtySaveButton } from "@/components/DirtySaveButton";
-import { isTrialActive, PLAN_ORDER, PLANS } from "@/lib/plans";
+import { isTrialActive, PLAN_ORDER, PLANS, parseCustomPlan, resolveSetupFee } from "@/lib/plans";
 import { BackToDashboardButton } from "@/components/BackToDashboardButton";
+
+const adminInputCls =
+  "w-full rounded-md border border-slate-300 bg-white px-1.5 py-1 text-xs text-slate-600 placeholder:text-slate-400";
 
 const ERRORS: Record<string, string> = {
   "missing-fields": "Organization name and admin email are both required.",
@@ -17,6 +21,9 @@ const ERRORS: Record<string, string> = {
   "invite-failed": "Organization created, but the admin account could not be created — invite them manually from that org's Settings page.",
   "bad-extend": "Enter a valid number of days to extend the trial by.",
   "bad-plan": "Could not update the plan.",
+  "bad-org": "No organization was identified.",
+  "bad-custom-plan": "A custom plan needs a name, a monthly price, an included-document count and an overage rate.",
+  "bad-setup-fee": "Enter a setup fee between 0 and 1,000,000, or leave it blank to remove it.",
 };
 
 export default async function AdminOrganizationsPage({
@@ -37,7 +44,7 @@ export default async function AdminOrganizationsPage({
 
   const { data: orgs } = await admin
     .from("organizations")
-    .select("id, name, slug, inbound_email_token, inbound_email_local, trial_ends_at, plan, created_at")
+    .select("id, name, slug, inbound_email_token, inbound_email_local, trial_ends_at, plan, custom_plan, setup_fee_usd, setup_fee_label, setup_fee_paid_at, created_at")
     .order("created_at", { ascending: false });
 
   const { data: memberRows } = await admin
@@ -167,8 +174,14 @@ export default async function AdminOrganizationsPage({
             </tr>
           </thead>
           <tbody>
-            {(orgs ?? []).map((org) => (
-              <tr key={org.id} className="border-b border-slate-100">
+            {(orgs ?? []).map((org) => {
+              const custom = parseCustomPlan(org.custom_plan);
+              const fee = resolveSetupFee(org);
+              return (
+              // Fragment (not <>) because the map's element is what needs
+              // the key, not the rows inside it.
+              <Fragment key={org.id}>
+              <tr className="border-b border-slate-100">
                 <td className="py-1.5 pr-3 font-medium text-slate-700">{org.name}</td>
                 <td className="py-1.5 pr-3 font-mono text-xs text-slate-500">
                   {(org.inbound_email_local ?? org.inbound_email_token)}@{domain}
@@ -202,6 +215,11 @@ export default async function AdminOrganizationsPage({
                     </select>
                     <DirtySaveButton />
                   </form>
+                  {custom && (
+                    <span className="mt-1 inline-block rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-800">
+                      Custom: {custom.name} · ${custom.priceUsd}/mo
+                    </span>
+                  )}
                 </td>
                 <td className="py-1.5 pr-3 text-slate-500">
                   {org.trial_ends_at ? (
@@ -253,7 +271,139 @@ export default async function AdminOrganizationsPage({
                   </div>
                 </td>
               </tr>
-            ))}
+              {/* Deal terms live in a collapsed row rather than more
+                  columns — the table is already eight wide, and these are
+                  edited rarely (once, when a deal is signed). */}
+              <tr className="border-b border-slate-100">
+                <td colSpan={8} className="pb-3">
+                  <details className="rounded-md border border-slate-200 bg-slate-50 px-3 py-1.5">
+                    <summary className="cursor-pointer text-xs font-medium text-slate-600">
+                      Custom plan &amp; setup fee
+                      {custom && <span className="ml-1.5 text-emerald-700">· custom plan set</span>}
+                      {fee?.outstanding && <span className="ml-1.5 text-amber-700">· fee due</span>}
+                      {fee && !fee.outstanding && <span className="ml-1.5 text-slate-400">· fee paid</span>}
+                    </summary>
+                    <div className="mt-2 grid gap-4 pb-2 lg:grid-cols-2">
+                      <form action={setOrgCustomPlanAction} className="space-y-1.5">
+                        <input type="hidden" name="org_id" value={org.id} />
+                        <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                          Custom plan
+                        </p>
+                        <input
+                          name="custom_name"
+                          defaultValue={custom?.name ?? ""}
+                          placeholder="Plan name (blank to remove)"
+                          className={adminInputCls}
+                        />
+                        <div className="grid grid-cols-3 gap-1.5">
+                          <input
+                            name="custom_price"
+                            type="number"
+                            min="0"
+                            step="1"
+                            defaultValue={custom?.priceUsd ?? ""}
+                            placeholder="$/mo"
+                            className={adminInputCls}
+                          />
+                          <input
+                            name="custom_docs"
+                            type="number"
+                            min="0"
+                            step="1"
+                            defaultValue={custom?.includedDocs ?? ""}
+                            placeholder="Docs incl."
+                            className={adminInputCls}
+                          />
+                          <input
+                            name="custom_overage"
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            defaultValue={custom?.overageRatePerDoc ?? ""}
+                            placeholder="$/extra doc"
+                            className={adminInputCls}
+                          />
+                        </div>
+                        <input
+                          name="custom_blurb"
+                          defaultValue={custom?.blurb ?? ""}
+                          placeholder="What this plan includes (shown to them)"
+                          className={adminInputCls}
+                        />
+                        <div className="flex flex-wrap items-center gap-3 pt-0.5">
+                          <label className="flex items-center gap-1.5 text-xs text-slate-600">
+                            <input
+                              type="checkbox"
+                              name="custom_statements"
+                              defaultChecked={custom?.statementReconciliation ?? false}
+                              className="h-3.5 w-3.5 rounded border-slate-300"
+                            />
+                            Statement reconciliation
+                          </label>
+                          <label className="flex items-center gap-1.5 text-xs text-slate-600">
+                            Extraction
+                            <select
+                              name="custom_extraction"
+                              defaultValue={custom?.extraction ?? "complex"}
+                              className={adminInputCls}
+                            >
+                              <option value="complex">Complex (line-by-line)</option>
+                              <option value="simple">Simple</option>
+                            </select>
+                          </label>
+                          <DirtySaveButton />
+                        </div>
+                      </form>
+
+                      <form action={setOrgSetupFeeAction} className="space-y-1.5">
+                        <input type="hidden" name="org_id" value={org.id} />
+                        <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                          One-time setup fee
+                        </p>
+                        <div className="grid grid-cols-3 gap-1.5">
+                          <input
+                            name="setup_fee"
+                            type="number"
+                            min="0"
+                            step="1"
+                            defaultValue={fee?.amountUsd ?? ""}
+                            placeholder="$ (blank to remove)"
+                            className={adminInputCls}
+                          />
+                          <input
+                            name="setup_fee_label"
+                            defaultValue={org.setup_fee_label ?? ""}
+                            placeholder="What it's for"
+                            className={`${adminInputCls} col-span-2`}
+                          />
+                        </div>
+                        <div className="flex flex-wrap items-center gap-3 pt-0.5">
+                          <label className="flex items-center gap-1.5 text-xs text-slate-600">
+                            <input
+                              type="checkbox"
+                              name="setup_fee_paid"
+                              defaultChecked={Boolean(fee && !fee.outstanding)}
+                              className="h-3.5 w-3.5 rounded border-slate-300"
+                            />
+                            Paid
+                          </label>
+                          <DirtySaveButton />
+                        </div>
+                        <p className="text-[11px] text-slate-400">
+                          {fee?.outstanding
+                            ? "Added to their next Stripe payment, and marked paid automatically when it clears. Tick Paid if you invoiced it outside Stripe."
+                            : fee
+                              ? `Paid ${new Date(fee.paidAt!).toLocaleDateString()}.`
+                              : "No fee set — nothing appears on their Billing page."}
+                        </p>
+                      </form>
+                    </div>
+                  </details>
+                </td>
+              </tr>
+              </Fragment>
+              );
+            })}
           </tbody>
         </table>
       </div>

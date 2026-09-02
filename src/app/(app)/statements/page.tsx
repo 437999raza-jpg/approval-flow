@@ -4,7 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getCurrentOrg } from "@/lib/current-org";
 import { uploadAndReconcileStatement } from "@/lib/dashboard-actions";
 import { getCachedQboSuppliers } from "@/lib/org-cache";
-import { isPlanId, hasStatementReconciliation } from "@/lib/plans";
+import { hasStatementReconciliation } from "@/lib/plans";
 import { StatementUploadForm } from "@/components/StatementUploadForm";
 import { LocalTime } from "@/components/LocalTime";
 
@@ -27,13 +27,10 @@ export default async function StatementsPage() {
 
   const { data: orgRow } = await supabase
     .from("organizations")
-    .select("plan, trial_ends_at")
+    .select("plan, custom_plan, trial_ends_at")
     .eq("id", org.id)
     .single();
-  const entitled = hasStatementReconciliation(
-    isPlanId(orgRow?.plan) ? orgRow.plan : null,
-    orgRow?.trial_ends_at
-  );
+  const entitled = hasStatementReconciliation(orgRow);
 
   const header = (
     <>

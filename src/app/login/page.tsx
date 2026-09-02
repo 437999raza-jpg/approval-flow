@@ -57,7 +57,7 @@ const HERO_POINTS = [
   },
   {
     lead: "Built for you.",
-    rest: "Need it to match your process exactly? We build custom rules, fields and integrations to fit.",
+    rest: "Need it to match your process exactly? We build custom rules, fields and integrations to fit, for a one-time fee.",
   },
 ];
 
@@ -327,7 +327,8 @@ export default function LoginPage() {
             </p>
             <p className="mt-1.5 text-[12.5px] leading-relaxed text-[#C4D0DE]">
               Approval rules, custom fields and integrations shaped to how your
-              team already works. Tell us the process, we build it.
+              team already works. Tell us the process, we build it — quoted up
+              front as a one-time fee, on top of your monthly plan.
             </p>
           </div>
           <p className="mt-7 text-[12px] font-medium text-[#8FA3BA]">

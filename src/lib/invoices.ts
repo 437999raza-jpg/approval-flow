@@ -272,12 +272,12 @@ export async function createInvoiceFromFile({
   // extraction.
   const { data: org } = await supabase
     .from("organizations")
-    .select("default_tax_rate, default_tax_code_id, plan, trial_ends_at")
+    .select("default_tax_rate, default_tax_code_id, plan, custom_plan, trial_ends_at")
     .eq("id", organizationId)
     .single();
   const orgDefaultTaxRate = org?.default_tax_rate ?? null;
   const orgDefaultTaxCodeId = org?.default_tax_code_id ?? null;
-  const isSimpleMode = extractionModeForOrg(org?.plan, org?.trial_ends_at) === "simple";
+  const isSimpleMode = extractionModeForOrg(org) === "simple";
 
   // Project detection from the PO number: suppliers commonly put their job
   // number on the PO ("2022-589-PO-1234" starts with project code 2022-58).

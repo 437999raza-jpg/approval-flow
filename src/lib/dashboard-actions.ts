@@ -42,7 +42,7 @@ import { buildQboAttachmentBundle } from "@/lib/qbo-attachments";
 import { pdfPageCount, reorderPdfPages } from "@/lib/merge-documents";
 import { buildMergedInvoicePdf } from "@/lib/invoice-export";
 import { qboTag, INVOICES_TAG } from "@/lib/org-cache";
-import { PLANS, isPlanId, hasStatementReconciliation, isOrgLocked, extractionModeForOrg } from "@/lib/plans";
+import { PLANS, isPlanId, hasStatementReconciliation, isOrgLocked, extractionModeForOrg, resolvePlan, resolveSetupFee } from "@/lib/plans";
 import { extractStatementLines } from "@/lib/extract-statement";
 import { getAppUrl } from "@/lib/app-url";
 
@@ -373,7 +373,7 @@ export async function decide(
   // "choose a plan" nudge actually has teeth. See isOrgLocked (plans.ts).
   const { data: orgRow } = await supabase
     .from("organizations")
-    .select("plan, trial_ends_at")
+    .select("plan, custom_plan, trial_ends_at")
     .eq("id", invoice.organization_id)
     .single();
   if (orgRow && isOrgLocked(orgRow)) {
@@ -2436,13 +2436,13 @@ async function reExtractInvoiceCore(
     .eq("invoice_id", invoiceId);
   const { data: orgDefault } = await supabase
     .from("organizations")
-    .select("default_tax_rate, default_tax_code_id, plan, trial_ends_at")
+    .select("default_tax_rate, default_tax_code_id, plan, custom_plan, trial_ends_at")
     .eq("id", invoice.organization_id)
     .single();
   const supplierDefaults = supplierDefaultsForInvoice;
   const orgDefaultTaxRate = orgDefault?.default_tax_rate ?? null;
   const orgDefaultTaxCodeId = orgDefault?.default_tax_code_id ?? null;
-  if (extractionModeForOrg(orgDefault?.plan, orgDefault?.trial_ends_at) === "simple") {
+  if (extractionModeForOrg(orgDefault) === "simple") {
     // Same one-line-per-invoice rule as initial ingestion (see
     // buildSimpleLineItem/invoices.ts) — Project/Class are per-line human
     // calls, preserved from the single line that existed before
@@ -2843,17 +2843,22 @@ export async function createUsageCheckout(): Promise<{ ok: boolean; url?: string
       .gte("created_at", monthStart.toISOString()),
     supabase
       .from("organizations")
-      .select("plan, name")
+      .select("plan, custom_plan, name, setup_fee_usd, setup_fee_label, setup_fee_paid_at")
       .eq("id", org.id)
       .single(),
     ensureStripeCustomer(supabase, secret, org),
   ]);
   if (!customer.ok) return { ok: false, error: customer.error };
 
-  const plan = isPlanId(orgRow?.plan) ? PLANS[orgRow.plan] : null;
+  const plan = resolvePlan(orgRow);
   if (!plan) {
     return { ok: false, error: "Choose a plan below before paying." };
   }
+  // An unpaid one-time build fee rides on the same Checkout session
+  // rather than a second card entry — it's the same customer paying the
+  // same invoice, and splitting it just doubles the abandonment risk.
+  const setupFee = resolveSetupFee(orgRow);
+  const chargeSetupFee = setupFee?.outstanding === true;
   const docCount = count ?? 0;
   const overageDocs = Math.max(0, docCount - plan.includedDocs);
   const overageCents = Math.round(overageDocs * plan.overageRatePerDoc * 100);
@@ -2885,6 +2890,24 @@ export async function createUsageCheckout(): Promise<{ ok: boolean; url?: string
       bodyParams["line_items[1][price_data][product_data][description]"] =
         `${overageDocs} document${overageDocs === 1 ? "" : "s"} over the ${plan.includedDocs}-document plan limit × $${plan.overageRatePerDoc.toFixed(2)}`;
     }
+    if (chargeSetupFee && setupFee) {
+      // Index 2 is safe whether or not the overage line exists: Stripe
+      // reads line_items as a map of indices, not a dense array.
+      bodyParams["line_items[2][quantity]"] = "1";
+      bodyParams["line_items[2][price_data][currency]"] = "usd";
+      bodyParams["line_items[2][price_data][unit_amount]"] = String(
+        Math.round(setupFee.amountUsd * 100)
+      );
+      bodyParams["line_items[2][price_data][product_data][name]"] = setupFee.label;
+      bodyParams["line_items[2][price_data][product_data][description]"] =
+        "One-time setup fee";
+      // Read back on return from Checkout to stamp setup_fee_paid_at —
+      // see confirmSetupFeePayment below. There's no Stripe webhook in
+      // this app, so the success redirect is what closes the loop.
+      bodyParams["metadata[setup_fee]"] = "1";
+      bodyParams["success_url"] =
+        `${origin}/billing?payment=success&session_id={CHECKOUT_SESSION_ID}`;
+    }
     const body = new URLSearchParams(bodyParams);
     const res = await fetch("https://api.stripe.com/v1/checkout/sessions", {
       method: "POST",
@@ -2905,6 +2928,70 @@ export async function createUsageCheckout(): Promise<{ ok: boolean; url?: string
   } catch (err) {
     console.error("createUsageCheckout error:", err);
     return { ok: false, error: err instanceof Error ? err.message : "Stripe error." };
+  }
+}
+
+// Close the loop on a one-time setup fee. There is no Stripe webhook in
+// this app — every charge is a one-off hosted Checkout session — so the
+// success redirect carries ?session_id and the Billing page hands it
+// here. We re-read the session from Stripe rather than trusting the
+// query string: a session id in a URL is user-controllable, and this
+// writes real billing state.
+//
+// If the customer closes the tab before the redirect lands, nothing is
+// stamped — that's why /admin/organizations can also mark a fee paid by
+// hand (which is the path used anyway when the fee was invoiced outside
+// Stripe).
+export async function confirmSetupFeePayment(sessionId: string): Promise<boolean> {
+  const secret = process.env.STRIPE_SECRET_KEY;
+  if (!secret || !sessionId) return false;
+
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return false;
+
+  const org = await getCurrentOrg(supabase);
+  if (!org) return false;
+
+  try {
+    const res = await fetch(
+      `https://api.stripe.com/v1/checkout/sessions/${encodeURIComponent(sessionId)}`,
+      { headers: { Authorization: `Bearer ${secret}` }, cache: "no-store" }
+    );
+    if (!res.ok) return false;
+    const session = (await res.json()) as {
+      payment_status?: string;
+      metadata?: { organization_id?: string; setup_fee?: string };
+    };
+    if (session.payment_status !== "paid") return false;
+    if (session.metadata?.setup_fee !== "1") return false;
+    // The session must belong to the org the caller is actually in —
+    // otherwise anyone could clear another org's fee with a borrowed id.
+    if (session.metadata?.organization_id !== org.id) return false;
+
+    const admin = createAdminClient();
+    const { data: updated } = await admin
+      .from("organizations")
+      .update({ setup_fee_paid_at: new Date().toISOString() })
+      .eq("id", org.id)
+      .is("setup_fee_paid_at", null) // idempotent: a refresh must not re-stamp
+      .select("id")
+      .maybeSingle();
+
+    if (updated) {
+      await supabase.from("audit_log").insert({
+        organization_id: org.id,
+        actor_id: user.id,
+        action: "org.setup_fee_paid",
+        metadata: { stripe_session_id: sessionId },
+      });
+    }
+    return true;
+  } catch (err) {
+    console.error("confirmSetupFeePayment error:", err);
+    return false;
   }
 }
 
@@ -4223,10 +4310,10 @@ export async function uploadAndReconcileStatement(
 
   const { data: orgRow } = await supabase
     .from("organizations")
-    .select("plan, trial_ends_at")
+    .select("plan, custom_plan, trial_ends_at")
     .eq("id", org.id)
     .single();
-  if (!hasStatementReconciliation(isPlanId(orgRow?.plan) ? orgRow.plan : null, orgRow?.trial_ends_at)) {
+  if (!hasStatementReconciliation(orgRow)) {
     return {
       ok: false,
       error: "Statement Reconciliation is part of the Detailed plan ($299/mo).",

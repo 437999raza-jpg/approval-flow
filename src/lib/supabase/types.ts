@@ -54,6 +54,14 @@ export interface Database {
           plan_selected_at: string | null;
           statement_reply_to: string | null;
           trial_ends_at: string | null;
+          // Negotiated per-org plan overriding `plan`, and the one-time
+          // build fee (migration 0095). custom_plan's shape is validated
+          // by parseCustomPlan() in src/lib/plans.ts — JSONB here, so
+          // `unknown` is the honest type.
+          custom_plan: unknown;
+          setup_fee_usd: number | null;
+          setup_fee_label: string | null;
+          setup_fee_paid_at: string | null;
           // Days after a step's own deadline before escalating (migration
           // 0094). Replaces the hardcoded ESCALATION_GRACE_DAYS constant.
           escalation_grace_days: number;

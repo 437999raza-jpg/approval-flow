@@ -41,7 +41,7 @@ export async function POST(request: Request) {
 
   const { data: orgRow } = await supabase
     .from("organizations")
-    .select("plan, trial_ends_at")
+    .select("plan, custom_plan, trial_ends_at")
     .eq("id", org.id)
     .single();
   if (orgRow && isOrgLocked(orgRow)) {
