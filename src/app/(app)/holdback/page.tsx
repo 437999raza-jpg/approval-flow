@@ -137,9 +137,9 @@ export default async function HoldbackPage({
   const { data: supplierRows } = supplierIdsOnBills.length
     ? await supabase
         .from("suppliers")
-        .select("id, qbo_vendor_id")
+        .select("id, qbo_vendor_id, email")
         .in("id", supplierIdsOnBills)
-    : { data: [] as { id: string; qbo_vendor_id: string | null }[] };
+    : { data: [] as { id: string; qbo_vendor_id: string | null; email: string | null }[] };
   const vendorIds = (supplierRows ?? []).map((s) => s.qbo_vendor_id).filter(Boolean) as string[];
   const { data: qboVendors } = vendorIds.length
     ? await supabase
@@ -149,10 +149,14 @@ export default async function HoldbackPage({
         .in("qbo_vendor_id", vendorIds)
     : { data: [] as { qbo_vendor_id: string; email: string | null }[] };
   const emailByVendorId = new Map((qboVendors ?? []).map((v) => [v.qbo_vendor_id, v.email]));
+  // Flow's own address wins over the QBO mirror — same precedence the
+  // send action uses. Without this, an address typed into the claim
+  // dialog was saved to suppliers.email and then never read back, so it
+  // looked like it hadn't stuck.
   const emailBySupplierId = new Map(
     (supplierRows ?? []).map((s) => [
       s.id,
-      s.qbo_vendor_id ? emailByVendorId.get(s.qbo_vendor_id) ?? null : null,
+      s.email ?? (s.qbo_vendor_id ? emailByVendorId.get(s.qbo_vendor_id) ?? null : null),
     ])
   );
   const defaultRate = Number(orgRow?.retainage_default_rate) || null;
