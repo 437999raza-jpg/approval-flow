@@ -128,6 +128,11 @@ export interface Database {
           id: string;
           organization_id: string;
           invoice_id: string;
+          // The holdback line this came from (migration 0099). One
+          // accrual per line: a bill can carry several, and lines carry
+          // their own project_id, so two holdbacks on one invoice can
+          // belong to two different jobs.
+          line_item_id: string | null;
           project_id: string | null;
           supplier_id: string | null;
           amount: number;

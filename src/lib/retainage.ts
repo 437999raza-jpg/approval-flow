@@ -38,12 +38,20 @@ export function termCopy(term: RetainageTerm | null | undefined): TermCopy {
 }
 
 // Every wording we've seen a subcontractor use for the deduction line.
-// Deliberately covers all three markets from the start — matching is a
-// word list, so breadth is free, and a missed line means silently
-// overpaying a sub by the full retained percentage.
+// Broad on purpose and across all three markets from the start, because
+// matching is just a word list — and a missed line means paying a sub
+// the full gross when 10% should have been withheld.
 //
-// Kept lowercase; callers normalise before testing.
-export const RETAINAGE_LINE_PATTERNS: readonly string[] = [
+// Two kinds, because they can't be matched the same way:
+//
+//   Phrases are safe as substrings — no ordinary line description
+//   contains "holdback" or "retainage" by accident.
+//
+//   Abbreviations are not. Fluid's subs write "10% HB" (seen on
+//   Ridgeline Electric invoice 26-2422), and a plain substring test for
+//   "hb" also fires on "highbay lighting". Those need word boundaries,
+//   which is why this isn't one flat list.
+const RETAINAGE_PHRASES: readonly string[] = [
   "holdback",
   "hold back",
   "hold-back",
@@ -51,25 +59,28 @@ export const RETAINAGE_LINE_PATTERNS: readonly string[] = [
   "retainage",
   "retention",
   "retained",
-  "less retainage",
-  "less holdback",
-  "less retention",
   "amount retained",
 ];
+
+// Matched as whole words only: hb, h/b, h.b, h.b.
+const RETAINAGE_ABBREVIATIONS = /(^|[^a-z0-9])(hb|h\/b|h\.b\.?)([^a-z0-9]|$)/;
+
+export const RETAINAGE_LINE_PATTERNS: readonly string[] = RETAINAGE_PHRASES;
 
 // True when a line's description looks like the retainage deduction
 // rather than work performed.
 //
 // Callers MUST also check the amount is negative (or otherwise reduces
-// the total) before acting on this. The list matches whole terms, so
-// "Retaining wall — 40 lin ft" is safely ignored, but genuine site work
-// does collide: "Retention pond excavation" matches "retention" and is
-// real work being billed, not money being withheld. The sign of the
-// amount is what separates the two, every time.
+// the total) before acting on this. Genuine site work does collide:
+// "Retention pond excavation" matches "retention" and is real work being
+// billed, not money withheld. On invoice 26-2422 the holdback line is
+// -2,777.92 against a +27,779.20 line, and that sign is what separates
+// the two every time.
 export function looksLikeRetainageLine(description: string | null | undefined): boolean {
   if (!description) return false;
   const d = description.toLowerCase().replace(/\s+/g, " ").trim();
-  return RETAINAGE_LINE_PATTERNS.some((p) => d.includes(p));
+  if (RETAINAGE_PHRASES.some((p) => d.includes(p))) return true;
+  return RETAINAGE_ABBREVIATIONS.test(d);
 }
 
 // The rate that applies to one invoice, or null for no retainage at all.
@@ -159,4 +170,54 @@ export function isReleasable(
   const from = new Date(project.substantial_performance_at);
   if (Number.isNaN(from.getTime())) return false;
   return now.getTime() >= from.getTime() + waitDays * 24 * 60 * 60 * 1000;
+}
+
+// Real subcontractor bills pair each work line with its own deduction
+// immediately below it — Senoz Electric invoice 4564 runs seven such
+// pairs, Ridgeline 26-2422 one. Across every holdback line in Fluid's
+// production data the deduction is exactly the rate applied to the line
+// directly above, to the cent.
+//
+// That pairing is a far stronger signal than the wording is, and it's
+// what turns detection from "this line says HB" into "this line says HB
+// AND it is 10% of the line above, negative". It also catches the sub
+// who quietly withholds 5% when the contract says 10%.
+export interface RetainagePair {
+  grossAmount: number;
+  retainageAmount: number; // positive
+  impliedRate: number;     // percent
+  matchesExpected: boolean;
+}
+
+export function pairWithPrecedingLine(
+  grossAmount: number | null | undefined,
+  retainageLineAmount: number | null | undefined,
+  expectedRate: number | null,
+  tolerancePercent = 0.05
+): RetainagePair | null {
+  if (
+    grossAmount == null ||
+    retainageLineAmount == null ||
+    !Number.isFinite(grossAmount) ||
+    !Number.isFinite(retainageLineAmount) ||
+    grossAmount <= 0
+  ) {
+    return null;
+  }
+  // The deduction must actually reduce the bill. This is the check that
+  // keeps "Retention pond excavation" — real work, positive amount —
+  // from ever being read as money withheld.
+  if (retainageLineAmount >= 0) return null;
+
+  const amount = Math.abs(retainageLineAmount);
+  const impliedRate = Math.round((amount / grossAmount) * 10000) / 100;
+  return {
+    grossAmount,
+    retainageAmount: amount,
+    impliedRate,
+    matchesExpected:
+      expectedRate == null
+        ? false
+        : Math.abs(impliedRate - expectedRate) <= tolerancePercent,
+  };
 }
