@@ -66,7 +66,7 @@ export async function fetchDashboardListData() {
     unreadNotificationsRes,
     { invoices, approvedPairs, lineItemRows },
   ] = await Promise.all([
-    supabase.from("organizations").select("plan, trial_ends_at").eq("id", org.id).single(),
+    supabase.from("organizations").select("plan, custom_plan, trial_ends_at").eq("id", org.id).single(),
     supabase.from("organization_members").select("organization_id").eq("user_id", user.id),
     supabase
       .from("qbo_connections")
@@ -148,6 +148,7 @@ export async function fetchDashboardListData() {
     org,
     user: { id: user.id, email: user.email ?? null },
     trialPlan: trialOrgRow?.plan ?? null,
+    trialCustomPlan: trialOrgRow?.custom_plan ?? null,
     trialEndsAt: trialOrgRow?.trial_ends_at ?? null,
     myOrgs,
     qboConnected: !!qboConnection,

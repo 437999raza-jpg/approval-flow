@@ -5,6 +5,7 @@ import { isPlatformAdmin } from "@/lib/platform-admin";
 import { switchOrgAction } from "@/lib/admin-actions";
 import { AppSidebar } from "@/components/AppSidebar";
 import { QueryProvider } from "@/components/QueryProvider";
+import { TrialBanner } from "@/components/TrialBanner";
 
 // Shared shell for every non-Dashboard authenticated page (Settings,
 // Workflows, Reports, Billing, Statements, Queue, Notifications, Add
@@ -37,7 +38,7 @@ export default async function AppLayout({
   // there instead of duplicating that message here.
   if (!org) redirect("/dashboard");
 
-  const [{ data: myMemberships }, pendingSplitsRes, unreadNotificationsRes] =
+  const [{ data: myMemberships }, pendingSplitsRes, unreadNotificationsRes, { data: trialOrgRow }] =
     await Promise.all([
       supabase.from("organization_members").select("organization_id").eq("user_id", user.id),
       supabase
@@ -50,6 +51,11 @@ export default async function AppLayout({
         .select("id", { count: "exact", head: true })
         .eq("user_id", user.id)
         .eq("read", false),
+      supabase
+        .from("organizations")
+        .select("plan, custom_plan, trial_ends_at")
+        .eq("id", org.id)
+        .single(),
     ]);
 
   const myOrgIds = (myMemberships ?? []).map((m) => m.organization_id);
@@ -77,8 +83,11 @@ export default async function AppLayout({
             pendingSplits: pendingSplitsRes.count ?? 0,
           }}
         />
-        <div className="flex min-w-0 flex-1 flex-col overflow-y-auto">
-          {children}
+        <div className="flex min-w-0 flex-1 flex-col">
+          <TrialBanner org={trialOrgRow} />
+          <div className="flex min-w-0 flex-1 flex-col overflow-y-auto">
+            {children}
+          </div>
         </div>
       </div>
     </QueryProvider>

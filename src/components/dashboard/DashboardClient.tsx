@@ -599,7 +599,13 @@ export function DashboardClient({ initialListData }: { initialListData: Dashboar
       <DocumentFocusProvider>
         <ExtractionPoller onProcessed={() => queryClient.invalidateQueries({ queryKey: ["dashboard-list", orgId] })} />
         <UpdateAvailableBanner />
-        <TrialBanner plan={data.trialPlan} trialEndsAt={data.trialEndsAt} />
+        <TrialBanner
+          org={{
+            plan: data.trialPlan,
+            custom_plan: data.trialCustomPlan,
+            trial_ends_at: data.trialEndsAt,
+          }}
+        />
         <div className="flex h-screen bg-slate-50 text-slate-900">
           <AppSidebar
             org={org}
