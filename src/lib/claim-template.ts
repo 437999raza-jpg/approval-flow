@@ -26,12 +26,16 @@ export const CLAIM_PLACEHOLDERS = [
   { token: "{bills}", describes: "the table of bills — inserted for you" },
 ] as const;
 
+// Worded so {term} always lands mid-sentence and lowercase — "holdback
+// release" as a subject started with a lowercase letter, and "holding
+// holdback" read like a stutter. Both only showed up once rendered with
+// real values.
 export const DEFAULT_CLAIM_SUBJECT =
-  "{term} release — please invoice {company} ({project})";
+  "Please invoice {company} for {term} — {project}";
 
 export const DEFAULT_CLAIM_BODY = `Hello {vendor},
 
-{project} is closing, and we are holding {term} from your previous invoices. Please send us an invoice for the amount below so we can release it.
+{project} is closing, and we have withheld {term} from your previous invoices. Please send us an invoice for the amount below so we can release it to you.
 
 {bills}
 
