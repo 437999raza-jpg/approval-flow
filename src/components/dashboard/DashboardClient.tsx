@@ -746,6 +746,7 @@ export function DashboardClient({ initialListData }: { initialListData: Dashboar
                     uploadAction={invalidateAfter(addDocument.bind(null, selected.id))}
                     canEdit={canEdit}
                     initialShowDoc={docOpen}
+                    onDocOpenChange={setDocOpen}
                     bill={{
                       invoice: selected,
                       primaryFileUrl: detail.documents[0]?.url ?? null,

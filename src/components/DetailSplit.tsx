@@ -1,8 +1,7 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useFormStatus } from "react-dom";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import {
   BillPanel,
@@ -115,6 +114,12 @@ interface DetailSplitProps {
   // so it survives Prev/Next and Back/Forward navigation between invoices
   // rather than depending on this component instance never remounting.
   initialShowDoc?: boolean;
+  // Reports "the document pane opened/closed" upward instead of writing
+  // the URL here. The Dashboard owns its own address bar (see
+  // DashboardClient's history.replaceState sync) — this component writing
+  // the same doc=1 param through Next's router meant two owners fighting
+  // over one param, and the router half remounted the whole dashboard.
+  onDocOpenChange?: (open: boolean) => void;
 }
 
 // Two-pane detail: invoice document(s) and the ApprovalMax-style bill panel.
@@ -128,6 +133,7 @@ export function DetailSplit({
   uploadAction,
   canEdit = true,
   initialShowDoc = false,
+  onDocOpenChange,
 }: DetailSplitProps) {
   const [showDoc, setShowDoc] = useState(initialShowDoc);
   const [billOpen, setBillOpen] = useState(true);
@@ -139,19 +145,22 @@ export function DetailSplit({
   const billRef = useRef<HTMLDivElement>(null);
   const formRef = useRef<HTMLFormElement>(null);
   const { setFocused } = useDocumentFocus();
-  const router = useRouter();
-  const pathname = usePathname();
-  const searchParams = useSearchParams();
 
-  // Keep the `doc=1` URL param in sync with showDoc — so "document open"
-  // travels with the invoice through Prev/Next and Back/Forward, instead
-  // of depending on this component instance never remounting.
+  // "Document open" still travels with the invoice through Prev/Next and
+  // Back/Forward via the doc=1 param — but the parent writes it, not this
+  // component.
+  //
+  // This used to call router.replace() itself. On the Dashboard that's a
+  // real Next App Router navigation, and because DashboardClient manages
+  // its address bar with history.replaceState (never telling Next's
+  // router), usePathname() here was stale — so the replace navigated to a
+  // different URL than the one actually showing, remounting the whole
+  // dashboard. Reported live as the document "disappearing and reloading"
+  // the moment you expand it. Same root cause as the revalidatePath and
+  // router.refresh() problems already fixed elsewhere: nothing on this
+  // page may drive Next's router.
   const setDocParam = (open: boolean) => {
-    const params = new URLSearchParams(searchParams.toString());
-    if (open) params.set("doc", "1");
-    else params.delete("doc");
-    const qs = params.toString();
-    router.replace(`${pathname}${qs ? `?${qs}` : ""}`, { scroll: false });
+    onDocOpenChange?.(open);
   };
 
   // Switching invoices (navigation keeps this component mounted) must not
@@ -200,8 +209,39 @@ export function DetailSplit({
   // would otherwise be nothing left on screen to un-focus with.
   useEffect(() => () => setFocused(false), [setFocused]);
 
-  const safeIndex = Math.min(docIndex, Math.max(documents.length - 1, 0));
-  const doc = documents[safeIndex];
+  // Keeps the open PDF from tearing down and reloading mid-edit.
+  //
+  // fetchInvoiceDetail mints a FRESH Supabase signed URL every time it
+  // runs (createSignedUrl, 10 min), and the detail query is invalidated
+  // after every mutation — and this bill panel autosaves constantly. So
+  // editing a line item, adding a note or changing a stage produced a
+  // new token, which changed <object data=...>, which made the browser
+  // throw the rendered PDF away and fetch it again. Reported live as the
+  // document "disappearing and reloading" while working on the invoice.
+  //
+  // The path in front of `?token=` is stable per file, so it's the key:
+  // the first URL seen for a given file is pinned and reused even when a
+  // refetch supplies a differently-signed one for the same file. Repinned
+  // after 8 minutes so a long editing session swaps to a fresh signature
+  // before the 10-minute one actually expires.
+  const pinnedUrls = useRef(new Map<string, { url: string; at: number }>());
+  const stableDocuments = useMemo(() => {
+    const PIN_TTL_MS = 8 * 60 * 1000;
+    const now = Date.now();
+    return documents.map((d) => {
+      if (!d.url) return d;
+      const key = d.url.split("?")[0];
+      const pinned = pinnedUrls.current.get(key);
+      if (pinned && now - pinned.at < PIN_TTL_MS) {
+        return pinned.url === d.url ? d : { ...d, url: pinned.url };
+      }
+      pinnedUrls.current.set(key, { url: d.url, at: now });
+      return d;
+    });
+  }, [documents]);
+
+  const safeIndex = Math.min(docIndex, Math.max(stableDocuments.length - 1, 0));
+  const doc = stableDocuments[safeIndex];
   const multi = documents.length > 1;
 
   const openDocument = () => {
