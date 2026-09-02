@@ -134,8 +134,15 @@ function codeAppearsIn(text: string, p: ParsedProject): boolean {
     // also match a plain "2024-01", so those two real jobs tied and both
     // were discarded as ambiguous. A Z job has to be cited as one.
     const y = p.year.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    // Either a real separator character between year and number, or
+    // nothing at all — never whitespace on its own.
+    //
+    // Whitespace alone matched a DATE: "CONTAINER … TUE AUG 04/2026
+    // 07:00" was read as job 2026-07 and would have filed that bill
+    // against a job it has nothing to do with. Dates put a space there;
+    // job codes put a hyphen or nothing.
     return new RegExp(
-      `(^|[^0-9a-z])${y}\\s*[-–—_./]?\\s*0*${p.number}(?![0-9])`,
+      `(^|[^0-9a-z])${y}(?:\\s*[-–—_./]\\s*|)0*${p.number}(?![0-9])`,
       "i"
     ).test(text);
   }
@@ -205,8 +212,13 @@ export function matchProject(
       scored.push({ p, score: 60, reason: `job ${p.code} written on the bill` });
       continue;
     }
+    // Labels are searched in the PO field too. In practice that field
+    // holds whatever reference the supplier wrote — Fluid's real bills
+    // carry "CLARINGTON TOYOTA" and "2023-16 WHITBY TOYOTA" in it — so
+    // treating it as strictly a number missed the job sitting in plain
+    // sight.
     const label = distinctiveLabel(p.label, parsed);
-    if (label && otherText.toLowerCase().includes(label)) {
+    if (label && `${po} ${otherText}`.toLowerCase().includes(label)) {
       scored.push({ p, score: 30, reason: `"${p.label}" named on the bill` });
     }
   }
