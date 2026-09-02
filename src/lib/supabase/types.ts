@@ -69,6 +69,7 @@ export interface Database {
           retainage_account_qbo_id: string | null;
           // Saved claim-email template and where subs should send the
           // invoice (migration 0100).
+          retainage_claim_subject: string | null;
           retainage_claim_note: string | null;
           retainage_claim_to_email: string | null;
           setup_fee_usd: number | null;

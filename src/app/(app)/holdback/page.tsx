@@ -4,6 +4,11 @@ import { getCurrentOrg } from "@/lib/current-org";
 import { SubmitButton } from "@/components/SubmitButton";
 import { DirtySaveButton } from "@/components/DirtySaveButton";
 import { categoryDisplayName } from "@/lib/qbo";
+import {
+  CLAIM_PLACEHOLDERS,
+  DEFAULT_CLAIM_SUBJECT,
+  DEFAULT_CLAIM_BODY,
+} from "@/lib/claim-template";
 import { termCopy, isRetainageAccountLine, type RetainageTerm } from "@/lib/retainage";
 import { HoldbackReport } from "@/components/HoldbackReport";
 import {
@@ -66,7 +71,7 @@ export default async function HoldbackPage({
     await Promise.all([
       supabase
         .from("organizations")
-        .select("retainage_term, retainage_default_rate, retainage_account_qbo_id, retainage_claim_note, retainage_claim_to_email, inbound_email_local, inbound_email_token")
+        .select("retainage_term, retainage_default_rate, retainage_account_qbo_id, retainage_claim_subject, retainage_claim_note, retainage_claim_to_email, inbound_email_local, inbound_email_token")
         .eq("id", org.id)
         .single(),
       supabase
@@ -318,7 +323,8 @@ export default async function HoldbackPage({
             termNoun={term.noun}
             isAdmin={isAdmin}
             organizationName={org.name}
-            defaultNote={orgRow?.retainage_claim_note ?? ""}
+            defaultSubject={orgRow?.retainage_claim_subject ?? ""}
+            defaultBody={orgRow?.retainage_claim_note ?? ""}
             sendInvoiceTo={sendInvoiceTo}
             requestClaims={requestHoldbackClaims}
             release={releaseProjectRetainage}
@@ -403,15 +409,31 @@ export default async function HoldbackPage({
               </div>
               <div>
                 <label className="mb-1 block text-[11px] font-medium text-brand-muted">
-                  Default message to vendors
+                  Email subject
+                </label>
+                <input
+                  name="retainage_claim_subject"
+                  defaultValue={orgRow?.retainage_claim_subject ?? ""}
+                  placeholder={DEFAULT_CLAIM_SUBJECT}
+                  className={field}
+                />
+              </div>
+              <div className="sm:col-span-2">
+                <label className="mb-1 block text-[11px] font-medium text-brand-muted">
+                  Email message
                 </label>
                 <textarea
                   name="retainage_claim_note"
-                  rows={3}
+                  rows={8}
                   defaultValue={orgRow?.retainage_claim_note ?? ""}
-                  placeholder="Quote the PO number on your invoice. Invoices received after the 25th go into the following month's payment run."
-                  className={field}
+                  placeholder={DEFAULT_CLAIM_BODY}
+                  className={`${field} font-mono text-[13px] leading-relaxed`}
                 />
+                <p className="mt-1 text-[11px] text-brand-muted">
+                  Placeholders:{" "}
+                  {CLAIM_PLACEHOLDERS.map((p) => p.token).join("  ")} — leave blank to
+                  use the wording shown.
+                </p>
               </div>
             </div>
             <DirtySaveButton />

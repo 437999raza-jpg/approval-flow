@@ -382,39 +382,33 @@ export async function sendEscalationEmail({
 // the organization, and the ledger records that it was sent — so the
 // caller has to know rather than assume.
 //
-// The invoice list is included deliberately: a sub asked for "$4,617.42"
-// with no breakdown has to go digging through a year of their own
-// billing to check it, and the ones who can't be bothered simply don't
-// reply, which is the whole problem this feature exists to solve.
+// Subject and body are the customer's own text (see claim-template.ts),
+// already substituted by the caller. Only the bill table is built here,
+// because it's a table and nobody wants to hand-write one: it replaces
+// {bills} where that appears, and is appended when it doesn't. The
+// breakdown matters — a sub asked for "$4,617.42" with no detail has to
+// dig through a year of their own billing to check it, and the ones who
+// can't be bothered simply don't reply.
 export async function sendHoldbackClaimEmail({
   to,
-  termNoun,
-  supplierName,
+  subject,
+  body,
   organizationName,
-  projectName,
   totalAmount,
   currency,
   lines,
   replyTo,
-  sendInvoiceTo,
-  note,
+  ctaUrl,
 }: {
   to: string;
-  termNoun: string; // "Holdback" / "Retainage" / "Retention"
-  supplierName: string;
+  subject: string;
+  body: string;
   organizationName: string;
-  projectName: string | null;
   totalAmount: number;
   currency: string;
   lines: { invoiceNumber: string | null; date: string | null; amount: number }[];
   replyTo?: string | null;
-  // Where the subcontractor should send their invoice. Normally the
-  // org's own inbound address, so the claim is ingested automatically.
-  sendInvoiceTo?: string | null;
-  // A line the sender adds before sending — "we're closing this job out
-  // at month end", a contact name, whatever the standard wording can't
-  // know. Shown above the table, escaped like everything else.
-  note?: string | null;
+  ctaUrl?: string | null;
 }): Promise<{ ok: boolean; error?: string }> {
   const apiKey = process.env.RESEND_API_KEY;
   const from = process.env.RESEND_FROM_EMAIL;
@@ -422,7 +416,6 @@ export async function sendHoldbackClaimEmail({
 
   const money = (n: number) =>
     n.toLocaleString(undefined, { style: "currency", currency: currency || "CAD" });
-  const term = escapeHtml(termNoun.toLowerCase());
 
   const rows = lines
     .map(
@@ -430,48 +423,41 @@ export async function sendHoldbackClaimEmail({
         <tr>
           <td style="padding:6px 0;font-size:13px;color:#334155;">${escapeHtml(l.invoiceNumber ?? "—")}</td>
           <td style="padding:6px 0;font-size:13px;color:#64748b;">${escapeHtml(l.date ?? "")}</td>
-          <td style="padding:6px 0;font-size:13px;color:#0f172a;text-align:right;font-variant-numeric:tabular-nums;">${money(l.amount)}</td>
+          <td style="padding:6px 0;font-size:13px;color:#0f172a;text-align:right;">${money(l.amount)}</td>
         </tr>`
     )
     .join("");
 
-  const noteHtml = note?.trim()
-    ? `<p style="margin:0 0 14px 0;font-size:14px;line-height:1.6;color:#334155;">${escapeHtml(
-        note.trim()
-      ).replace(/\n/g, "<br />")}</p>`
-    : "";
-
-  const bodyHtml = `
-    <p style="margin:0 0 14px 0;font-size:14px;line-height:1.6;color:#334155;">
-      Hello ${escapeHtml(supplierName)},
-    </p>
-    <p style="margin:0 0 14px 0;font-size:14px;line-height:1.6;color:#334155;">
-      ${escapeHtml(projectName ? `${projectName} is closing` : "A project you worked on is closing")},
-      and we are holding ${term} from your previous invoices. Please send us an
-      invoice for the amount below so we can release it.
-    </p>
-    ${noteHtml}
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 14px 0;border-top:1px solid #e2e8f0;">
+  const billsTable = `
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:14px 0;border-top:1px solid #e2e8f0;">
       <tr>
         <td style="padding:8px 0 4px 0;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:#94a3b8;">Invoice</td>
         <td style="padding:8px 0 4px 0;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:#94a3b8;">Date</td>
-        <td style="padding:8px 0 4px 0;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:#94a3b8;text-align:right;">${escapeHtml(termNoun)}</td>
+        <td style="padding:8px 0 4px 0;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:#94a3b8;text-align:right;">Amount</td>
       </tr>
       ${rows}
       <tr>
         <td colspan="2" style="padding:10px 0 0 0;border-top:1px solid #e2e8f0;font-size:14px;font-weight:600;color:#0f172a;">Total to invoice</td>
         <td style="padding:10px 0 0 0;border-top:1px solid #e2e8f0;font-size:15px;font-weight:700;color:#0f172a;text-align:right;">${money(totalAmount)}</td>
       </tr>
-    </table>
-    <p style="margin:0;font-size:12.5px;line-height:1.6;color:#64748b;">
-      Please add applicable taxes to your invoice — tax on ${term} is payable
-      when it is released, not when it was originally withheld.
-      ${
-        sendInvoiceTo
-          ? `Email the invoice to <a href="mailto:${escapeHtml(sendInvoiceTo)}" style="color:#3E7D36;">${escapeHtml(sendInvoiceTo)}</a> and it will reach our accounts payable directly.`
-          : "Reply to this email with the invoice attached and it will reach our accounts payable directly."
-      }
-    </p>`;
+    </table>`;
+
+  // The body is the customer's plain text: escape it, turn blank lines
+  // into paragraphs, then drop the table in.
+  const paragraphs = escapeHtml(body)
+    .split(/\n{2,}/)
+    .map(
+      (para) =>
+        `<p style="margin:0 0 14px 0;font-size:14px;line-height:1.6;color:#334155;">${para.replace(
+          /\n/g,
+          "<br />"
+        )}</p>`
+    )
+    .join("");
+  const BILLS_TOKEN = "{bills}";
+  const bodyHtml = paragraphs.includes(BILLS_TOKEN)
+    ? paragraphs.replace(BILLS_TOKEN, billsTable)
+    : paragraphs + billsTable;
 
   try {
     const res = await fetch("https://api.resend.com/emails", {
@@ -484,14 +470,14 @@ export async function sendHoldbackClaimEmail({
         from,
         to,
         ...(replyTo ? { reply_to: replyTo } : {}),
-        subject: `${termNoun} release — please invoice ${organizationName}${projectName ? ` (${projectName})` : ""}`,
+        subject,
         html: emailShell({
           accentColor: "#57A14C",
           eyebrow: organizationName,
-          headline: `Please invoice for your ${term}`,
+          headline: subject,
           bodyHtml,
           ctaLabel: "Send your invoice",
-          ctaUrl: `mailto:${sendInvoiceTo ?? replyTo ?? from}`,
+          ctaUrl: ctaUrl ?? `mailto:${replyTo ?? from}`,
         }),
       }),
     });

@@ -8,6 +8,11 @@ import { getCurrentOrg } from "@/lib/current-org";
 import { sendHoldbackClaimEmail } from "@/lib/notify";
 import { categoryDisplayName } from "@/lib/qbo";
 import {
+  fillClaimTemplate,
+  DEFAULT_CLAIM_SUBJECT,
+  DEFAULT_CLAIM_BODY,
+} from "@/lib/claim-template";
+import {
   detectRetainageLines,
   resolveRetainageRate,
   termCopy,
@@ -89,6 +94,8 @@ export async function saveRetainageSettings(formData: FormData) {
       retainage_default_rate: rate,
       retainage_account_qbo_id:
         String(formData.get("retainage_account_qbo_id") ?? "").trim() || null,
+      retainage_claim_subject:
+        String(formData.get("retainage_claim_subject") ?? "").trim() || null,
       retainage_claim_note: String(formData.get("retainage_claim_note") ?? "").trim() || null,
       retainage_claim_to_email:
         String(formData.get("retainage_claim_to_email") ?? "").trim() || null,
@@ -242,14 +249,16 @@ export async function rescanRetainage(): Promise<void> {
 export async function requestHoldbackClaims(formData: FormData): Promise<void> {
   const { supabase, org } = await requireAdmin();
   const projectId = String(formData.get("project_id") ?? "");
-  const note = String(formData.get("note") ?? "").slice(0, 2000);
+  // The customer's own subject and body, as edited in the dialog.
+  const subjectTemplate = String(formData.get("subject") ?? "").slice(0, 300);
+  const bodyTemplate = String(formData.get("body") ?? "").slice(0, 8000);
   const saveTemplate = formData.get("save_template") === "on";
   if (!projectId) redirect("/holdback?error=bad-project");
 
   const [{ data: orgRow }, { data: project }, { data: rows }] = await Promise.all([
     supabase
       .from("organizations")
-      .select("name, retainage_term, statement_reply_to, retainage_claim_note, retainage_claim_to_email, inbound_email_local, inbound_email_token")
+      .select("name, retainage_term, statement_reply_to, retainage_claim_subject, retainage_claim_note, retainage_claim_to_email, inbound_email_local, inbound_email_token")
       .eq("id", org.id)
       .single(),
     supabase.from("projects").select("name").eq("id", projectId).single(),
@@ -315,7 +324,10 @@ export async function requestHoldbackClaims(formData: FormData): Promise<void> {
   if (saveTemplate) {
     await admin
       .from("organizations")
-      .update({ retainage_claim_note: note || null })
+      .update({
+        retainage_claim_subject: subjectTemplate || null,
+        retainage_claim_note: bodyTemplate || null,
+      })
       .eq("id", org.id);
   }
 
@@ -346,14 +358,23 @@ export async function requestHoldbackClaims(formData: FormData): Promise<void> {
     }
 
     const total = mine.reduce((s, r) => s + Number(r.amount), 0);
+    const currency = invoiceById.get(mine[0].invoice_id)?.currency ?? "CAD";
+    const vars = {
+      vendor: supplier.name,
+      project: project?.name ?? "this project",
+      amount: total.toLocaleString(undefined, { style: "currency", currency }),
+      company: orgRow?.name ?? "Accounts Payable",
+      term: term.nounLower,
+      email: sendInvoiceTo ?? orgRow?.statement_reply_to ?? "",
+    };
+
     const result = await sendHoldbackClaimEmail({
       to: email,
-      termNoun: term.noun,
-      supplierName: supplier.name,
-      organizationName: orgRow?.name ?? "Accounts Payable",
-      projectName: project?.name ?? null,
+      subject: fillClaimTemplate(subjectTemplate || DEFAULT_CLAIM_SUBJECT, vars),
+      body: fillClaimTemplate(bodyTemplate || DEFAULT_CLAIM_BODY, vars),
+      organizationName: vars.company,
       totalAmount: total,
-      currency: invoiceById.get(mine[0].invoice_id)?.currency ?? "CAD",
+      currency,
       lines: mine.map((r) => {
         const inv = invoiceById.get(r.invoice_id);
         return {
@@ -363,8 +384,7 @@ export async function requestHoldbackClaims(formData: FormData): Promise<void> {
         };
       }),
       replyTo: orgRow?.statement_reply_to ?? null,
-      sendInvoiceTo,
-      note,
+      ctaUrl: sendInvoiceTo ? `mailto:${sendInvoiceTo}` : null,
     });
 
     if (!result.ok) {
