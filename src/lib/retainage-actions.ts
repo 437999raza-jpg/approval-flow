@@ -30,23 +30,40 @@ async function requireAdmin() {
   return { supabase, user, org };
 }
 
-// Mark a supplier as working under a contract. Nothing accrues for a
-// supplier until this is on — see migration 0098 for why the default is
-// off.
-export async function setSupplierSubcontractor(formData: FormData) {
+// Replace the whole subcontractor set in one write.
+//
+// The form submits every selected id, not a diff, so this is a straight
+// "these and only these" — which is what makes the picker safe to filter
+// and search without a hidden selection quietly surviving. Nothing
+// accrues for a supplier that isn't in the set; see migration 0098 for
+// why the default is off.
+export async function saveSubcontractors(formData: FormData) {
   const { org } = await requireAdmin();
-  const supplierId = String(formData.get("supplier_id") ?? "");
-  if (!supplierId) redirect("/holdback?error=bad-supplier");
+  const ids = formData
+    .getAll("supplier_ids")
+    .map((v) => String(v))
+    .filter(Boolean);
 
   const admin = createAdminClient();
+
+  // Clear first, then set — two statements rather than one per supplier,
+  // and correct regardless of how many were unticked.
   await admin
     .from("suppliers")
-    .update({ is_subcontractor: formData.get("is_subcontractor") === "on" })
-    .eq("id", supplierId)
-    .eq("organization_id", org.id); // never reach outside the caller's org
+    .update({ is_subcontractor: false })
+    .eq("organization_id", org.id)
+    .eq("is_subcontractor", true);
+
+  if (ids.length > 0) {
+    await admin
+      .from("suppliers")
+      .update({ is_subcontractor: true })
+      .eq("organization_id", org.id) // never reach outside the caller's org
+      .in("id", ids);
+  }
 
   revalidatePath("/holdback");
-  redirect("/holdback#subcontractors");
+  redirect(`/holdback?subs=${ids.length}#subcontractors`);
 }
 
 // Org-level configuration: which word, what rate, which QBO account.

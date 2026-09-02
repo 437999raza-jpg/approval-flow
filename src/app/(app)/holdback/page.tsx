@@ -3,10 +3,11 @@ import { createClient } from "@/lib/supabase/server";
 import { getCurrentOrg } from "@/lib/current-org";
 import { SubmitButton } from "@/components/SubmitButton";
 import { DirtySaveButton } from "@/components/DirtySaveButton";
+import { SubcontractorPicker } from "@/components/SubcontractorPicker";
 import { ConfirmSubmitButton } from "@/components/ConfirmSubmitButton";
 import { termCopy, isReleasable, type RetainageTerm } from "@/lib/retainage";
 import {
-  setSupplierSubcontractor,
+  saveSubcontractors,
   saveRetainageSettings,
   saveProjectRetainage,
   rescanRetainage,
@@ -44,6 +45,7 @@ export default async function HoldbackPage({
     released?: string;
     claims_sent?: string;
     claims_skipped?: string;
+    subs?: string;
   };
 }) {
   const supabase = createClient();
@@ -88,26 +90,81 @@ export default async function HoldbackPage({
   const supplierIds = [...new Set((ledger ?? []).map((r) => r.supplier_id).filter(Boolean))] as string[];
   const invoiceIds = [...new Set((ledger ?? []).map((r) => r.invoice_id))];
 
-  const [{ data: ledgerSuppliers }, { data: invoices }, { data: topSuppliers }] =
-    await Promise.all([
+  const [{ data: ledgerSuppliers }, { data: invoices }] = await Promise.all([
       supplierIds.length
         ? supabase.from("suppliers").select("id, name, qbo_vendor_id").in("id", supplierIds)
         : Promise.resolve({ data: [] as { id: string; name: string; qbo_vendor_id: string | null }[] }),
       invoiceIds.length
         ? supabase.from("invoices").select("id, invoice_number, currency").in("id", invoiceIds)
         : Promise.resolve({ data: [] as { id: string; invoice_number: string | null; currency: string }[] }),
-      // The flagging list. 2,000+ suppliers is unusable alphabetically, and
-      // subcontractors are the ones being billed by — so this is ordered by
-      // how many invoices they've sent, which puts the real subs at the top
-      // and leaves the one-off materials purchases in the tail.
-      supabase
+  ]);
+
+  // Which jobs each supplier has billed against. Read from BOTH the
+  // invoice and its lines, because a bill can carry no project of its
+  // own while its lines each point at one — Ridgeline 26-2422 is exactly
+  // that shape, and taking only the invoice would have found no job at
+  // all for it.
+  const { data: allInvoices } = await supabase
+    .from("invoices")
+    .select("id, supplier_id, project_id")
+    .eq("organization_id", org.id)
+    .not("supplier_id", "is", null)
+    .limit(5000);
+  const supplierByInvoice = new Map(
+    (allInvoices ?? []).map((i) => [i.id, i.supplier_id as string])
+  );
+  const jobsBySupplier = new Map<string, Set<string>>();
+  const addJob = (supplierId: string | null, projectId: string | null) => {
+    if (!supplierId || !projectId) return;
+    const set = jobsBySupplier.get(supplierId) ?? new Set<string>();
+    set.add(projectId);
+    jobsBySupplier.set(supplierId, set);
+  };
+  for (const i of allInvoices ?? []) addJob(i.supplier_id, i.project_id);
+
+  const { data: projectLines } = await supabase
+    .from("invoice_line_items")
+    .select("invoice_id, project_id")
+    .not("project_id", "is", null)
+    .limit(20000);
+  for (const l of projectLines ?? []) {
+    addJob(supplierByInvoice.get(l.invoice_id) ?? null, l.project_id);
+  }
+
+  // The flagging list is every supplier we have actually received a bill
+  // from, plus anyone already flagged — not the whole vendor list.
+  //
+  // Two reasons. A supplier who has never invoiced cannot have holdback,
+  // so listing them is noise: on this file that is 12 names instead of
+  // 2,046. And PostgREST caps a response at 1,000 rows whatever .limit()
+  // says, so "select every supplier" would have silently shown the first
+  // thousand alphabetically and hidden the rest — a subcontractor named
+  // Senoz would simply never have appeared.
+  const billedCount = new Map<string, number>();
+  for (const i of allInvoices ?? []) {
+    if (!i.supplier_id) continue;
+    billedCount.set(i.supplier_id, (billedCount.get(i.supplier_id) ?? 0) + 1);
+  }
+  const { data: flaggedAlready } = await supabase
+    .from("suppliers")
+    .select("id")
+    .eq("organization_id", org.id)
+    .eq("is_subcontractor", true);
+  const pickerIds = [
+    ...new Set([...billedCount.keys(), ...(flaggedAlready ?? []).map((s) => s.id)]),
+  ];
+  const { data: pickerSuppliers } = pickerIds.length
+    ? await supabase
         .from("suppliers")
         .select("id, name, is_subcontractor")
         .eq("organization_id", org.id)
-        .order("is_subcontractor", { ascending: false })
-        .order("name")
-        .limit(400),
-    ]);
+        .in("id", pickerIds)
+    : { data: [] as { id: string; name: string; is_subcontractor: boolean }[] };
+  const rankedSuppliers = [...(pickerSuppliers ?? [])].sort(
+    (a, b) =>
+      (billedCount.get(b.id) ?? 0) - (billedCount.get(a.id) ?? 0) ||
+      a.name.localeCompare(b.name)
+  );
 
   const supplierName = new Map((ledgerSuppliers ?? []).map((s) => [s.id, s.name]));
   const invoiceById = new Map((invoices ?? []).map((i) => [i.id, i]));
@@ -188,6 +245,12 @@ export default async function HoldbackPage({
               that supplier in QuickBooks.
             </span>
           )}
+        </p>
+      )}
+      {searchParams.subs != null && (
+        <p className="mt-4 rounded-lg border border-brand-green-light/40 bg-brand-mist px-4 py-3 text-sm text-brand-green-dark">
+          {searchParams.subs} supplier{searchParams.subs === "1" ? "" : "s"} marked as
+          subcontractors. Run &ldquo;Rescan invoices&rdquo; to pick up their {term.nounLower}.
         </p>
       )}
       {searchParams.released && (
@@ -404,32 +467,23 @@ export default async function HoldbackPage({
         <h2 className={label}>Subcontractors</h2>
         <p className="mt-1 text-sm text-brand-muted">
           {term.noun} applies to suppliers working under a contract — not to
-          materials or rentals. Nothing is withheld from a supplier that isn&apos;t
-          ticked here.
+          materials or rentals. Nothing is withheld from a supplier that
+          isn&apos;t ticked here. Pick a job to tick everyone who billed against
+          it, then untick the ones that were materials.
         </p>
         <div className={`mt-2 ${card}`}>
-          <div className="grid gap-x-6 gap-y-1 sm:grid-cols-2">
-            {(topSuppliers ?? []).map((s) => (
-              <form
-                key={s.id}
-                action={setSupplierSubcontractor}
-                className="flex items-center justify-between gap-2 border-b border-brand-line/60 py-1.5"
-              >
-                <input type="hidden" name="supplier_id" value={s.id} />
-                <label className="flex min-w-0 items-center gap-2 text-sm text-brand-ink">
-                  <input
-                    type="checkbox"
-                    name="is_subcontractor"
-                    defaultChecked={s.is_subcontractor}
-                    disabled={!isAdmin}
-                    className="h-3.5 w-3.5 flex-none rounded border-brand-line"
-                  />
-                  <span className="truncate">{s.name}</span>
-                </label>
-                {isAdmin && <DirtySaveButton />}
-              </form>
-            ))}
-          </div>
+          <SubcontractorPicker
+            action={saveSubcontractors}
+            suppliers={rankedSuppliers.map((s) => ({
+              id: s.id,
+              name: s.name,
+              isSubcontractor: s.is_subcontractor,
+              projectIds: [...(jobsBySupplier.get(s.id) ?? [])],
+            }))}
+            projects={(projects ?? []).map((p) => ({ id: p.id, name: p.name }))}
+            termNoun={term.noun}
+            readOnly={!isAdmin}
+          />
         </div>
       </section>
 
