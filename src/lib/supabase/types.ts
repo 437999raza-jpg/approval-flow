@@ -943,6 +943,11 @@ export interface Database {
           name: string;
           name_normalized: string;
           qbo_vendor_id: string | null;
+          // Works under a contract, so holdback applies (migration 0098).
+          // Materials and rental suppliers are false — and false is the
+          // default, since withholding from a supplier who was never owed
+          // a holdback is the failure that matters.
+          is_subcontractor: boolean;
           created_at: string;
         };
         Insert: Partial<Database["public"]["Tables"]["suppliers"]["Row"]> & {

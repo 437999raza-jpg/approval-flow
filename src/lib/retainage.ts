@@ -72,13 +72,26 @@ export function looksLikeRetainageLine(description: string | null | undefined): 
   return RETAINAGE_LINE_PATTERNS.some((p) => d.includes(p));
 }
 
-// The rate that applies to one invoice: the job's own rate when it has
-// one, otherwise the org default. Null means this org doesn't withhold
-// retainage at all, which is most orgs — Flow is not construction-only.
+// The rate that applies to one invoice, or null for no retainage at all.
+//
+// The supplier decides first, and decides absolutely: holdback is a
+// property of the RELATIONSHIP, not of the bill. A subcontractor working
+// under a contract is subject to it; screws from Home Depot and a
+// container rented from Battlefield are not, however the invoice is
+// worded. An unflagged supplier returns null here and nothing downstream
+// accrues — which is also what stops a stray "retention pond" line on a
+// materials invoice from ever triggering an accrual.
+//
+// Only then does the rate resolve: the job's own rate if it has one,
+// otherwise the org default (10% across Ontario, and the only rate seen
+// in practice — but still configuration, since US retainage varies by
+// state and steps down mid-project).
 export function resolveRetainageRate(
   org: { retainage_default_rate?: number | string | null } | null | undefined,
-  project?: { retainage_rate?: number | string | null } | null
+  project?: { retainage_rate?: number | string | null } | null,
+  supplier?: { is_subcontractor?: boolean | null } | null
 ): number | null {
+  if (!supplier?.is_subcontractor) return null;
   const projectRate = toRate(project?.retainage_rate);
   if (projectRate != null) return projectRate;
   return toRate(org?.retainage_default_rate);

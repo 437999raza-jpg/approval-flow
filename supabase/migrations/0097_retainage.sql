@@ -14,11 +14,14 @@
 -- "retainage" throughout because it's the neutral term across all three
 -- markets; what a customer READS comes from organizations.retainage_term.
 --
--- Today Fluid books this to a QBO account called "Holdbacks Payable"
--- (2-1030), which is an Accounts Payable-type account rather than a
--- plain liability — so QBO already carries the per-VENDOR breakdown.
--- What it can't carry is the per-PROJECT split or the release calendar,
--- and that's what this ledger is for.
+-- Fluid books this to "HB Payable" (2-1031, QBO Id 420), an Other
+-- Current Liability account. A liability balance carries no vendor and
+-- no job — it is one number. So this ledger supplies BOTH dimensions,
+-- plus the release calendar, and nets back to that balance.
+--
+-- The account is per customer, not a constant: the same file also has
+-- "Holdbacks Payable" (2-1030), an Accounts-Payable-type account that
+-- Fluid does not use. Which is exactly why it is configuration.
 --
 -- Authored by Araza.
 
@@ -42,8 +45,8 @@ alter table projects
   add column if not exists retainage_released_at timestamptz;
 
 -- The sub-ledger: one row per invoice that had retainage withheld.
--- These rows net to the QBO account balance, and carry the two
--- dimensions the account itself can't — project, and release state.
+-- These rows net to the QBO account balance, and carry every dimension
+-- that balance cannot — subcontractor, project, and release state.
 create table if not exists invoice_retainage (
   id uuid primary key default gen_random_uuid(),
   organization_id uuid not null references organizations(id) on delete cascade,
