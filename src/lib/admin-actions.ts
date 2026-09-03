@@ -519,7 +519,7 @@ export async function startQboBillImportAction(formData: FormData) {
   const orgId = String(formData.get("org_id") ?? "");
   const dateFrom = String(formData.get("date_from") ?? "");
   const dateTo = String(formData.get("date_to") ?? "");
-  const projectId = String(formData.get("project_id") ?? "").trim() || null;
+  const projectIds = formData.getAll("project_ids").map((v) => String(v)).filter(Boolean);
   if (!orgId || !dateFrom || !dateTo) {
     redirect("/admin/organizations?error=bad-import-range");
   }
@@ -528,7 +528,7 @@ export async function startQboBillImportAction(formData: FormData) {
   // service key (see migration 0104) — deliberately, since this table
   // must never be reachable by a customer's own admin even by accident.
   const admin = createAdminClient();
-  const result = await startQboBillImport(admin, orgId, dateFrom, dateTo, user.id, projectId);
+  const result = await startQboBillImport(admin, orgId, dateFrom, dateTo, user.id, projectIds);
   if (!result.ok) {
     redirect(`/admin/organizations?error=${encodeURIComponent(result.error ?? "import-failed")}`);
   }

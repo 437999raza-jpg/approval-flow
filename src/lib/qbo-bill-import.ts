@@ -60,7 +60,7 @@ export async function startQboBillImport(
   dateFrom: string,
   dateTo: string,
   createdBy: string,
-  projectId: string | null = null
+  projectIds: string[] = []
 ): Promise<{ ok: boolean; error?: string }> {
   const { data: existing } = await supabase
     .from("qbo_bill_import_jobs")
@@ -76,7 +76,7 @@ export async function startQboBillImport(
     organization_id: organizationId,
     date_from: dateFrom,
     date_to: dateTo,
-    project_id: projectId,
+    project_ids: projectIds,
     created_by: createdBy,
   });
   if (error) return { ok: false, error: error.message };
@@ -111,15 +111,15 @@ export async function runQboBillImportJob(supabase: Supabase, organizationId: st
     .update({ status: "processing", updated_at: new Date().toISOString() })
     .eq("id", job.id);
 
-  // Resolve the scoping project's QBO id once, if this job is scoped.
-  let targetQboProjectId: string | null = null;
-  if (job.project_id) {
-    const { data: proj } = await supabase
+  // Resolve the scoping projects' QBO ids once, if this job is scoped.
+  let targetQboProjectIds: Set<string> | null = null;
+  if (job.project_ids.length > 0) {
+    const { data: projs } = await supabase
       .from("projects")
       .select("qbo_id")
-      .eq("id", job.project_id)
-      .maybeSingle();
-    targetQboProjectId = proj?.qbo_id ?? null;
+      .in("id", job.project_ids);
+    const ids = (projs ?? []).map((p) => p.qbo_id).filter((id): id is string => !!id);
+    targetQboProjectIds = ids.length > 0 ? new Set(ids) : null;
   }
 
   let fetchedBills: QboBillForImport[];
@@ -129,7 +129,7 @@ export async function runQboBillImportJob(supabase: Supabase, organizationId: st
       job.date_from,
       job.date_to,
       job.cursor_position,
-      job.project_id ? SCAN_PAGE_SIZE : BATCH_SIZE
+      targetQboProjectIds ? SCAN_PAGE_SIZE : BATCH_SIZE
     );
   } catch (err) {
     await supabase
@@ -149,8 +149,8 @@ export async function runQboBillImportJob(supabase: Supabase, organizationId: st
   // misrepresent it. The line-level project a customer actually cares
   // about is preserved per line either way, same as it already is for
   // every live invoice in the app.
-  const bills = targetQboProjectId
-    ? fetchedBills.filter((b) => b.lines.some((l) => l.customerId === targetQboProjectId))
+  const bills = targetQboProjectIds
+    ? fetchedBills.filter((b) => b.lines.some((l) => l.customerId && targetQboProjectIds!.has(l.customerId)))
     : fetchedBills;
 
   if (fetchedBills.length === 0) {
@@ -347,7 +347,7 @@ export async function runQboBillImportJob(supabase: Supabase, organizationId: st
   }
 
   const scanned = fetchedBills.length;
-  const pageSize = job.project_id ? SCAN_PAGE_SIZE : BATCH_SIZE;
+  const pageSize = targetQboProjectIds ? SCAN_PAGE_SIZE : BATCH_SIZE;
   const isLastPage = scanned < pageSize;
   await supabase
     .from("qbo_bill_import_jobs")

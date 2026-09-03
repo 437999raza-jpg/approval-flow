@@ -8,6 +8,7 @@ import { SubmitButton } from "@/components/SubmitButton";
 import { DirtySaveButton } from "@/components/DirtySaveButton";
 import { isTrialActive, PLAN_ORDER, PLANS, parseCustomPlan, resolveSetupFee } from "@/lib/plans";
 import { BackToDashboardButton } from "@/components/BackToDashboardButton";
+import { QboImportProjectPicker } from "@/components/QboImportProjectPicker";
 
 const adminFieldCls =
   "w-full rounded-lg border border-brand-line bg-white px-2.5 py-1.5 text-xs text-brand-ink placeholder:text-slate-400 focus:border-brand-green focus:outline-none focus:ring-2 focus:ring-brand-green-light/30";
@@ -540,9 +541,10 @@ export default async function AdminOrganizationsPage({
               <details className="border-t border-brand-line">
                 <summary className="cursor-pointer px-5 py-2.5 text-xs font-medium text-brand-muted hover:bg-brand-mist">
                   Import bills from QuickBooks (owner tool)
-                  {importJob?.project_id && (
+                  {importJob && importJob.project_ids.length > 0 && (
                     <span className="ml-1.5 text-brand-muted">
-                      · scoped to {orgProjects.find((p) => p.id === importJob.project_id)?.name ?? "one job"}
+                      · scoped to {importJob.project_ids.length} job
+                      {importJob.project_ids.length === 1 ? "" : "s"}
                     </span>
                   )}
                   {importJob?.status === "processing" && (
@@ -594,17 +596,7 @@ export default async function AdminOrganizationsPage({
                       <label className={adminLabelCls}>To</label>
                       <input name="date_to" type="date" required className={adminFieldCls} />
                     </div>
-                    <div className="min-w-[14rem]">
-                      <label className={adminLabelCls}>Only this job (optional)</label>
-                      <select name="project_id" defaultValue="" className={adminFieldCls}>
-                        <option value="">Every bill in the date range</option>
-                        {orgProjects.map((p) => (
-                          <option key={p.id} value={p.id}>
-                            {p.name}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
+                    <QboImportProjectPicker projects={orgProjects} />
                     <SubmitButton
                       disabled={importJob?.status === "queued" || importJob?.status === "processing"}
                       className="rounded-lg bg-brand-navy px-3 py-1.5 text-xs font-display font-bold text-white hover:bg-brand-ink disabled:cursor-not-allowed disabled:opacity-50"
