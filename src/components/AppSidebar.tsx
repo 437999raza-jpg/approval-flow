@@ -501,11 +501,21 @@ export function AppSidebar({
 
         {children && <div className="border-b border-brand-line p-2">{children}</div>}
 
-        {/* Two independently-anchored groups rather than one flowing list:
-            Queue/Mentions/Splits hug the top, Workflows..Settings hug the
-            bottom (mt-auto), with whatever space is left between them. */}
+        {/* Three real siblings, not two — the first version had the More
+            dropdown nested INSIDE the top block, sharing whatever room
+            was left with everything else. On a short window that meant
+            the dropdown, Reports and Settings all competed for the same
+            leftover space, and once it ran out, Reports/Settings just
+            became "the rest of the scrollable content" — reachable only
+            by scrolling past the dropdown, which reads as them having
+            moved. Splitting the dropdown into its OWN flex-1 sibling
+            between two flex-none ones means Dashboard/Mentions above and
+            Reports/Settings below are laid out at their fixed natural
+            size FIRST; the dropdown gets whatever is left over, and it
+            alone shrinks and scrolls if that isn't enough. The other two
+            groups can no longer be pushed anywhere by it. */}
         <nav className="flex min-h-0 flex-1 flex-col overflow-y-auto p-2">
-          <div className="space-y-0.5">
+          <div className="flex-none space-y-0.5">
             <NavLink {...dashboardNavItem}>{dashboardNavItem.label}</NavLink>
             {primaryNav.map((item) => (
               <NavLink
@@ -520,42 +530,42 @@ export function AppSidebar({
               </NavLink>
             ))}
             {moreNav.length > 0 && (
-              <>
-                <button
-                  type="button"
-                  onClick={() => setMoreOpen((o) => !o)}
-                  className="group flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-brand-muted transition-colors duration-150 hover:bg-brand-mist hover:text-brand-ink"
-                >
-                  <span className={moreOpen ? "rotate-90 text-brand-muted" : "text-slate-400"}>
-                    {chevronIcon}
-                  </span>
-                  <span className="flex-1 truncate text-left">More</span>
-                </button>
-                {moreOpen && (
-                  // Its own bounded box, not a share of the outer nav's
-                  // scroll area — max-h caps it so a long list scrolls
-                  // INSIDE this box while Dashboard/Mentions above and
-                  // Reports/Settings below stay exactly where they are.
-                  <div className="scrollbar-thin max-h-56 space-y-0.5 overflow-y-auto border-l border-brand-line pl-2">
-                    {moreNav.map((item) => (
-                      <NavLink
-                        key={item.href}
-                        {...item}
-                        prefetch
-                        pending={pendingHref === item.href}
-                        onIntent={() => warmRoute(item.href)}
-                        onPending={() => markRoutePending(item)}
-                      >
-                        {item.label}
-                      </NavLink>
-                    ))}
-                  </div>
-                )}
-              </>
+              <button
+                type="button"
+                onClick={() => setMoreOpen((o) => !o)}
+                className="group flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-brand-muted transition-colors duration-150 hover:bg-brand-mist hover:text-brand-ink"
+              >
+                <span className={moreOpen ? "rotate-90 text-brand-muted" : "text-slate-400"}>
+                  {chevronIcon}
+                </span>
+                <span className="flex-1 truncate text-left">More</span>
+              </button>
             )}
           </div>
 
-          <div className="mt-auto space-y-0.5 pt-2">
+          {moreOpen && moreNav.length > 0 && (
+            // flex-1 + min-h-0 lets this shrink below its own content
+            // size when the two flex-none siblings above and below need
+            // the room instead; max-h-56 caps how big it gets when
+            // there's plenty of space to spare. Either way, it is the
+            // ONLY element in this nav that ever shrinks or scrolls.
+            <div className="scrollbar-thin my-0.5 min-h-0 max-h-56 flex-1 space-y-0.5 overflow-y-auto border-l border-brand-line pl-2">
+              {moreNav.map((item) => (
+                <NavLink
+                  key={item.href}
+                  {...item}
+                  prefetch
+                  pending={pendingHref === item.href}
+                  onIntent={() => warmRoute(item.href)}
+                  onPending={() => markRoutePending(item)}
+                >
+                  {item.label}
+                </NavLink>
+              ))}
+            </div>
+          )}
+
+          <div className="mt-auto flex-none space-y-0.5 pt-2">
             <div className="mb-2 border-t border-brand-line" />
             {secondaryNav.map((item) => (
               <NavLink
