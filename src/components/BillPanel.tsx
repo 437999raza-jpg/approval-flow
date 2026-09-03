@@ -7,6 +7,7 @@ import { ApprovalStepper } from "./ApprovalStepper";
 import { InlineSelectSave } from "./InlineSelectSave";
 import { ConfirmSubmitButton } from "./ConfirmSubmitButton";
 import { SubmitButton } from "./SubmitButton";
+import { FormPendingBar } from "./FormPendingBar";
 import { InstructionsBox } from "./InstructionsBox";
 import { LocalTime } from "./LocalTime";
 import { ReorderPagesModal } from "./ReorderPagesModal";
@@ -914,6 +915,7 @@ export function BillPanel({
                                     : "Sync to QuickBooks (final)"
                                   : "Connect QuickBooks in Settings first"}
                               </SubmitButton>
+                              <FormPendingBar label="Sending the bill, line items, tax and documents to QuickBooks…" />
                             </form>
                           )}
                           {invoice.status === "approved" &&

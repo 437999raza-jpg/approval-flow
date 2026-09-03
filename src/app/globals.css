@@ -83,6 +83,24 @@
   }
 }
 
+/* Indeterminate progress bar for an action with a real multi-second wait
+   (syncing a bill to QuickBooks) — a moving highlight sweeping the track,
+   ApprovalMax-style, so a slow action reads as "working" rather than
+   "stuck". See FormPendingBar. */
+@keyframes progress-indeterminate {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(300%); }
+}
+.animate-progress-indeterminate {
+  animation: progress-indeterminate 1.1s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .animate-progress-indeterminate {
+    animation: none;
+    width: 100%;
+  }
+}
+
 /* A slim scrollbar for small nested regions (the sidebar's "More"
    dropdown) — the default OS scrollbar is heavy enough, next to the
    nesting border beside it, to read as two competing lines in a box
