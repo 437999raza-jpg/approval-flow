@@ -201,6 +201,38 @@ export async function POST(request: Request) {
       });
     }
 
+    // Nothing survived the filter above (every attachment was a Word doc,
+    // a signature image, etc.) — there is no job to enqueue, so nothing
+    // would ever flip this row out of "processing". Without this it sat
+    // looking "in progress" for a real 15 minutes before the stale-reset
+    // sweep overwrote it with a generic "Processing timed out" message —
+    // discarding the actual, already-known reason (skipped_attachments)
+    // in favour of one that doesn't tell anyone what to do about it.
+    if (documents.length === 0) {
+      const reason =
+        skipped.length > 0
+          ? `Nothing to import — every attachment was skipped: ${skipped
+              .map((s) => `${s.name} (${s.reason})`)
+              .join("; ")}.`
+          : "No attachments were found on this email.";
+      const { error: logInsertError } = await supabase.from("inbound_email_log").insert({
+        organization_id: org.id,
+        email_id,
+        from_address: from,
+        to_address: candidates.join(", "),
+        subject,
+        attachment_count: 0,
+        skipped_attachments: skipped.length > 0 ? skipped : null,
+        processing: false,
+        processed: false,
+        error: reason,
+      });
+      if (logInsertError && logInsertError.code !== "23505") {
+        console.error("inbound_email_log insert failed:", logInsertError);
+      }
+      return NextResponse.json({ ok: true, matched: true, nothingToProcess: true });
+    }
+
     // Usage billing: one event per accepted document (signature images and
     // non-PDF files were already skipped above). Recorded NOW — at
     // acceptance — never at retry time, so a document that fails and gets
