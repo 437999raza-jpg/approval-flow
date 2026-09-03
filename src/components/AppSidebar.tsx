@@ -326,6 +326,18 @@ export function AppSidebar({
         badge: counts?.mentions,
         badgeTone: "green" as const,
       },
+    ],
+    [counts?.mentions, is]
+  );
+  // Reached far less often than Mentions above — tucked behind a toggle
+  // so the sidebar doesn't need its own scrollbar on a normal-height
+  // screen. Auto-opens when the current page is one of these, so
+  // navigating straight to e.g. /billing never hides where you actually
+  // are. Split review sits here too despite its own badge — Mentions is
+  // the one inbox item that stays permanently surfaced; everything else
+  // with a count still lives one click under "More".
+  const moreNav: NavItem[] = useMemo(
+    () => [
       {
         href: "/invoices/pending-splits",
         active: is("/invoices/pending-splits"),
@@ -334,23 +346,13 @@ export function AppSidebar({
         badge: counts?.pendingSplits,
         badgeTone: "orange" as const,
       },
-    ],
-    [counts?.mentions, counts?.pendingSplits, is]
-  );
-  // Reached far less often than the inbox-style items above — tucked
-  // behind a toggle so the sidebar doesn't need its own scrollbar on a
-  // normal-height screen. Auto-opens below when the current page is one
-  // of these, so navigating straight to e.g. /billing never hides where
-  // you actually are.
-  const moreNav: NavItem[] = useMemo(
-    () => [
       ...(isAdmin ? [{ href: "/queue", active: is("/queue"), icon: icons.queue, label: "Queue" }] : []),
       ...(isAdminOrOwner ? [{ href: "/workflows", active: is("/workflows"), icon: icons.workflows, label: "Workflows" }] : []),
       ...(isAdminOrOwner ? [{ href: "/billing", active: is("/billing"), icon: icons.billing, label: "Billing" }] : []),
       ...(isAdminOrOwner ? [{ href: "/statements", active: is("/statements"), icon: icons.statements, label: "Statements" }] : []),
       ...(isAdminOrOwner ? [{ href: "/holdback", active: is("/holdback"), icon: icons.holdback, label: "Holdback" }] : []),
     ],
-    [is, isAdmin, isAdminOrOwner]
+    [counts?.pendingSplits, is, isAdmin, isAdminOrOwner]
   );
   const secondaryNav: NavItem[] = useMemo(
     () => [
@@ -368,9 +370,10 @@ export function AppSidebar({
     if (moreHasActive) setMoreOpen(true);
   }, [moreHasActive]);
   // Shared by every nav item that points at a real server-rendered page —
-  // both primaryNav (Queue/Mentions/Split review) and secondaryNav
-  // (Workflows..Organizations). Dashboard is the only link that opts out
-  // (see dashboardNavItem above).
+  // primaryNav (Mentions), moreNav (Split review, Queue, Workflows,
+  // Billing, Statements, Holdback) and secondaryNav (Reports..
+  // Organizations). Dashboard is the only link that opts out (see
+  // dashboardNavItem above).
   const warmRoute = useCallback(
     (href: string) => {
       router.prefetch(href);
@@ -516,10 +519,6 @@ export function AppSidebar({
                 {item.label}
               </NavLink>
             ))}
-          </div>
-
-          <div className="mt-auto space-y-0.5 pt-2">
-            <div className="mb-2 border-t border-brand-line" />
             {moreNav.length > 0 && (
               <>
                 <button
@@ -533,7 +532,11 @@ export function AppSidebar({
                   <span className="flex-1 truncate text-left">More</span>
                 </button>
                 {moreOpen && (
-                  <div className="space-y-0.5 border-l border-brand-line pl-2">
+                  // Its own bounded box, not a share of the outer nav's
+                  // scroll area — max-h caps it so a long list scrolls
+                  // INSIDE this box while Dashboard/Mentions above and
+                  // Reports/Settings below stay exactly where they are.
+                  <div className="max-h-56 space-y-0.5 overflow-y-auto border-l border-brand-line pl-2">
                     {moreNav.map((item) => (
                       <NavLink
                         key={item.href}
@@ -550,6 +553,10 @@ export function AppSidebar({
                 )}
               </>
             )}
+          </div>
+
+          <div className="mt-auto space-y-0.5 pt-2">
+            <div className="mb-2 border-t border-brand-line" />
             {secondaryNav.map((item) => (
               <NavLink
                 key={item.href}
