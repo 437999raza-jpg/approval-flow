@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentOrg } from "@/lib/current-org";
-import { isPlatformAdmin } from "@/lib/platform-admin";
+import { isPlatformAdmin, platformAdminEmails } from "@/lib/platform-admin";
+import { sendSupportMessageEmail } from "@/lib/notify";
+import { getAppUrl } from "@/lib/app-url";
 
 // Backs the floating support chat widget (SupportChatWidget.tsx) — a
 // dedicated JSON endpoint rather than reusing the /support page's Server
@@ -81,6 +83,34 @@ export async function POST(request: NextRequest) {
     body: text,
   });
   if (error) return NextResponse.json({ error: "insert failed" }, { status: 500 });
+
+  // Only a customer's message needs to reach us — a platform admin
+  // replying here shouldn't email themselves. Best-effort: notify.ts's
+  // sendEmail already swallows its own failures, so this never blocks
+  // the response.
+  if (!isPlatformAdmin(user.email)) {
+    const admins = platformAdminEmails();
+    if (admins.length > 0) {
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("full_name")
+        .eq("id", user.id)
+        .maybeSingle();
+      const opsAppUrl = process.env.OPS_APP_URL;
+      const threadUrl = opsAppUrl ? `${opsAppUrl}/support/${org.id}` : getAppUrl();
+      await Promise.all(
+        admins.map((to) =>
+          sendSupportMessageEmail({
+            to,
+            orgName: org.name,
+            authorName: profile?.full_name ?? user.email ?? "A customer",
+            body: text,
+            threadUrl,
+          })
+        )
+      );
+    }
+  }
 
   return NextResponse.json({ ok: true });
 }

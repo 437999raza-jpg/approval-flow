@@ -11,3 +11,7 @@ export function isPlatformAdmin(email: string | null | undefined): boolean {
   if (!email) return false;
   return PLATFORM_ADMIN_EMAILS.includes(email.toLowerCase());
 }
+
+export function platformAdminEmails(): string[] {
+  return PLATFORM_ADMIN_EMAILS;
+}

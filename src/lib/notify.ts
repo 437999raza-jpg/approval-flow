@@ -159,6 +159,42 @@ async function sendEmail({
   }
 }
 
+// A customer wrote in the support chat and nothing told anyone. The
+// widget (SupportChatWidget.tsx) is poll-only — it has no way to reach
+// someone who isn't already looking at it, and there was no other
+// signal at all: "if I'm not there, there's no way for me to know."
+// One email per message, to every platform admin, linking straight to
+// that org's thread in the Ops app.
+export async function sendSupportMessageEmail({
+  to,
+  orgName,
+  authorName,
+  body,
+  threadUrl,
+}: {
+  to: string;
+  orgName: string;
+  authorName: string;
+  body: string;
+  threadUrl: string;
+}): Promise<void> {
+  const html = emailShell({
+    accentColor: "#2563eb",
+    eyebrow: `Support · ${orgName}`,
+    headline: `<strong>${escapeHtml(authorName)}</strong> sent a message`,
+    bodyHtml: `<div style="margin:4px 0 0 0;padding:12px 14px;background:#f8fafc;border-left:3px solid #cbd5e1;border-radius:4px;white-space:pre-wrap;color:#475569;">${escapeHtml(body)}</div>`,
+    ctaLabel: "Reply",
+    ctaUrl: threadUrl,
+  });
+
+  await sendEmail({
+    to,
+    subject: `${orgName}: ${authorName} sent a support message`,
+    html,
+    headers: urgencyHeaders("overdue"),
+  });
+}
+
 export async function sendMentionEmail({
   to,
   actorName,
