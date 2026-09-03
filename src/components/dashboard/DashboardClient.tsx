@@ -19,6 +19,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { clsx } from "clsx";
 import { InvoiceStatusBadge } from "@/components/InvoiceStatusBadge";
+import { BrandLoading } from "@/components/BrandLoading";
 import { SearchInput } from "@/components/SearchInput";
 import { CollapsiblePane } from "@/components/CollapsiblePane";
 import { InvoiceSelectionList, type SelectableInvoice } from "@/components/InvoiceSelectionList";
@@ -191,48 +192,15 @@ const DETAIL_STALE_MS = 2 * 60 * 1000;
 
 type InvoiceListRow = DashboardListData["invoices"][number];
 
+// The generic grey-skeleton card this used to show read as a second,
+// visually distinct loading screen sandwiched between the branded
+// dashboard/loading.tsx splash and the real content — a flash rather
+// than one continuous load. Reusing BrandLoading here (scoped to the
+// detail pane, not full-screen) makes the whole open-an-invoice
+// transition feel like a single wait instead of two.
 function InvoiceDetailLoading({ invoice }: { invoice: InvoiceListRow }) {
-  const amount =
-    invoice.amount != null
-      ? invoice.amount.toLocaleString(undefined, { style: "currency", currency: invoice.currency })
-      : "Amount pending";
-  return (
-    <div className="flex flex-1 items-center justify-center bg-slate-50 p-6">
-      <div className="w-full max-w-2xl overflow-hidden rounded-xl border border-slate-200 bg-white shadow-elevation-1">
-        <div className="border-b border-slate-100 px-6 py-5">
-          <div className="flex items-start justify-between gap-4">
-            <div className="min-w-0">
-              <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Opening invoice</div>
-              <div className="mt-1 truncate text-lg font-semibold text-slate-900">
-                {invoice.vendor_name ?? invoice.file_name}
-              </div>
-              {invoice.invoice_number && <div className="mt-1 text-xs text-slate-500">#{invoice.invoice_number}</div>}
-            </div>
-            <div className="flex-none text-right">
-              <div className="text-xl font-bold tabular-nums text-slate-900">{amount}</div>
-              <InvoiceStatusBadge status={invoice.status} />
-            </div>
-          </div>
-        </div>
-        <div className="space-y-4 px-6 py-5">
-          <div className="grid grid-cols-4 gap-4">
-            {Array.from({ length: 4 }).map((_, i) => (
-              <div key={i} className="space-y-2">
-                <div className="h-2 w-14 rounded-full bg-slate-100" />
-                <div className="h-8 rounded-md bg-slate-100" />
-              </div>
-            ))}
-          </div>
-          <div className="h-20 rounded-lg bg-slate-100" />
-          <div className="space-y-2">
-            <div className="h-3 w-28 rounded-full bg-slate-100" />
-            <div className="h-10 rounded-lg bg-slate-100" />
-            <div className="h-10 rounded-lg bg-slate-100" />
-          </div>
-        </div>
-      </div>
-    </div>
-  );
+  const name = invoice.vendor_name ?? invoice.file_name;
+  return <BrandLoading label={`Opening ${name}…`} />;
 }
 
 function InvoiceDetailUnavailable({ invoice, error }: { invoice: InvoiceListRow; error?: unknown }) {
