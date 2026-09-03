@@ -184,23 +184,42 @@ export function SecurityMfaSection({ initialEnabled }: { initialEnabled: boolean
       )}
 
       {step === "enrolling" && (
-        <div className="space-y-3">
+        <div className="space-y-4">
           <p className="text-sm text-slate-600">
             Scan this with your authenticator app, then enter the 6-digit code it shows.
           </p>
+          {/* Supabase's own auth.mfa.enroll() returns qr_code as a
+              complete data: URI (an SVG encoded inline), meant to be
+              used directly as an <img src>. This used to run it through
+              dangerouslySetInnerHTML instead — treating the URI STRING
+              as HTML markup, which the browser can't parse as a tag, so
+              it printed the "data:image/svg+xml;utf-8," prefix as
+              visible text and mangled the embedded SVG into noise. That
+              was the actual QR code shown, not a styling issue. */}
           {qrCode && (
-            <div
-              className="h-40 w-40 [&>svg]:h-full [&>svg]:w-full"
-              dangerouslySetInnerHTML={{ __html: qrCode }}
-            />
+            <div className="inline-block rounded-lg border border-slate-200 bg-white p-3">
+              {/* next/image can't take a data: URI — it fetches and
+                  transforms a real URL, and this is a one-time,
+                  dynamically generated SVG with nothing to optimize. */}
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={qrCode}
+                alt="QR code — scan with your authenticator app to set up two-factor authentication"
+                width={160}
+                height={160}
+                className="h-40 w-40"
+              />
+            </div>
           )}
           {secret && (
-            <p className="text-xs text-slate-500">
+            <p className="max-w-xs text-xs text-slate-500">
               Can&apos;t scan it? Enter this key manually:{" "}
-              <span className="font-mono font-semibold text-slate-700">{secret}</span>
+              <span className="break-all font-mono font-semibold text-slate-700">
+                {secret}
+              </span>
             </p>
           )}
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <input
               type="text"
               inputMode="numeric"
