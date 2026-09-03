@@ -26,6 +26,9 @@ import { StickyHeader } from "@/components/StickyHeader";
 import { LocalTime } from "@/components/LocalTime";
 import { membersTag } from "@/lib/org-cache";
 import { isBusinessEmail, BUSINESS_EMAIL_MESSAGE } from "@/lib/business-email";
+import { isPlatformAdmin } from "@/lib/platform-admin";
+import { saveEmailTemplateOverride, resetEmailTemplateOverride } from "@/lib/admin-actions";
+import { TEMPLATE_DEFS, TEMPLATE_KEYS, getTemplateOverride, type TemplateKey } from "@/lib/email-templates";
 import type { Database } from "@/lib/supabase/types";
 
 type OrgRole =
@@ -319,7 +322,7 @@ async function resetMemberMfa(membershipId: string) {
 export default async function SettingsPage({
   searchParams,
 }: {
-  searchParams: { error?: string; q?: string; qbo?: string; count?: string; taxdefault?: string; rate?: string; mfa?: string };
+  searchParams: { error?: string; q?: string; qbo?: string; count?: string; taxdefault?: string; rate?: string; mfa?: string; templateSaved?: string; templateReset?: string };
 }) {
   const supabase = createClient();
 
@@ -340,6 +343,18 @@ export default async function SettingsPage({
   // Billing/Members/Projects are admin-and-auditor territory (auditor keeps
   // its existing full-app read-only visibility; this only narrows "user").
   const showOrgSettings = org.role !== "user";
+  // Editing another org's email copy is platform-owner territory, never a
+  // customer's own admin — "only visible to me" (reported live). Scoped
+  // to whichever org is currently active (the org switcher), so switching
+  // into a customer and back here edits exactly their copy.
+  const isSettingsPlatformAdmin = isPlatformAdmin(user.email);
+  const templateOverrides = isSettingsPlatformAdmin
+    ? Object.fromEntries(
+        await Promise.all(
+          TEMPLATE_KEYS.map(async (key) => [key, await getTemplateOverride(createAdminClient(), org.id, key)] as const)
+        )
+      )
+    : {};
 
   // Everything here is independent of everything else in this batch (all
   // scoped only by org.id) — one Promise.all instead of ~9 sequential
@@ -1151,6 +1166,156 @@ export default async function SettingsPage({
                 </p>
               )}
             </div>
+
+            {/* Platform-admin only — "if a customer wants to pay extra for
+                their own wording on an email, only visible to me, never
+                the customer's own admins" (reported live). Scoped to
+                whichever org is currently active via the org switcher —
+                switch into a customer, edit exactly their copy, switch
+                back. Structured fields only (subject/headline/body/color/
+                CTA) — the email's actual HTML shell can't be broken by an
+                edit here. */}
+            {isSettingsPlatformAdmin && (
+              <div className="mt-3 rounded-lg border border-dashed border-slate-300 bg-slate-50 p-4">
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                  Email templates — platform admin only
+                </div>
+                <p className="mt-1 text-xs text-slate-500">
+                  Customize the wording of specific automated emails for{" "}
+                  <strong>{org.name}</strong> only. Not visible to this
+                  org&apos;s own admins. Leave a field blank to keep the
+                  default.
+                </p>
+                {searchParams.templateSaved === "1" && (
+                  <p className="mt-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs text-emerald-800">
+                    Template saved.
+                  </p>
+                )}
+                {searchParams.templateReset === "1" && (
+                  <p className="mt-2 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-600">
+                    Reset to the default.
+                  </p>
+                )}
+                <div className="mt-3 space-y-2">
+                  {TEMPLATE_KEYS.map((key: TemplateKey) => {
+                    const def = TEMPLATE_DEFS[key];
+                    const override = templateOverrides[key];
+                    return (
+                      <div key={key} className="rounded-md border border-slate-200 bg-white">
+                        <CollapsibleSection
+                          title={def.label}
+                          badge={override ? "customized" : undefined}
+                          defaultOpen={false}
+                        >
+                          <p className="text-xs text-slate-500">{def.description}</p>
+                          {def.tokens.length > 0 && (
+                            <p className="mt-1 text-xs text-slate-400">
+                              Available in Subject/Headline/Body:{" "}
+                              {def.tokens.map((t, i) => (
+                                <span key={t.key}>
+                                  {i > 0 && ", "}
+                                  <code className="rounded bg-slate-100 px-1 py-0.5">{`{{${t.key}}}`}</code>{" "}
+                                  ({t.label}, e.g. &quot;{t.example}&quot;)
+                                </span>
+                              ))}
+                            </p>
+                          )}
+                          <form action={saveEmailTemplateOverride} className="mt-3 space-y-2.5">
+                            <input type="hidden" name="template_key" value={key} />
+                            <label className="block text-xs">
+                              <span className="font-medium text-slate-600">Subject</span>
+                              <input
+                                type="text"
+                                name="subject"
+                                defaultValue={override?.subject ?? ""}
+                                placeholder={def.defaults.subject}
+                                className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+                              />
+                            </label>
+                            <label className="block text-xs">
+                              <span className="font-medium text-slate-600">Eyebrow (small label above headline)</span>
+                              <input
+                                type="text"
+                                name="eyebrow"
+                                defaultValue={override?.eyebrow ?? ""}
+                                placeholder={def.defaults.eyebrow}
+                                className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+                              />
+                            </label>
+                            <label className="block text-xs">
+                              <span className="font-medium text-slate-600">Headline</span>
+                              <input
+                                type="text"
+                                name="headline"
+                                defaultValue={override?.headline ?? ""}
+                                placeholder={def.defaults.headline}
+                                className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+                              />
+                            </label>
+                            <label className="block text-xs">
+                              <span className="font-medium text-slate-600">Body</span>
+                              <textarea
+                                name="body"
+                                rows={4}
+                                defaultValue={override?.body ?? ""}
+                                placeholder={def.defaults.body}
+                                className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+                              />
+                            </label>
+                            <div className="grid grid-cols-3 gap-2">
+                              <label className="block text-xs">
+                                <span className="font-medium text-slate-600">Accent color</span>
+                                <input
+                                  type="text"
+                                  name="accent_color"
+                                  defaultValue={override?.accent_color ?? ""}
+                                  placeholder={def.defaults.accentColor}
+                                  className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+                                />
+                              </label>
+                              <label className="block text-xs">
+                                <span className="font-medium text-slate-600">Button label</span>
+                                <input
+                                  type="text"
+                                  name="cta_label"
+                                  defaultValue={override?.cta_label ?? ""}
+                                  placeholder={def.defaults.ctaLabel ?? "(none)"}
+                                  className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+                                />
+                              </label>
+                              <label className="block text-xs">
+                                <span className="font-medium text-slate-600">Button link</span>
+                                <input
+                                  type="text"
+                                  name="cta_url"
+                                  defaultValue={override?.cta_url ?? ""}
+                                  placeholder={def.defaults.ctaUrl ?? "(none)"}
+                                  className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+                                />
+                              </label>
+                            </div>
+                            <SubmitButton className="rounded-md bg-slate-800 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-700">
+                              Save
+                            </SubmitButton>
+                          </form>
+                          {override && (
+                            <div className="mt-2">
+                              <ConfirmSubmitButton
+                                action={resetEmailTemplateOverride.bind(null, key)}
+                                confirmMessage="Reset this template to the default for this org?"
+                                className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+                              >
+                                Reset to default
+                              </ConfirmSubmitButton>
+                            </div>
+                          )}
+                        </CollapsibleSection>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </section>
 
           {/* Billing & usage — lives on its own page now */}

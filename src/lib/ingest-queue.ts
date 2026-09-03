@@ -302,6 +302,7 @@ async function sendReceiptAcknowledgment(
 
   await sendInvoiceReceiptEmail({
     to: logRow.from_address,
+    organizationId: logRow.organization_id,
     orgName: org?.name ?? "the team",
     invoiceCount: invoiceIds.length,
   }).catch((err) => console.error("sendInvoiceReceiptEmail failed:", err));

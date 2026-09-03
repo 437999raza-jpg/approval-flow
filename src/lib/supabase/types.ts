@@ -185,6 +185,28 @@ export interface Database {
         Update: Partial<Database["public"]["Tables"]["qbo_bill_import_jobs"]["Row"]>;
         Relationships: [];
       };
+      email_template_overrides: {
+        Row: {
+          id: string;
+          organization_id: string;
+          template_key: string;
+          subject: string | null;
+          eyebrow: string | null;
+          headline: string | null;
+          body: string | null;
+          accent_color: string | null;
+          cta_label: string | null;
+          cta_url: string | null;
+          updated_by: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: Partial<
+          Database["public"]["Tables"]["email_template_overrides"]["Row"]
+        > & { organization_id: string; template_key: string };
+        Update: Partial<Database["public"]["Tables"]["email_template_overrides"]["Row"]>;
+        Relationships: [];
+      };
       approval_workflow_rules: {
         Row: {
           id: string;

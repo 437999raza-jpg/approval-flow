@@ -8,6 +8,8 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { isPlatformAdmin } from "@/lib/platform-admin";
 import { isPlanId, type CustomPlanConfig } from "@/lib/plans";
 import { startQboBillImport } from "@/lib/qbo-bill-import";
+import { getCurrentOrg } from "@/lib/current-org";
+import { TEMPLATE_KEYS, type TemplateKey } from "@/lib/email-templates";
 
 // The standard trial, applied however an org is created. Mirrors
 // TRIAL_DAYS in src/lib/onboarding.ts, which covers the self-signup path.
@@ -535,4 +537,78 @@ export async function startQboBillImportAction(formData: FormData) {
 
   revalidatePath("/admin/organizations");
   redirect("/admin/organizations");
+}
+
+// Save (or clear) this org's copy of one built-in email — "if a customer
+// wants to pay extra for their own wording." Scoped to whichever org is
+// CURRENTLY active (the existing org switcher), not a passed-in id — you
+// switch into the customer, then edit what only they see, matching how
+// this was actually asked for. email_template_overrides carries no RLS
+// policy for any role but the service key (migration 0110), the same
+// pattern as qbo_bill_import_jobs above.
+export async function saveEmailTemplateOverride(formData: FormData) {
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user || !isPlatformAdmin(user.email)) redirect("/login");
+
+  const org = await getCurrentOrg(supabase);
+  if (!org) redirect("/dashboard");
+
+  const templateKey = String(formData.get("template_key") ?? "");
+  if (!TEMPLATE_KEYS.includes(templateKey as TemplateKey)) {
+    redirect("/settings?error=bad-template-key");
+  }
+
+  // Blank a field to fall back to the built-in default for just that
+  // field — an override doesn't have to replace every field at once.
+  const field = (name: string): string | null => {
+    const raw = formData.get(name);
+    const s = typeof raw === "string" ? raw.trim() : "";
+    return s.length > 0 ? s : null;
+  };
+
+  const admin = createAdminClient();
+  await admin.from("email_template_overrides").upsert(
+    {
+      organization_id: org.id,
+      template_key: templateKey,
+      subject: field("subject"),
+      eyebrow: field("eyebrow"),
+      headline: field("headline"),
+      body: field("body"),
+      accent_color: field("accent_color"),
+      cta_label: field("cta_label"),
+      cta_url: field("cta_url"),
+      updated_by: user.id,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "organization_id,template_key" }
+  );
+
+  revalidatePath("/settings");
+  redirect("/settings?templateSaved=1");
+}
+
+// Clears this org's override entirely, back to the built-in default.
+export async function resetEmailTemplateOverride(templateKey: string) {
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user || !isPlatformAdmin(user.email)) redirect("/login");
+
+  const org = await getCurrentOrg(supabase);
+  if (!org) redirect("/dashboard");
+
+  const admin = createAdminClient();
+  await admin
+    .from("email_template_overrides")
+    .delete()
+    .eq("organization_id", org.id)
+    .eq("template_key", templateKey);
+
+  revalidatePath("/settings");
+  redirect("/settings?templateReset=1");
 }

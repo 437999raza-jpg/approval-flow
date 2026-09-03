@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { isPlatformAdmin } from "@/lib/platform-admin";
+import { getCurrentOrg } from "@/lib/current-org";
 import { getAppUrl } from "@/lib/app-url";
 import { sendDigestEmail, sendEscalationEmail, sendPdfOnlyRequestEmail, sendInvoiceReceiptEmail } from "@/lib/notify";
 
@@ -24,6 +25,8 @@ export async function GET() {
   }
   const to = user.email;
   if (!to) return NextResponse.json({ error: "no email on account" }, { status: 400 });
+  const org = await getCurrentOrg(supabase);
+  if (!org) return NextResponse.json({ error: "no organization" }, { status: 400 });
 
   const appUrl = getAppUrl();
   const dashboardUrl = `${appUrl}/dashboard`;
@@ -77,12 +80,13 @@ export async function GET() {
   // PDF/PNG/JPEG.
   await sendPdfOnlyRequestEmail({
     to,
+    organizationId: org.id,
     attachmentNames: ["Fluid invoice 1811 Supervise the concrete footing work. Bolton Ford..docx"],
   });
 
   // 6 — receipt acknowledgement, sent once an email produced at least
   // one invoice.
-  await sendInvoiceReceiptEmail({ to, orgName: "Fluid Construction", invoiceCount: 1 });
+  await sendInvoiceReceiptEmail({ to, organizationId: org.id, orgName: "Fluid Construction", invoiceCount: 1 });
 
   return NextResponse.json({
     ok: true,

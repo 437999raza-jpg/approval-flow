@@ -259,7 +259,11 @@ export async function POST(request: Request) {
         .gt("created_at", cooldownCutoff);
       if (!recentNudgeCount) {
         sendPdfNudge = true;
-        await sendPdfOnlyRequestEmail({ to: from, attachmentNames: nonPdfImageNames }).catch((err) =>
+        await sendPdfOnlyRequestEmail({
+          to: from,
+          organizationId: org.id,
+          attachmentNames: nonPdfImageNames,
+        }).catch((err) =>
           console.error("sendPdfOnlyRequestEmail failed:", err)
         );
       }

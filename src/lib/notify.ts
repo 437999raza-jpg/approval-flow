@@ -7,6 +7,8 @@
 // Authored by Araza.
 
 import { getAppUrl } from "@/lib/app-url";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { TEMPLATE_DEFS, getTemplateOverride, resolveTemplate } from "@/lib/email-templates";
 
 function escapeHtml(s: string): string {
   return s
@@ -239,24 +241,30 @@ export async function sendMentionEmail({
 // the habit it's trying to fix.
 export async function sendPdfOnlyRequestEmail({
   to,
+  organizationId,
   attachmentNames,
 }: {
   to: string;
+  organizationId: string;
   attachmentNames: string[];
 }): Promise<void> {
-  const fileList = attachmentNames.map((n) => `&ldquo;${escapeHtml(n)}&rdquo;`).join(", ");
+  const fileList = attachmentNames.map((n) => `“${n}”`).join(", ") || "your recent attachment";
+  const admin = createAdminClient();
+  const [def, override] = await Promise.all([
+    Promise.resolve(TEMPLATE_DEFS.pdf_only_request),
+    getTemplateOverride(admin, organizationId, "pdf_only_request"),
+  ]);
+  const t = resolveTemplate(def, override, { fileList });
   const html = emailShell({
-    accentColor: "#2563eb",
-    eyebrow: "A quick favor",
-    headline: "Could future invoices come as a PDF?",
-    bodyHtml: `
-      <p style="margin:0 0 12px 0;">We received ${fileList || "your recent attachment"} and it's already been read in — nothing for you to redo.</p>
-      <p style="margin:0 0 12px 0;">Going forward, sending invoices as a <strong>PDF</strong> (a photo or scan works too — PNG/JPEG) instead of a Word or Excel file helps us process them faster and keeps the original formatting exactly as you sent it.</p>
-      <p style="margin:0;color:#64748b;">Thanks for bearing with us!</p>
-    `,
+    accentColor: t.accentColor,
+    eyebrow: t.eyebrow,
+    headline: t.headline,
+    bodyHtml: t.bodyHtml,
+    ctaLabel: t.ctaLabel,
+    ctaUrl: t.ctaUrl,
   });
 
-  await sendEmail({ to, subject: "Could future invoices come as a PDF?", html });
+  await sendEmail({ to, subject: t.subject, html });
 }
 
 // A receipt, sent to whoever an invoice email came FROM once it's been
@@ -268,32 +276,31 @@ export async function sendPdfOnlyRequestEmail({
 // so this never fires twice for the same email.
 export async function sendInvoiceReceiptEmail({
   to,
+  organizationId,
   orgName,
   invoiceCount,
 }: {
   to: string;
+  organizationId: string;
   orgName: string;
   invoiceCount: number;
 }): Promise<void> {
+  const admin = createAdminClient();
+  const override = await getTemplateOverride(admin, organizationId, "invoice_receipt");
+  const t = resolveTemplate(TEMPLATE_DEFS.invoice_receipt, override, {
+    orgName,
+    invoiceCount: String(invoiceCount),
+  });
   const html = emailShell({
-    accentColor: "#16a34a",
-    eyebrow: orgName,
-    headline: invoiceCount > 1 ? "Your invoices were received" : "Your invoice was received",
-    bodyHtml: `
-      <p style="margin:0 0 12px 0;">Thanks — ${
-        invoiceCount > 1 ? `${invoiceCount} invoices you sent were` : "the invoice you sent was"
-      } received and is on its way through ${escapeHtml(orgName)}'s approval process.</p>
-      <p style="margin:0 0 4px 0;color:#94a3b8;font-size:12px;">Built with &hearts; by UFirst</p>
-    `,
-    ctaLabel: "See what Flow can do",
-    ctaUrl: "https://flow.ufirst.co",
+    accentColor: t.accentColor,
+    eyebrow: t.eyebrow,
+    headline: t.headline,
+    bodyHtml: t.bodyHtml + `<p style="margin:12px 0 0 0;color:#94a3b8;font-size:12px;">Built with &hearts; by UFirst</p>`,
+    ctaLabel: t.ctaLabel,
+    ctaUrl: t.ctaUrl,
   });
 
-  await sendEmail({
-    to,
-    subject: invoiceCount > 1 ? "Your invoices were received" : "Your invoice was received",
-    html,
-  });
+  await sendEmail({ to, subject: t.subject, html });
 }
 
 // "It's your turn" — sent whenever responsibility for an invoice moves to
