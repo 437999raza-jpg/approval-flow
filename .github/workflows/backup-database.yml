@@ -22,6 +22,19 @@ jobs:
   backup:
     runs-on: ubuntu-latest
     steps:
+      # ubuntu-latest ships pg_dump 16, but Supabase runs Postgres 17 —
+      # pg_dump refuses to dump from a server newer than itself
+      # ("aborting because of server version mismatch"). Install the
+      # matching client from PostgreSQL's own apt repo rather than
+      # whatever Ubuntu bundles, so this doesn't silently break again
+      # the next time either side upgrades.
+      - name: Install a matching pg_dump
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-common
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y postgresql-client-17
+
       - name: Dump the database
         env:
           # GitHub secret — Settings → Secrets and variables → Actions.
@@ -29,7 +42,7 @@ jobs:
           # step output that matches a registered secret's value).
           DATABASE_URL: ${{ secrets.SUPABASE_DB_URL }}
         run: |
-          pg_dump "$DATABASE_URL" \
+          /usr/lib/postgresql/17/bin/pg_dump "$DATABASE_URL" \
             --no-owner --no-privileges --format=custom \
             --file="backup-$(date +%F).dump"
 
