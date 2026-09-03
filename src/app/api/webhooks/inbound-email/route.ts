@@ -10,6 +10,7 @@ import { recordUsageEvent } from "@/lib/usage";
 import { enqueueIngestJob, runNextIngestJob } from "@/lib/ingest-queue";
 import { INVOICES_TAG } from "@/lib/org-cache";
 import { officeDocKind, convertOfficeDocToPdf } from "@/lib/office-to-pdf";
+import { sendPdfOnlyRequestEmail } from "@/lib/notify";
 
 // Inbound email path (Resend — the same vendor as outbound notifications):
 //
@@ -155,6 +156,7 @@ export async function POST(request: Request) {
   // failure on the body alone must never lose the attachments/error info
   // that block already reports.
   let bodyText: string | null = null;
+  let sendPdfNudge = false;
 
   try {
     // List the email's attachments (metadata + signed download URLs), and
@@ -181,6 +183,10 @@ export async function POST(request: Request) {
     // disappears from an email.
     const documents: { name: string; type: string; bytes: Uint8Array }[] = [];
     const skipped: { name: string; reason: string }[] = [];
+    // Anything that arrived as neither a PDF nor an image (Word, Excel, or
+    // something we don't handle at all) — used below to nudge the sender
+    // toward PDF, whether or not we could still salvage the file.
+    const nonPdfImageNames: string[] = [];
     for (const attachment of attachments) {
       const filename = attachment.filename ?? "attachment";
       const contentType = attachment.content_type ?? "";
@@ -190,6 +196,7 @@ export async function POST(request: Request) {
           name: filename,
           reason: "not a PDF, image, Word (.docx) or Excel (.xlsx) file — cannot be processed",
         });
+        nonPdfImageNames.push(filename);
         continue;
       }
       const dl = await fetch(attachment.download_url);
@@ -206,6 +213,7 @@ export async function POST(request: Request) {
       // enqueueIngestJob, so a Word/Excel attachment can still take part
       // in an [X1] merge alongside PDFs, same as any other attachment.
       if (officeKind) {
+        nonPdfImageNames.push(filename);
         const pdfBytes = await convertOfficeDocToPdf(bytes, filename, contentType);
         if (!pdfBytes) {
           skipped.push({
@@ -234,6 +242,29 @@ export async function POST(request: Request) {
       documents.push({ name, type, bytes });
     }
 
+    // "Need an email template to move subs away from using doc files and
+    // excel files" — nudge whoever this came FROM toward PDF, at most
+    // once a week per sender (checked against inbound_email_log's own
+    // history rather than a separate table) so a sender who hasn't
+    // changed their habit yet doesn't get the same email on every single
+    // invoice.
+    if (nonPdfImageNames.length > 0 && from) {
+      const cooldownCutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+      const { count: recentNudgeCount } = await supabase
+        .from("inbound_email_log")
+        .select("id", { count: "exact", head: true })
+        .eq("organization_id", org.id)
+        .eq("from_address", from)
+        .eq("pdf_nudge_sent", true)
+        .gt("created_at", cooldownCutoff);
+      if (!recentNudgeCount) {
+        sendPdfNudge = true;
+        await sendPdfOnlyRequestEmail({ to: from, attachmentNames: nonPdfImageNames }).catch((err) =>
+          console.error("sendPdfOnlyRequestEmail failed:", err)
+        );
+      }
+    }
+
     // Nothing survived the filter above (every attachment was a Word doc,
     // a signature image, etc.) — there is no job to enqueue, so nothing
     // would ever flip this row out of "processing". Without this it sat
@@ -255,6 +286,7 @@ export async function POST(request: Request) {
         to_address: candidates.join(", "),
         subject,
         body_text: bodyText,
+        pdf_nudge_sent: sendPdfNudge,
         attachment_count: 0,
         skipped_attachments: skipped.length > 0 ? skipped : null,
         processing: false,
@@ -327,6 +359,7 @@ export async function POST(request: Request) {
         to_address: candidates.join(", "),
         subject,
         body_text: bodyText,
+        pdf_nudge_sent: sendPdfNudge,
         attachment_count: ingestList.length,
         skipped_attachments: skipped.length > 0 ? skipped : null,
         processing: true,
@@ -425,6 +458,7 @@ export async function POST(request: Request) {
           to_address: candidates.join(", "),
           subject,
           body_text: bodyText,
+          pdf_nudge_sent: sendPdfNudge,
           processed: false,
           error: errors.join("; "),
         });

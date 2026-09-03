@@ -721,6 +721,8 @@ export interface Database {
           processing: boolean;
           error: string | null;
           body_text: string | null;
+          pdf_nudge_sent: boolean;
+          receipt_ack_sent: boolean;
           created_at: string;
         };
         Insert: Partial<

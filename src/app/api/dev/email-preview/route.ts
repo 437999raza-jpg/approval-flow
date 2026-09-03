@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { isPlatformAdmin } from "@/lib/platform-admin";
 import { getAppUrl } from "@/lib/app-url";
-import { sendDigestEmail, sendEscalationEmail } from "@/lib/notify";
+import { sendDigestEmail, sendEscalationEmail, sendPdfOnlyRequestEmail, sendInvoiceReceiptEmail } from "@/lib/notify";
 
 // Sends one of each notification tier to the caller's own address, so the
 // templates can be reviewed where they actually matter — in a real inbox,
@@ -73,6 +73,17 @@ export async function GET() {
     invoiceUrl: inv("sample-3"),
   });
 
+  // 5 — PDF-only nudge, sent to a vendor whose attachment wasn't a
+  // PDF/PNG/JPEG.
+  await sendPdfOnlyRequestEmail({
+    to,
+    attachmentNames: ["Fluid invoice 1811 Supervise the concrete footing work. Bolton Ford..docx"],
+  });
+
+  // 6 — receipt acknowledgement, sent once an email produced at least
+  // one invoice.
+  await sendInvoiceReceiptEmail({ to, orgName: "Fluid Construction", invoiceCount: 1 });
+
   return NextResponse.json({
     ok: true,
     sentTo: to,
@@ -81,6 +92,8 @@ export async function GET() {
       "2 — 1–2 days late (amber ⏰)",
       "3 — 3+ days late (red 🔴, high priority)",
       "4 — escalation (dark red 🚨, high priority)",
+      "5 — PDF-only nudge",
+      "6 — invoice receipt acknowledgement",
     ],
   });
 }

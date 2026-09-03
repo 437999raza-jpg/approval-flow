@@ -78,8 +78,11 @@ function emailShell({
   eyebrow: string;
   headline: string;
   bodyHtml: string;
-  ctaLabel: string;
-  ctaUrl: string;
+  // Omitted entirely for a recipient with no Flow account to click into
+  // (e.g. a vendor being asked to change how they send invoices) — a
+  // fabricated CTA linking into the app would be meaningless to them.
+  ctaLabel?: string;
+  ctaUrl?: string;
   // When set, the 4px hairline is replaced by a full-width colored band
   // carrying this text — the part that actually reads as urgent at a
   // glance, rather than a stripe most people never consciously see.
@@ -110,11 +113,15 @@ function emailShell({
             ${bodyHtml}
           </td>
         </tr>
-        <tr>
+        ${
+          ctaLabel && ctaUrl
+            ? `<tr>
           <td style="padding:0 28px 32px 28px;">
             <a href="${ctaUrl}" style="display:inline-block;background:${accentColor};color:#ffffff;text-decoration:none;font-size:14px;font-weight:600;padding:10px 20px;border-radius:6px;">${escapeHtml(ctaLabel)} &rarr;</a>
           </td>
-        </tr>
+        </tr>`
+            : `<tr><td style="padding:0 28px 20px 28px;">&nbsp;</td></tr>`
+        }
         <tr>
           <td style="padding:14px 28px;background:#f8fafc;border-top:1px solid #eef2f7;">
             <img src="${getAppUrl()}/brand/ufirst-wordmark.png" alt="ufirst" height="14" style="display:block;height:14px;width:auto;border:0;" />
@@ -218,6 +225,75 @@ export async function sendMentionEmail({
   });
 
   await sendEmail({ to, subject: `${actorName} mentioned you on ${invoiceLabel}`, html });
+}
+
+// A gentle nudge toward PDF, sent to whoever an email came FROM when it
+// carried something other than a PDF/PNG/JPEG — a Word or Excel invoice
+// still gets read (converted to a real PDF, see office-to-pdf.tsx), but
+// that's a safety net, not the goal: a re-typeset copy loses the
+// original's exact layout, fonts and images, where a native PDF comes
+// through untouched. "Need an email template to move subs away from
+// using doc files and excel files" (reported live). Sent at most once
+// per sender per week (see the inbound-email webhook's own cooldown
+// check) — a nag that fires on every single email would be worse than
+// the habit it's trying to fix.
+export async function sendPdfOnlyRequestEmail({
+  to,
+  attachmentNames,
+}: {
+  to: string;
+  attachmentNames: string[];
+}): Promise<void> {
+  const fileList = attachmentNames.map((n) => `&ldquo;${escapeHtml(n)}&rdquo;`).join(", ");
+  const html = emailShell({
+    accentColor: "#2563eb",
+    eyebrow: "A quick favor",
+    headline: "Could future invoices come as a PDF?",
+    bodyHtml: `
+      <p style="margin:0 0 12px 0;">We received ${fileList || "your recent attachment"} and it's already been read in — nothing for you to redo.</p>
+      <p style="margin:0 0 12px 0;">Going forward, sending invoices as a <strong>PDF</strong> (a photo or scan works too — PNG/JPEG) instead of a Word or Excel file helps us process them faster and keeps the original formatting exactly as you sent it.</p>
+      <p style="margin:0;color:#64748b;">Thanks for bearing with us!</p>
+    `,
+  });
+
+  await sendEmail({ to, subject: "Could future invoices come as a PDF?", html });
+}
+
+// A receipt, sent to whoever an invoice email came FROM once it's been
+// read in — "confirming receipt of invoice" (reported live), and a light
+// touch of the advertising the same message doubles as: the sub sees this
+// customer runs their invoicing through Flow, with a link to learn what
+// it is. One per email (not per invoice — a multi-attachment email gets
+// one receipt, not several), gated by the caller's own idempotency check
+// so this never fires twice for the same email.
+export async function sendInvoiceReceiptEmail({
+  to,
+  orgName,
+  invoiceCount,
+}: {
+  to: string;
+  orgName: string;
+  invoiceCount: number;
+}): Promise<void> {
+  const html = emailShell({
+    accentColor: "#16a34a",
+    eyebrow: orgName,
+    headline: invoiceCount > 1 ? "Your invoices were received" : "Your invoice was received",
+    bodyHtml: `
+      <p style="margin:0 0 12px 0;">Thanks — ${
+        invoiceCount > 1 ? `${invoiceCount} invoices you sent were` : "the invoice you sent was"
+      } received and is on its way through ${escapeHtml(orgName)}'s approval process.</p>
+      <p style="margin:0 0 4px 0;color:#94a3b8;font-size:12px;">Built with &hearts; by UFirst</p>
+    `,
+    ctaLabel: "See what Flow can do",
+    ctaUrl: "https://flow.ufirst.co",
+  });
+
+  await sendEmail({
+    to,
+    subject: invoiceCount > 1 ? "Your invoices were received" : "Your invoice was received",
+    html,
+  });
 }
 
 // "It's your turn" — sent whenever responsibility for an invoice moves to

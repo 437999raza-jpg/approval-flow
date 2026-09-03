@@ -4,6 +4,7 @@ import { ingestInvoiceFile } from "@/lib/invoice-ingest";
 import { NO_INVOICE_DATA_ERROR } from "@/lib/invoices";
 import { officeDocKind, convertOfficeDocToPdf } from "@/lib/office-to-pdf";
 import { mergeDocuments } from "@/lib/merge-documents";
+import { sendInvoiceReceiptEmail } from "@/lib/notify";
 
 // Async ingestion queue. Uploads/emails no longer wait inline on the 20-60s
 // OpenRouter extraction: the route/webhook uploads the bytes to a staging
@@ -263,6 +264,49 @@ async function foldBackupDocsIntoSoleInvoice(
   });
 }
 
+// "Confirming receipt of invoice" (reported live) — a receipt sent back
+// to whoever an email came from, once every attachment on it has
+// settled AND it actually produced at least one invoice (an email that
+// turned out to be all backup material with nothing recognized gets no
+// receipt — there's nothing to confirm). One per email, not per
+// invoice or per attachment: receipt_ack_sent guards against the
+// reconciliation running more than once for the same email (each
+// sibling attachment finishing can trigger it).
+async function sendReceiptAcknowledgment(
+  supabase: Supabase,
+  inboundEmailLogId: string
+): Promise<void> {
+  const { data: logRow } = await supabase
+    .from("inbound_email_log")
+    .select("invoice_ids, from_address, receipt_ack_sent, organization_id")
+    .eq("id", inboundEmailLogId)
+    .maybeSingle();
+  if (!logRow || logRow.receipt_ack_sent || !logRow.from_address || !logRow.organization_id) return;
+  const invoiceIds = (logRow.invoice_ids ?? []) as string[];
+  if (invoiceIds.length === 0) return;
+
+  const { data: org } = await supabase
+    .from("organizations")
+    .select("name")
+    .eq("id", logRow.organization_id)
+    .maybeSingle();
+
+  // Marked sent BEFORE the actual send, not after — this only ever runs
+  // once per email regardless of whether the send itself succeeds, same
+  // tradeoff every other best-effort notification in this app makes (a
+  // rare failed send is preferable to a duplicate one from a retry).
+  await supabase
+    .from("inbound_email_log")
+    .update({ receipt_ack_sent: true })
+    .eq("id", inboundEmailLogId);
+
+  await sendInvoiceReceiptEmail({
+    to: logRow.from_address,
+    orgName: org?.name ?? "the team",
+    invoiceCount: invoiceIds.length,
+  }).catch((err) => console.error("sendInvoiceReceiptEmail failed:", err));
+}
+
 export async function runNextIngestJob(
   supabase: Supabase,
   organizationId: string
@@ -379,6 +423,9 @@ export async function runNextIngestJob(
           await foldBackupDocsIntoSoleInvoice(supabase, job.inbound_email_log_id).catch((err) =>
             console.error("foldBackupDocsIntoSoleInvoice failed:", err)
           );
+          await sendReceiptAcknowledgment(supabase, job.inbound_email_log_id).catch((err) =>
+            console.error("sendReceiptAcknowledgment failed:", err)
+          );
         }
       }
     }
@@ -482,6 +529,9 @@ export async function runNextIngestJob(
         await foldBackupDocsIntoSoleInvoice(supabase, job.inbound_email_log_id).catch((err) =>
           console.error("foldBackupDocsIntoSoleInvoice failed:", err)
         );
+        await sendReceiptAcknowledgment(supabase, job.inbound_email_log_id).catch((err) =>
+          console.error("sendReceiptAcknowledgment failed:", err)
+        );
       }
     }
 
@@ -539,6 +589,9 @@ export async function runNextIngestJob(
         if (!stillActive && hasResults) {
           await foldBackupDocsIntoSoleInvoice(supabase, job.inbound_email_log_id).catch((err) =>
             console.error("foldBackupDocsIntoSoleInvoice failed:", err)
+          );
+          await sendReceiptAcknowledgment(supabase, job.inbound_email_log_id).catch((err) =>
+            console.error("sendReceiptAcknowledgment failed:", err)
           );
         }
       }
