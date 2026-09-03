@@ -1248,7 +1248,22 @@ export default async function SettingsPage({
                       </td>
                       <td className="px-4 py-3 text-slate-500">
                         <span className="inline-flex items-center gap-2">
-                          {mfaEnabledById.get(m.user_id) ? "Enabled" : "Disabled"}
+                          {/* Same dot-chip pattern as the Status column
+                              (green "Active" above) — green for
+                              protected, an outlined grey chip rather
+                              than colored-in for "off" so it doesn't
+                              read as a second, competing status. */}
+                          {mfaEnabledById.get(m.user_id) ? (
+                            <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
+                              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                              Enabled
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 px-2 py-0.5 text-xs font-medium text-slate-500">
+                              <span className="h-1.5 w-1.5 rounded-full bg-slate-300" />
+                              Disabled
+                            </span>
+                          )}
                           {isAdmin && mfaEnabledById.get(m.user_id) && m.user_id !== user.id && (
                             <ConfirmSubmitButton
                               action={resetMemberMfa.bind(null, m.id)}
