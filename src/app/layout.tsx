@@ -14,7 +14,7 @@ const archivo = Archivo({
 });
 
 export const metadata: Metadata = {
-  title: "Flow by UFIRST",
+  title: "Flow by ufirst",
   description: "Invoice approval workflows",
 };
 

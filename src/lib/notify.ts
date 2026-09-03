@@ -295,7 +295,7 @@ export async function sendInvoiceReceiptEmail({
     accentColor: t.accentColor,
     eyebrow: t.eyebrow,
     headline: t.headline,
-    bodyHtml: t.bodyHtml + `<p style="margin:12px 0 0 0;color:#94a3b8;font-size:12px;">Built with &hearts; by UFirst</p>`,
+    bodyHtml: t.bodyHtml + `<p style="margin:12px 0 0 0;color:#94a3b8;font-size:12px;">Built with &hearts; by ufirst</p>`,
     ctaLabel: t.ctaLabel,
     ctaUrl: t.ctaUrl,
   });
