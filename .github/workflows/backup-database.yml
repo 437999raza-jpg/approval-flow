@@ -1,0 +1,45 @@
+name: Database backup
+
+# Daily logical backup of the production Postgres database, as a free
+# stand-in for Supabase's Point-in-Time Recovery add-on ($100-400/mo).
+# This gives a rolling window of daily snapshots via GitHub's own
+# artifact storage, at zero additional cost — not minute-level recovery,
+# but real protection against losing more than a day of work.
+#
+# Upgrade to PITR later if/when the cost is justified; this is not a
+# permanent replacement, just the free tier of "having a backup at all".
+#
+# Authored by Araza.
+
+on:
+  schedule:
+    # 09:00 UTC daily (04:00/05:00 Eastern depending on DST) — after the
+    # nightly QBO payment-sync cron, before the business day starts.
+    - cron: "0 9 * * *"
+  workflow_dispatch: {} # lets you trigger one manually from the Actions tab
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dump the database
+        env:
+          # GitHub secret — Settings → Secrets and variables → Actions.
+          # Never in code, never in a workflow log (GitHub masks any
+          # step output that matches a registered secret's value).
+          DATABASE_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          pg_dump "$DATABASE_URL" \
+            --no-owner --no-privileges --format=custom \
+            --file="backup-$(date +%F).dump"
+
+      - name: Upload as a workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: db-backup-${{ github.run_id }}
+          path: backup-*.dump
+          # GitHub deletes artifacts older than this automatically —
+          # that ceiling IS the backup retention window. 90 is the
+          # platform's own maximum; raise the number here if you ever
+          # need to keep them longer (a paid GitHub plan may cap lower).
+          retention-days: 90
