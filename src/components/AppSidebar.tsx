@@ -42,6 +42,12 @@ const iconProps = {
   strokeLinejoin: "round" as const,
 };
 
+const chevronIcon = (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5 transition-transform duration-150">
+    <path d="M9 18l6-6-6-6" />
+  </svg>
+);
+
 const icons = {
   dashboard: (
     <svg {...iconProps}>
@@ -312,7 +318,6 @@ export function AppSidebar({
   );
   const primaryNav: NavItem[] = useMemo(
     () => [
-      ...(isAdmin ? [{ href: "/queue", active: is("/queue"), icon: icons.queue, label: "Queue" }] : []),
       {
         href: "/notifications",
         active: is("/notifications"),
@@ -330,22 +335,38 @@ export function AppSidebar({
         badgeTone: "orange" as const,
       },
     ],
-    [counts?.mentions, counts?.pendingSplits, is, isAdmin]
+    [counts?.mentions, counts?.pendingSplits, is]
   );
-  const secondaryNav: NavItem[] = useMemo(
+  // Reached far less often than the inbox-style items above — tucked
+  // behind a toggle so the sidebar doesn't need its own scrollbar on a
+  // normal-height screen. Auto-opens below when the current page is one
+  // of these, so navigating straight to e.g. /billing never hides where
+  // you actually are.
+  const moreNav: NavItem[] = useMemo(
     () => [
+      ...(isAdmin ? [{ href: "/queue", active: is("/queue"), icon: icons.queue, label: "Queue" }] : []),
       ...(isAdminOrOwner ? [{ href: "/workflows", active: is("/workflows"), icon: icons.workflows, label: "Workflows" }] : []),
       ...(isAdminOrOwner ? [{ href: "/billing", active: is("/billing"), icon: icons.billing, label: "Billing" }] : []),
       ...(isAdminOrOwner ? [{ href: "/statements", active: is("/statements"), icon: icons.statements, label: "Statements" }] : []),
       ...(isAdminOrOwner ? [{ href: "/holdback", active: is("/holdback"), icon: icons.holdback, label: "Holdback" }] : []),
+    ],
+    [is, isAdmin, isAdminOrOwner]
+  );
+  const secondaryNav: NavItem[] = useMemo(
+    () => [
       { href: "/reports", active: is("/reports"), icon: icons.reports, label: "Reports" },
       { href: "/settings", active: is("/settings"), icon: icons.settings, label: "Settings" },
       ...(isPlatformAdmin
         ? [{ href: "/admin/organizations", active: is("/admin"), icon: icons.admin, label: "Organizations" }]
         : []),
     ],
-    [is, isAdminOrOwner, isPlatformAdmin]
+    [is, isPlatformAdmin]
   );
+  const moreHasActive = moreNav.some((item) => item.active);
+  const [moreOpen, setMoreOpen] = useState(false);
+  useEffect(() => {
+    if (moreHasActive) setMoreOpen(true);
+  }, [moreHasActive]);
   // Shared by every nav item that points at a real server-rendered page —
   // both primaryNav (Queue/Mentions/Split review) and secondaryNav
   // (Workflows..Organizations). Dashboard is the only link that opts out
@@ -415,6 +436,17 @@ export function AppSidebar({
               ))}
             </div>
             <div className="mt-auto flex flex-col items-center gap-1 border-t border-brand-line pt-2">
+              {moreNav.map((item) => (
+                <IconRailLink
+                  key={item.href}
+                  {...item}
+                  prefetch
+                  pending={pendingHref === item.href}
+                  onIntent={() => warmRoute(item.href)}
+                  onPending={() => markRoutePending(item)}
+                />
+              ))}
+              {moreNav.length > 0 && <div className="my-1 h-px w-6 bg-brand-line" />}
               {secondaryNav.map((item) => (
                 <IconRailLink
                   key={item.href}
@@ -488,6 +520,36 @@ export function AppSidebar({
 
           <div className="mt-auto space-y-0.5 pt-2">
             <div className="mb-2 border-t border-brand-line" />
+            {moreNav.length > 0 && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setMoreOpen((o) => !o)}
+                  className="group flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-brand-muted transition-colors duration-150 hover:bg-brand-mist hover:text-brand-ink"
+                >
+                  <span className={moreOpen ? "rotate-90 text-brand-muted" : "text-slate-400"}>
+                    {chevronIcon}
+                  </span>
+                  <span className="flex-1 truncate text-left">More</span>
+                </button>
+                {moreOpen && (
+                  <div className="space-y-0.5 border-l border-brand-line pl-2">
+                    {moreNav.map((item) => (
+                      <NavLink
+                        key={item.href}
+                        {...item}
+                        prefetch
+                        pending={pendingHref === item.href}
+                        onIntent={() => warmRoute(item.href)}
+                        onPending={() => markRoutePending(item)}
+                      >
+                        {item.label}
+                      </NavLink>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
             {secondaryNav.map((item) => (
               <NavLink
                 key={item.href}
