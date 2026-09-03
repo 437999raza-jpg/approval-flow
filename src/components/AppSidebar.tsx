@@ -504,7 +504,7 @@ export function AppSidebar({
         {/* Two independently-anchored groups rather than one flowing list:
             Queue/Mentions/Splits hug the top, Workflows..Settings hug the
             bottom (mt-auto), with whatever space is left between them. */}
-        <nav className="flex flex-1 flex-col overflow-y-auto p-2">
+        <nav className="flex min-h-0 flex-1 flex-col overflow-y-auto p-2">
           <div className="space-y-0.5">
             <NavLink {...dashboardNavItem}>{dashboardNavItem.label}</NavLink>
             {primaryNav.map((item) => (
