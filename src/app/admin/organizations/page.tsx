@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isPlatformAdmin } from "@/lib/platform-admin";
-import { createOrganizationAction, joinOrganizationAction, extendTrialAction, endTrialAction, setOrgPlanAction, setOrgCustomPlanAction, setOrgSetupFeeAction, setOrgInternalAction } from "@/lib/admin-actions";
+import { createOrganizationAction, joinOrganizationAction, extendTrialAction, endTrialAction, setOrgPlanAction, setOrgCustomPlanAction, setOrgSetupFeeAction, setOrgInternalAction, startQboBillImportAction } from "@/lib/admin-actions";
 import { SubmitButton } from "@/components/SubmitButton";
 import { DirtySaveButton } from "@/components/DirtySaveButton";
 import { isTrialActive, PLAN_ORDER, PLANS, parseCustomPlan, resolveSetupFee } from "@/lib/plans";
@@ -55,6 +55,17 @@ export default async function AdminOrganizationsPage({
   const admin = createAdminClient();
   const domain = process.env.INBOUND_EMAIL_DOMAIN ?? "invoices.example.com";
   const opsAppUrl = process.env.OPS_APP_URL;
+
+  const { data: importJobs } = await admin
+    .from("qbo_bill_import_jobs")
+    .select("*")
+    .order("created_at", { ascending: false });
+  const { data: qboConnections } = await admin.from("qbo_connections").select("organization_id");
+  const orgsWithQbo = new Set((qboConnections ?? []).map((c) => c.organization_id));
+  const latestImportJobByOrg = new Map<string, NonNullable<typeof importJobs>[number]>();
+  for (const j of importJobs ?? []) {
+    if (!latestImportJobByOrg.has(j.organization_id)) latestImportJobByOrg.set(j.organization_id, j);
+  }
 
   const { data: orgs } = await admin
     .from("organizations")
@@ -202,6 +213,7 @@ export default async function AdminOrganizationsPage({
             rarely-touched deal terms into a fold. */}
         {(orgs ?? []).map((org) => {
           const custom = parseCustomPlan(org.custom_plan);
+          const importJob = latestImportJobByOrg.get(org.id);
           const fee = resolveSetupFee(org);
           const members = memberCounts.get(org.id) ?? 0;
           const supportCount = supportCounts.get(org.id) ?? 0;
@@ -497,6 +509,86 @@ export default async function AdminOrganizationsPage({
                           : "No fee set — nothing appears on their Billing page."}
                     </p>
                   </form>
+                </div>
+              </details>
+
+              {/* Historical QuickBooks import — Araza's own tool, run by
+                  hand when onboarding a paying customer who wants their
+                  pre-Flow bills brought in with backup. Never surfaced to
+                  the customer's own admin: this table has no RLS policy
+                  for any role but the service key (migration 0104), and
+                  this action redirects anyone who isn't a platform admin
+                  straight to /login. Charged as its own line item, not a
+                  feature of the base product. */}
+              <details className="border-t border-brand-line">
+                <summary className="cursor-pointer px-5 py-2.5 text-xs font-medium text-brand-muted hover:bg-brand-mist">
+                  Import bills from QuickBooks (owner tool)
+                  {importJob?.status === "processing" && (
+                    <span className="ml-1.5 text-brand-navy">
+                      · running — {importJob.imported_count} imported so far
+                    </span>
+                  )}
+                  {importJob?.status === "queued" && (
+                    <span className="ml-1.5 text-brand-navy">· queued</span>
+                  )}
+                  {importJob?.status === "done" && (
+                    <span className="ml-1.5 text-brand-green-dark">
+                      · last run: {importJob.imported_count} imported, {importJob.skipped_count} skipped,{" "}
+                      {importJob.failed_count} failed
+                    </span>
+                  )}
+                  {importJob?.status === "error" && (
+                    <span className="ml-1.5 text-rose-700">· last run failed</span>
+                  )}
+                </summary>
+                <div className="border-t border-brand-line bg-brand-mist px-5 py-4">
+                  <p className="text-[11px] leading-relaxed text-brand-muted">
+                    Pulls bills from QuickBooks in the date range below, with their real line
+                    items, memo (the same box the live app writes accounting instructions to),
+                    and attachments. Every imported bill is written already marked as synced to
+                    QuickBooks — Flow will never try to push it back and create a duplicate.
+                    Runs in the background over a few minutes; refresh this page for progress.
+                  </p>
+                  {!orgsWithQbo.has(org.id) && (
+                    <p className="mt-2 text-[11px] font-medium text-amber-700">
+                      This org has no QuickBooks connection yet — connect it from their own
+                      Settings before running an import.
+                    </p>
+                  )}
+                  <form action={startQboBillImportAction} className="mt-3 flex flex-wrap items-end gap-2">
+                    <input type="hidden" name="org_id" value={org.id} />
+                    <div>
+                      <label className={adminLabelCls}>From</label>
+                      <input name="date_from" type="date" required className={adminFieldCls} />
+                    </div>
+                    <div>
+                      <label className={adminLabelCls}>To</label>
+                      <input name="date_to" type="date" required className={adminFieldCls} />
+                    </div>
+                    <SubmitButton
+                      disabled={importJob?.status === "queued" || importJob?.status === "processing"}
+                      className="rounded-lg bg-brand-navy px-3 py-1.5 text-xs font-display font-bold text-white hover:bg-brand-ink disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {importJob?.status === "processing" || importJob?.status === "queued"
+                        ? "Import running…"
+                        : "Start import"}
+                    </SubmitButton>
+                  </form>
+                  {importJob && importJob.notes.length > 0 && (
+                    <div className="mt-3 rounded-lg border border-brand-line bg-white p-3">
+                      <p className="text-[11px] font-semibold uppercase tracking-wide text-brand-muted">
+                        Needs a look
+                      </p>
+                      <ul className="mt-1 space-y-0.5 text-[11px] text-brand-muted">
+                        {importJob.notes.map((n: string, i: number) => (
+                          <li key={i}>{n}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  {importJob?.last_error && (
+                    <p className="mt-2 text-[11px] text-rose-700">{importJob.last_error}</p>
+                  )}
                 </div>
               </details>
             </section>

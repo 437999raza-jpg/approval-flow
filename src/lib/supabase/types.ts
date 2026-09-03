@@ -158,6 +158,30 @@ export interface Database {
         Update: Partial<Database["public"]["Tables"]["invoice_retainage"]["Row"]>;
         Relationships: [];
       };
+      qbo_bill_import_jobs: {
+        Row: {
+          id: string;
+          organization_id: string;
+          date_from: string;
+          date_to: string;
+          status: "queued" | "processing" | "done" | "error";
+          cursor_position: number;
+          imported_count: number;
+          skipped_count: number;
+          failed_count: number;
+          notes: string[];
+          last_error: string | null;
+          created_by: string | null;
+          created_at: string;
+          updated_at: string;
+          completed_at: string | null;
+        };
+        Insert: Partial<
+          Database["public"]["Tables"]["qbo_bill_import_jobs"]["Row"]
+        > & { organization_id: string; date_from: string; date_to: string };
+        Update: Partial<Database["public"]["Tables"]["qbo_bill_import_jobs"]["Row"]>;
+        Relationships: [];
+      };
       approval_workflow_rules: {
         Row: {
           id: string;

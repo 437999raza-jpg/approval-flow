@@ -11,6 +11,10 @@
     {
       "path": "/api/cron/ingest-process",
       "schedule": "*/2 * * * *"
+    },
+    {
+      "path": "/api/cron/qbo-bill-import",
+      "schedule": "*/2 * * * *"
     }
   ]
 }

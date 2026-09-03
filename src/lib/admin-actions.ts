@@ -7,6 +7,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isPlatformAdmin } from "@/lib/platform-admin";
 import { isPlanId, type CustomPlanConfig } from "@/lib/plans";
+import { startQboBillImport } from "@/lib/qbo-bill-import";
 
 // The standard trial, applied however an org is created. Mirrors
 // TRIAL_DAYS in src/lib/onboarding.ts, which covers the self-signup path.
@@ -498,6 +499,38 @@ export async function setOrgPlanAction(formData: FormData) {
     .from("organizations")
     .update({ plan, plan_selected_at: plan ? new Date().toISOString() : null })
     .eq("id", orgId);
+
+  revalidatePath("/admin/organizations");
+  redirect("/admin/organizations");
+}
+
+// Platform-admin only, and NOT surfaced anywhere a customer's own admin
+// can reach it: bring a customer's pre-Flow QuickBooks bills into Flow,
+// as a paid onboarding service Araza runs by hand, never a self-serve
+// feature. See src/lib/qbo-bill-import.ts for the actual import logic
+// and why an imported invoice can never be double-pushed back to QBO.
+export async function startQboBillImportAction(formData: FormData) {
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user || !isPlatformAdmin(user.email)) redirect("/login");
+
+  const orgId = String(formData.get("org_id") ?? "");
+  const dateFrom = String(formData.get("date_from") ?? "");
+  const dateTo = String(formData.get("date_to") ?? "");
+  if (!orgId || !dateFrom || !dateTo) {
+    redirect("/admin/organizations?error=bad-import-range");
+  }
+
+  // qbo_bill_import_jobs carries no RLS policy for any role but the
+  // service key (see migration 0104) — deliberately, since this table
+  // must never be reachable by a customer's own admin even by accident.
+  const admin = createAdminClient();
+  const result = await startQboBillImport(admin, orgId, dateFrom, dateTo, user.id);
+  if (!result.ok) {
+    redirect(`/admin/organizations?error=${encodeURIComponent(result.error ?? "import-failed")}`);
+  }
 
   revalidatePath("/admin/organizations");
   redirect("/admin/organizations");

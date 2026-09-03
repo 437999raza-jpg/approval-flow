@@ -1146,6 +1146,209 @@ export async function attachDocuments(
 }
 
 // Deep link to the bill in the QBO web app.
+// ---- Historical bill import (platform-admin only tool) -------------------
+//
+// Everything below reads bills and their real structure OUT of QBO, the
+// reverse of createBill above. Used exclusively by
+// src/lib/qbo-bill-import.ts, triggered only from /admin — never a
+// customer-facing feature.
+
+export interface QboBillLine {
+  amount: number;
+  description: string | null;
+  // Exactly one of these two is set, mirroring QBO's own two line types.
+  // A historical bill entered before Flow existed may use either — Fluid's
+  // own holdback line is Product/Service-based (Bill 8415: "HB Payable"
+  // as an Item, not an Account), confirmed on a real bill rather than
+  // assumed from the API docs.
+  accountId: string | null; // AccountBasedExpenseLineDetail.AccountRef
+  itemId: string | null; // ItemBasedExpenseLineDetail.ItemRef
+  classId: string | null;
+  customerId: string | null; // QBO Customer/Project — Flow's project_id
+}
+
+export interface QboBillForImport {
+  id: string;
+  docNumber: string | null;
+  vendorId: string;
+  txnDate: string | null;
+  dueDate: string | null;
+  currency: string;
+  totalAmt: number;
+  totalTax: number | null;
+  privateNote: string | null;
+  lastUpdatedTime: string | null;
+  lines: QboBillLine[];
+}
+
+// Bills in a date range, with full line detail, one page at a time.
+// Returns fewer than pageSize rows on the last page — the caller's own
+// signal to stop, same convention as listSuppliers/listProjects.
+export async function listBillsForImport(
+  conn: QboConnection,
+  dateFrom: string,
+  dateTo: string,
+  startPosition: number,
+  pageSize = 50
+): Promise<QboBillForImport[]> {
+  const q =
+    `select * from Bill where TxnDate >= '${dateFrom}' and TxnDate <= '${dateTo}' ` +
+    `order by TxnDate startposition ${startPosition} maxresults ${pageSize}`;
+  const res = await qboFetch(conn, `/query?query=${encodeURIComponent(q)}`);
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`QBO: bill import query failed (HTTP ${res.status}): ${body.slice(0, 300)}`);
+  }
+  const json = (await res.json()) as {
+    QueryResponse?: {
+      Bill?: Array<{
+        Id: string;
+        DocNumber?: string;
+        VendorRef?: { value: string };
+        TxnDate?: string;
+        DueDate?: string;
+        CurrencyRef?: { value: string };
+        TotalAmt?: number;
+        PrivateNote?: string;
+        MetaData?: { LastUpdatedTime?: string };
+        TxnTaxDetail?: { TotalTax?: number };
+        Line?: Array<{
+          Amount?: number;
+          Description?: string;
+          DetailType?: string;
+          AccountBasedExpenseLineDetail?: {
+            AccountRef?: { value: string };
+            ClassRef?: { value: string };
+            CustomerRef?: { value: string };
+          };
+          ItemBasedExpenseLineDetail?: {
+            ItemRef?: { value: string };
+            ClassRef?: { value: string };
+            CustomerRef?: { value: string };
+          };
+        }>;
+      }>;
+    };
+  };
+  return (json.QueryResponse?.Bill ?? [])
+    .filter((b) => b.VendorRef?.value) // a bill with no vendor can't be matched to a supplier
+    .map((b) => ({
+      id: b.Id,
+      docNumber: b.DocNumber ?? null,
+      vendorId: b.VendorRef!.value,
+      txnDate: b.TxnDate ?? null,
+      dueDate: b.DueDate ?? null,
+      currency: b.CurrencyRef?.value ?? "USD",
+      totalAmt: b.TotalAmt ?? 0,
+      totalTax: b.TxnTaxDetail?.TotalTax ?? null,
+      privateNote: b.PrivateNote?.trim() || null,
+      lastUpdatedTime: b.MetaData?.LastUpdatedTime ?? null,
+      lines: (b.Line ?? [])
+        .filter((l) => l.Amount != null && l.DetailType !== "SubTotalLineDetail")
+        .map((l) => ({
+          amount: l.Amount!,
+          description: l.Description?.trim() || null,
+          accountId: l.AccountBasedExpenseLineDetail?.AccountRef?.value ?? null,
+          itemId: l.ItemBasedExpenseLineDetail?.ItemRef?.value ?? null,
+          classId:
+            l.AccountBasedExpenseLineDetail?.ClassRef?.value ??
+            l.ItemBasedExpenseLineDetail?.ClassRef?.value ??
+            null,
+          customerId:
+            l.AccountBasedExpenseLineDetail?.CustomerRef?.value ??
+            l.ItemBasedExpenseLineDetail?.CustomerRef?.value ??
+            null,
+        })),
+    }));
+}
+
+// Every Item (Product/Service) in the company, resolved to the account it
+// actually posts to — a one-time lookup for the whole import job, cached
+// by the caller, never a persistent mirror table (nothing outside this
+// one-off import ever needs to know about Items; Flow deliberately has no
+// Product/Service concept anywhere else — see the no-product-service-field
+// decision). ExpenseAccountRef covers the expense-side items a Bill would
+// use; an Item with none set (an income-only or inventory item never
+// meant to appear on a bill) simply resolves to null and its lines are
+// left uncategorized rather than guessed at.
+export async function listItemAccounts(
+  conn: QboConnection
+): Promise<Map<string, { name: string; expenseAccountId: string | null }>> {
+  const map = new Map<string, { name: string; expenseAccountId: string | null }>();
+  let startPosition = 1;
+  const pageSize = 1000;
+  for (;;) {
+    const q = `select Id, Name, ExpenseAccountRef from Item startposition ${startPosition} maxresults ${pageSize}`;
+    const res = await qboFetch(conn, `/query?query=${encodeURIComponent(q)}`);
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(`QBO: item query failed (HTTP ${res.status}): ${body.slice(0, 300)}`);
+    }
+    const json = (await res.json()) as {
+      QueryResponse?: {
+        Item?: { Id: string; Name?: string; ExpenseAccountRef?: { value: string } }[];
+      };
+    };
+    const rows = json.QueryResponse?.Item ?? [];
+    for (const it of rows) {
+      map.set(it.Id, {
+        name: it.Name ?? "",
+        expenseAccountId: it.ExpenseAccountRef?.value ?? null,
+      });
+    }
+    if (rows.length < pageSize) break;
+    startPosition += rows.length;
+  }
+  return map;
+}
+
+// Every file attached to one bill, with a short-lived download URL
+// (TempDownloadUri) returned directly on the Attachable — Intuit's docs
+// say this expires quickly (community reports ~15 minutes), so the
+// caller must fetch the bytes immediately, never store the URL itself.
+export interface QboAttachment {
+  fileName: string;
+  contentType: string;
+  downloadUrl: string;
+}
+
+export async function listAttachmentsForBill(
+  conn: QboConnection,
+  billId: string
+): Promise<QboAttachment[]> {
+  const q = `select * from Attachable where AttachableRef.EntityRef.value = '${billId}'`;
+  const res = await qboFetch(conn, `/query?query=${encodeURIComponent(q)}`);
+  if (!res.ok) return []; // a bill with no attachments is not an error
+  const json = (await res.json()) as {
+    QueryResponse?: {
+      Attachable?: {
+        FileName?: string;
+        ContentType?: string;
+        TempDownloadUri?: string;
+      }[];
+    };
+  };
+  return (json.QueryResponse?.Attachable ?? [])
+    .filter((a) => a.TempDownloadUri && a.FileName)
+    .map((a) => ({
+      fileName: a.FileName!,
+      contentType: a.ContentType ?? "application/octet-stream",
+      downloadUrl: a.TempDownloadUri!,
+    }));
+}
+
+// Fetch one attachment's actual bytes. Separate from the listing call
+// above because the URL must be used immediately, not passed around —
+// keeping the fetch a distinct step makes that ordering explicit at
+// every call site rather than implicit.
+export async function downloadAttachment(url: string): Promise<Uint8Array> {
+  const res = await fetch(url);
+  if (!res.ok) {
+    throw new Error(`QBO: attachment download failed (HTTP ${res.status})`);
+  }
+  return new Uint8Array(await res.arrayBuffer());
+}
+
 export function qboBillUrl(realmId: string, billId: string): string {
   return `https://qbo.intuit.com/app/bill?txnId=${billId}`;
 }
