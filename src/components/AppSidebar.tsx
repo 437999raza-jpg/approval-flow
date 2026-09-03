@@ -326,18 +326,6 @@ export function AppSidebar({
         badge: counts?.mentions,
         badgeTone: "green" as const,
       },
-    ],
-    [counts?.mentions, is]
-  );
-  // Reached far less often than Mentions above — tucked behind a toggle
-  // so the sidebar doesn't need its own scrollbar on a normal-height
-  // screen. Auto-opens when the current page is one of these, so
-  // navigating straight to e.g. /billing never hides where you actually
-  // are. Split review sits here too despite its own badge — Mentions is
-  // the one inbox item that stays permanently surfaced; everything else
-  // with a count still lives one click under "More".
-  const moreNav: NavItem[] = useMemo(
-    () => [
       {
         href: "/invoices/pending-splits",
         active: is("/invoices/pending-splits"),
@@ -346,13 +334,23 @@ export function AppSidebar({
         badge: counts?.pendingSplits,
         badgeTone: "orange" as const,
       },
+    ],
+    [counts?.mentions, counts?.pendingSplits, is]
+  );
+  // Reached far less often than Mentions/Split review above — tucked
+  // behind a toggle so the sidebar doesn't need its own scrollbar on a
+  // normal-height screen. Auto-opens when the current page is one of
+  // these, so navigating straight to e.g. /billing never hides where you
+  // actually are.
+  const moreNav: NavItem[] = useMemo(
+    () => [
       ...(isAdmin ? [{ href: "/queue", active: is("/queue"), icon: icons.queue, label: "Queue" }] : []),
       ...(isAdminOrOwner ? [{ href: "/workflows", active: is("/workflows"), icon: icons.workflows, label: "Workflows" }] : []),
       ...(isAdminOrOwner ? [{ href: "/billing", active: is("/billing"), icon: icons.billing, label: "Billing" }] : []),
       ...(isAdminOrOwner ? [{ href: "/statements", active: is("/statements"), icon: icons.statements, label: "Statements" }] : []),
       ...(isAdminOrOwner ? [{ href: "/holdback", active: is("/holdback"), icon: icons.holdback, label: "Holdback" }] : []),
     ],
-    [counts?.pendingSplits, is, isAdmin, isAdminOrOwner]
+    [is, isAdmin, isAdminOrOwner]
   );
   const secondaryNav: NavItem[] = useMemo(
     () => [
@@ -370,7 +368,7 @@ export function AppSidebar({
     if (moreHasActive) setMoreOpen(true);
   }, [moreHasActive]);
   // Shared by every nav item that points at a real server-rendered page —
-  // primaryNav (Mentions), moreNav (Split review, Queue, Workflows,
+  // primaryNav (Mentions, Split review), moreNav (Queue, Workflows,
   // Billing, Statements, Holdback) and secondaryNav (Reports..
   // Organizations). Dashboard is the only link that opts out (see
   // dashboardNavItem above).
