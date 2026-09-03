@@ -168,13 +168,13 @@ export function InvoiceUploadDropzone() {
             : "Drop invoices here, or click to add one or more"}
         </p>
         <p className="mt-1 text-xs text-slate-400">
-          PDF, PNG, JPEG, or WebP — up to 20MB each
+          PDF, PNG, JPEG, WebP, Word, or Excel — up to 20MB each
         </p>
         <input
           ref={inputRef}
           type="file"
           multiple
-          accept="application/pdf,image/png,image/jpeg,image/webp"
+          accept="application/pdf,image/png,image/jpeg,image/webp,.docx,.xlsx,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
           className="hidden"
           onChange={(e) => {
             addFiles(e.target.files);

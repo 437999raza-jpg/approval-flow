@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/types";
 import { ingestInvoiceFile } from "@/lib/invoice-ingest";
 import { NO_INVOICE_DATA_ERROR } from "@/lib/invoices";
+import { officeDocKind, convertOfficeDocToPdf } from "@/lib/office-to-pdf";
 
 // Async ingestion queue. Uploads/emails no longer wait inline on the 20-60s
 // OpenRouter extraction: the route/webhook uploads the bytes to a staging
@@ -36,13 +37,29 @@ export interface EnqueueArgs {
 export async function enqueueIngestJob(
   args: EnqueueArgs
 ): Promise<string | null> {
-  const safeName = args.file.name.replace(/[^\w.\-]+/g, "_");
+  // A Word/Excel invoice converted to a real PDF right here, before
+  // anything else sees it — the extractor, the split-review page count
+  // and the document viewer only ever speak PDF/image, so this is the
+  // one place a second input format needs to be taught in, rather than
+  // every downstream consumer. See office-to-pdf.tsx.
+  let file = args.file;
+  if (officeDocKind(file.name, file.type)) {
+    const pdfBytes = await convertOfficeDocToPdf(file.bytes, file.name, file.type);
+    if (!pdfBytes) {
+      console.error(`enqueueIngestJob: could not convert "${file.name}" to PDF`);
+      return null;
+    }
+    const stem = file.name.replace(/\.[^.]+$/, "") || "document";
+    file = { name: `${stem}.pdf`, type: "application/pdf", size: pdfBytes.length, bytes: pdfBytes };
+  }
+
+  const safeName = file.name.replace(/[^\w.\-]+/g, "_");
   const stagingPath = `${args.organizationId}/${STAGING_PREFIX}/${crypto.randomUUID()}-${safeName}`;
 
   const { error: uploadError } = await args.supabase.storage
     .from(STAGING_BUCKET)
-    .upload(stagingPath, args.file.bytes, {
-      contentType: args.file.type,
+    .upload(stagingPath, file.bytes, {
+      contentType: file.type,
       upsert: false,
     });
   if (uploadError) {
@@ -55,9 +72,9 @@ export async function enqueueIngestJob(
     .insert({
       organization_id: args.organizationId,
       staging_path: stagingPath,
-      file_name: args.file.name,
-      mime_type: args.file.type,
-      file_size_bytes: args.file.size,
+      file_name: file.name,
+      mime_type: file.type,
+      file_size_bytes: file.size,
       source: args.source,
       submitted_by: args.submittedBy ?? null,
       source_email: args.sourceEmail ?? null,

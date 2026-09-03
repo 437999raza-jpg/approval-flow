@@ -18,6 +18,10 @@ export const ALLOWED_INVOICE_TYPES = new Set([
   "image/png",
   "image/jpeg",
   "image/webp",
+  // Converted to a real PDF in enqueueIngestJob before anything else
+  // sees them — see office-to-pdf.tsx.
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document", // .docx
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", // .xlsx
 ]);
 
 export class InvoiceIngestError extends Error {}

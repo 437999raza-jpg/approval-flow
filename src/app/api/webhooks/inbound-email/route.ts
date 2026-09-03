@@ -9,6 +9,7 @@ import { mergeDocuments, imageDimensions } from "@/lib/merge-documents";
 import { recordUsageEvent } from "@/lib/usage";
 import { enqueueIngestJob, runNextIngestJob } from "@/lib/ingest-queue";
 import { INVOICES_TAG } from "@/lib/org-cache";
+import { officeDocKind, convertOfficeDocToPdf } from "@/lib/office-to-pdf";
 
 // Inbound email path (Resend — the same vendor as outbound notifications):
 //
@@ -168,10 +169,11 @@ export async function POST(request: Request) {
     for (const attachment of attachments) {
       const filename = attachment.filename ?? "attachment";
       const contentType = attachment.content_type ?? "";
-      if (!isPdfOrImage(filename, contentType) || !attachment.download_url) {
+      const officeKind = officeDocKind(filename, contentType);
+      if ((!isPdfOrImage(filename, contentType) && !officeKind) || !attachment.download_url) {
         skipped.push({
           name: filename,
-          reason: "not a PDF or image — cannot be processed",
+          reason: "not a PDF, image, Word (.docx) or Excel (.xlsx) file — cannot be processed",
         });
         continue;
       }
@@ -180,25 +182,41 @@ export async function POST(request: Request) {
         errors.push(`Could not download attachment "${filename}"`);
         continue;
       }
-      const bytes = new Uint8Array(await dl.arrayBuffer());
+      let bytes: Uint8Array = new Uint8Array(await dl.arrayBuffer());
+      let name = filename;
+      let type = contentType || "application/octet-stream";
+
+      // Converted here — before the merge/split logic below, which only
+      // knows how to work with real PDF pages — rather than later in
+      // enqueueIngestJob, so a Word/Excel attachment can still take part
+      // in an [X1] merge alongside PDFs, same as any other attachment.
+      if (officeKind) {
+        const pdfBytes = await convertOfficeDocToPdf(bytes, filename, contentType);
+        if (!pdfBytes) {
+          skipped.push({
+            name: filename,
+            reason: `could not convert this ${officeKind === "docx" ? "Word" : "Excel"} document to PDF`,
+          });
+          continue;
+        }
+        bytes = pdfBytes;
+        type = "application/pdf";
+        name = `${filename.replace(/\.[^.]+$/, "") || "document"}.pdf`;
+      }
+
       // Only IMAGES are ever signature candidates — a PDF is never skipped
       // here (clearance certificates, cover pages etc. still go through
       // extraction, and the no-invoice guard rejects non-invoices).
       const isImage =
-        contentType.startsWith("image/") ||
-        /\.(png|jpe?g|gif|webp)$/i.test(filename);
-      if (isImage && isLikelySignatureImage(filename, bytes)) {
+        type.startsWith("image/") || /\.(png|jpe?g|gif|webp)$/i.test(name);
+      if (isImage && isLikelySignatureImage(name, bytes)) {
         skipped.push({
           name: filename,
           reason: "looks like a signature or logo image — not an invoice",
         });
         continue;
       }
-      documents.push({
-        name: filename,
-        type: contentType || "application/octet-stream",
-        bytes,
-      });
+      documents.push({ name, type, bytes });
     }
 
     // Nothing survived the filter above (every attachment was a Word doc,
