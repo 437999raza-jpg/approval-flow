@@ -536,7 +536,7 @@ export function AppSidebar({
                   // scroll area — max-h caps it so a long list scrolls
                   // INSIDE this box while Dashboard/Mentions above and
                   // Reports/Settings below stay exactly where they are.
-                  <div className="max-h-56 space-y-0.5 overflow-y-auto border-l border-brand-line pl-2">
+                  <div className="scrollbar-thin max-h-56 space-y-0.5 overflow-y-auto border-l border-brand-line pl-2">
                     {moreNav.map((item) => (
                       <NavLink
                         key={item.href}
