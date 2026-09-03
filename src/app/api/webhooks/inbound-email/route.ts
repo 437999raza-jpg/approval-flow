@@ -150,14 +150,29 @@ export async function POST(request: Request) {
   }
 
   const errors: string[] = [];
+  // Declared here, not inside the try, so the catch block below can still
+  // include it if something later in this request throws — a fetch
+  // failure on the body alone must never lose the attachments/error info
+  // that block already reports.
+  let bodyText: string | null = null;
 
   try {
-    // List the email's attachments (metadata + signed download URLs).
+    // List the email's attachments (metadata + signed download URLs), and
+    // fetch the message body in parallel — the webhook event itself is
+    // metadata only (see the comment atop this file), so this is the only
+    // place the body a vendor actually typed is ever available. A sub
+    // sometimes writes real instructions in the email rather than (or
+    // alongside) the attached invoice — best-effort, since a missing body
+    // shouldn't block ingesting the attachments themselves.
     // Resend can still be indexing the email for a moment after the
     // webhook fires, so retry a few times with a short backoff; on final
     // failure include the raw response so the queue log shows what Resend
     // actually said.
-    const attachments = await listResendAttachments(apiKey, email_id);
+    const [attachments, fetchedBody] = await Promise.all([
+      listResendAttachments(apiKey, email_id),
+      fetchResendEmailBody(apiKey, email_id).catch(() => null),
+    ]);
+    bodyText = fetchedBody;
 
     // Download every PDF/image attachment first, skipping signature/logo
     // images (they are NOT invoices — see isLikelySignatureImage, which
@@ -239,6 +254,7 @@ export async function POST(request: Request) {
         from_address: from,
         to_address: candidates.join(", "),
         subject,
+        body_text: bodyText,
         attachment_count: 0,
         skipped_attachments: skipped.length > 0 ? skipped : null,
         processing: false,
@@ -310,6 +326,7 @@ export async function POST(request: Request) {
         from_address: from,
         to_address: candidates.join(", "),
         subject,
+        body_text: bodyText,
         attachment_count: ingestList.length,
         skipped_attachments: skipped.length > 0 ? skipped : null,
         processing: true,
@@ -407,6 +424,7 @@ export async function POST(request: Request) {
           from_address: from,
           to_address: candidates.join(", "),
           subject,
+          body_text: bodyText,
           processed: false,
           error: errors.join("; "),
         });
@@ -547,6 +565,41 @@ function parseSubjectCode(
 // indexing for a moment after the webhook fires, so retry with backoff; on
 // final failure include the raw response so the queue log shows what Resend
 // actually said.
+// The plain-text body of a received email — a sub sometimes writes the
+// real instructions here rather than (or alongside) the attached
+// invoice, and the webhook event never includes it (metadata only), so
+// this is the only place it's available. Best-effort: returns null
+// rather than throwing, since a missing body must never block ingesting
+// the attachments themselves. Falls back to a crude tag-strip of the
+// HTML body for an HTML-only email — displayed only as plain text in our
+// own UI, never re-rendered as HTML, so no sanitization is needed beyond
+// "readable."
+async function fetchResendEmailBody(apiKey: string, emailId: string): Promise<string | null> {
+  type ReceivedEmail = { text?: string | null; html?: string | null };
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const res = await fetch(`https://api.resend.com/emails/receiving/${emailId}`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    });
+    if (res.ok) {
+      const email = (await res.json()) as ReceivedEmail;
+      if (email.text?.trim()) return email.text.trim();
+      if (email.html?.trim()) {
+        const stripped = email.html
+          .replace(/<style[\s\S]*?<\/style>/gi, "")
+          .replace(/<[^>]+>/g, " ")
+          .replace(/&nbsp;/g, " ")
+          .replace(/[ \t]+/g, " ")
+          .replace(/\n\s*\n+/g, "\n\n")
+          .trim();
+        return stripped || null;
+      }
+      return null;
+    }
+    if (attempt < 1) await new Promise((r) => setTimeout(r, 2000));
+  }
+  return null;
+}
+
 async function listResendAttachments(apiKey: string, emailId: string) {
   type AttachmentMeta = {
     id?: string;

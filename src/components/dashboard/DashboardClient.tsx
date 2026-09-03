@@ -753,6 +753,7 @@ export function DashboardClient({ initialListData }: { initialListData: Dashboar
                       canComment,
                       supplierDefaults: detail.supplierDefaults,
                       qboVendorId: detail.qboVendorId,
+                      sourceEmail: detail.sourceEmail,
                       saveSupplierDefaults: invalidateAfter(
                         saveSupplierDefaults.bind(null, selected.id, selected.vendor_name ?? selected.file_name)
                       ),

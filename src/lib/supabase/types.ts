@@ -720,6 +720,7 @@ export interface Database {
           processed: boolean;
           processing: boolean;
           error: string | null;
+          body_text: string | null;
           created_at: string;
         };
         Insert: Partial<

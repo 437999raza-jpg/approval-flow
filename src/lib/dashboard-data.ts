@@ -190,7 +190,7 @@ export async function fetchInvoiceDetailForOrg(supabase: ReturnType<typeof creat
   // round trips this used to be (the supplier-defaults/QBO-vendor lookup
   // in particular used to wait for this whole batch to finish first, even
   // though it never actually needed any of this batch's data).
-  const [signed, approvalsRes, commentsRes, docsRes, lineItemsRes, auditRes, instrRes, supplierDefaultsRes, matchedSupplierRes] =
+  const [signed, approvalsRes, commentsRes, docsRes, lineItemsRes, auditRes, instrRes, supplierDefaultsRes, matchedSupplierRes, sourceEmailRes] =
     await Promise.all([
       supabase.storage.from("invoices").createSignedUrl(selected.file_path, 60 * 10),
       supabase.from("invoice_approvals").select("*").eq("invoice_id", selected.id),
@@ -233,6 +233,18 @@ export async function fetchInvoiceDetailForOrg(supabase: ReturnType<typeof creat
             .select("qbo_vendor_id")
             .eq("organization_id", orgId)
             .eq("name_normalized", normalizeForMatching(selected.vendor_name))
+            .maybeSingle()
+        : Promise.resolve({ data: null }),
+      // Only fire this for an invoice that actually came in by email — a
+      // manual upload has no source_email at all, and this is the only
+      // consumer of the reverse invoice_ids -> inbound_email_log link, so
+      // there's no reason to pay for the query otherwise.
+      selected.source_email
+        ? supabase
+            .from("inbound_email_log")
+            .select("from_address, to_address, subject, body_text, created_at")
+            .eq("organization_id", orgId)
+            .contains("invoice_ids", [selected.id])
             .maybeSingle()
         : Promise.resolve({ data: null }),
     ]);
@@ -329,6 +341,17 @@ export async function fetchInvoiceDetailForOrg(supabase: ReturnType<typeof creat
   const authorNameById: Record<string, string> = {};
   for (const a of authors ?? []) authorNameById[a.id] = a.full_name ?? "Team member";
 
+  const sourceEmailRow = sourceEmailRes.data;
+  const sourceEmail = sourceEmailRow
+    ? {
+        from: sourceEmailRow.from_address,
+        to: sourceEmailRow.to_address,
+        subject: sourceEmailRow.subject,
+        body: sourceEmailRow.body_text,
+        receivedAt: sourceEmailRow.created_at,
+      }
+    : null;
+
   return {
     invoice: selected,
     approvals,
@@ -339,6 +362,7 @@ export async function fetchInvoiceDetailForOrg(supabase: ReturnType<typeof creat
     supplierDefaults,
     qboVendorId,
     authorNameById,
+    sourceEmail,
     instructionEntries: instrRows.map((r) => ({
       id: r.id,
       authorName: r.author_id ? authorNameById[r.author_id] ?? "Team member" : "System",
