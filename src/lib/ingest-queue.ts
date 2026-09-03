@@ -3,6 +3,7 @@ import type { Database } from "@/lib/supabase/types";
 import { ingestInvoiceFile } from "@/lib/invoice-ingest";
 import { NO_INVOICE_DATA_ERROR } from "@/lib/invoices";
 import { officeDocKind, convertOfficeDocToPdf } from "@/lib/office-to-pdf";
+import { mergeDocuments } from "@/lib/merge-documents";
 
 // Async ingestion queue. Uploads/emails no longer wait inline on the 20-60s
 // OpenRouter extraction: the route/webhook uploads the bytes to a staging
@@ -167,6 +168,101 @@ async function otherActiveJobsExist(
   return (count ?? 0) > 0;
 }
 
+// An email with no subject code often carries one real invoice plus its
+// own backup material — a WSIB clearance certificate, a certificate of
+// insurance, a cover letter — none of which extract as invoices, so
+// they used to just sit rejected with nothing pointing at them: "the
+// insurance and the WSIB and any doc needs to be part of the
+// package...PMs need to see these docs." Once every attachment on the
+// email has finished (the caller checks this), fold anything that
+// failed with NO_INVOICE_DATA_ERROR into the SOLE resulting invoice's
+// own document as extra pages — reusing the existing reorder/delete-
+// pages tool as how a reviewer discards ones they don't want kept,
+// rather than inventing a second, separate "attachments" concept.
+//
+// Deliberately scoped to exactly one resulting invoice: with zero,
+// there is nothing to attach a stray certificate to; with two or more,
+// each could belong to either invoice, and guessing wrong would be
+// worse than leaving today's per-attachment behavior alone.
+async function foldBackupDocsIntoSoleInvoice(
+  supabase: Supabase,
+  inboundEmailLogId: string
+): Promise<void> {
+  const { data: logRow } = await supabase
+    .from("inbound_email_log")
+    .select("invoice_ids")
+    .eq("id", inboundEmailLogId)
+    .maybeSingle();
+  const invoiceIds = (logRow?.invoice_ids ?? []) as string[];
+  if (invoiceIds.length !== 1) return;
+  const invoiceId = invoiceIds[0];
+
+  const { data: backupJobs } = await supabase
+    .from("ingest_jobs")
+    .select("id, staging_path, file_name, mime_type")
+    .eq("inbound_email_log_id", inboundEmailLogId)
+    .eq("last_error", NO_INVOICE_DATA_ERROR);
+  if (!backupJobs || backupJobs.length === 0) return;
+
+  const { data: invoice } = await supabase
+    .from("invoices")
+    .select("file_path, file_name, organization_id")
+    .eq("id", invoiceId)
+    .maybeSingle();
+  // Only a PDF has "pages" to append to — an invoice whose own document
+  // is a plain image (a photographed receipt, say) has no merge target.
+  if (!invoice || !invoice.file_name.toLowerCase().endsWith(".pdf")) return;
+
+  const { data: mainBlob } = await supabase.storage.from("invoices").download(invoice.file_path);
+  if (!mainBlob) return;
+
+  const parts: { name: string; type: string; bytes: Uint8Array }[] = [
+    { name: invoice.file_name, type: "application/pdf", bytes: new Uint8Array(await mainBlob.arrayBuffer()) },
+  ];
+  const foldedJobIds: string[] = [];
+  const foldedStagingPaths: string[] = [];
+  for (const job of backupJobs) {
+    const { data: blob } = await supabase.storage.from(STAGING_BUCKET).download(job.staging_path);
+    if (!blob) continue;
+    parts.push({
+      name: job.file_name,
+      type: job.mime_type || "application/pdf",
+      bytes: new Uint8Array(await blob.arrayBuffer()),
+    });
+    foldedJobIds.push(job.id);
+    foldedStagingPaths.push(job.staging_path);
+  }
+  if (foldedJobIds.length === 0) return;
+
+  const merged = await mergeDocuments(parts);
+  if (!merged) return;
+
+  const { error: uploadError } = await supabase.storage
+    .from("invoices")
+    .upload(invoice.file_path, merged, { contentType: "application/pdf", upsert: true });
+  if (uploadError) {
+    console.error("foldBackupDocsIntoSoleInvoice upload failed:", uploadError);
+    return;
+  }
+
+  // Distinguish "folded into the invoice" from a plain no-invoice
+  // rejection so a re-run of this reconciliation (another attachment on
+  // the same email finishing later) never merges the same pages twice.
+  await supabase
+    .from("ingest_jobs")
+    .update({ last_error: `${NO_INVOICE_DATA_ERROR} — merged into the invoice as extra pages` })
+    .in("id", foldedJobIds);
+  await supabase.storage.from(STAGING_BUCKET).remove(foldedStagingPaths);
+
+  await supabase.from("audit_log").insert({
+    organization_id: invoice.organization_id,
+    invoice_id: invoiceId,
+    actor_id: null,
+    action: "invoice.backup_docs_merged",
+    metadata: { files: backupJobs.filter((j) => foldedJobIds.includes(j.id)).map((j) => j.file_name) },
+  });
+}
+
 export async function runNextIngestJob(
   supabase: Supabase,
   organizationId: string
@@ -275,6 +371,15 @@ export async function runNextIngestJob(
             error: message,
           })
           .eq("id", job.inbound_email_log_id);
+        // This job failed for some OTHER reason (not "no invoice data"),
+        // but it may still be the last of this email's attachments to
+        // settle — a sibling attachment could already be sitting on a
+        // NO_INVOICE_DATA_ERROR waiting to be folded in.
+        if (!stillActive) {
+          await foldBackupDocsIntoSoleInvoice(supabase, job.inbound_email_log_id).catch((err) =>
+            console.error("foldBackupDocsIntoSoleInvoice failed:", err)
+          );
+        }
       }
     }
   };
@@ -373,6 +478,11 @@ export async function runNextIngestJob(
         .from("inbound_email_log")
         .update(patch)
         .eq("id", job.inbound_email_log_id);
+      if (!stillActive) {
+        await foldBackupDocsIntoSoleInvoice(supabase, job.inbound_email_log_id).catch((err) =>
+          console.error("foldBackupDocsIntoSoleInvoice failed:", err)
+        );
+      }
     }
 
     await supabase
@@ -426,6 +536,11 @@ export async function runNextIngestJob(
           .from("inbound_email_log")
           .update({ processing: stillActive, processed: hasResults, error: message })
           .eq("id", job.inbound_email_log_id);
+        if (!stillActive && hasResults) {
+          await foldBackupDocsIntoSoleInvoice(supabase, job.inbound_email_log_id).catch((err) =>
+            console.error("foldBackupDocsIntoSoleInvoice failed:", err)
+          );
+        }
       }
     } else {
       await fail(message);

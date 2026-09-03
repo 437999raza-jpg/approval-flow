@@ -110,6 +110,10 @@ const ACTION_DESCRIBERS: Record<
     summary: "Document attached",
     detail: typeof m.file_name === "string" ? m.file_name : undefined,
   }),
+  "invoice.backup_docs_merged": (m) => ({
+    summary: "Backup documents merged in",
+    detail: Array.isArray(m.files) ? m.files.join(", ") : undefined,
+  }),
   "invoice.accounting_instructions_edited": (m) => ({
     summary: "Instructions for accounting updated",
     detail: typeof m.instructions === "string" && m.instructions ? `"${m.instructions}"` : "Cleared",
