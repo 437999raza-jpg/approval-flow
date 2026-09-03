@@ -39,16 +39,28 @@ import { syncInvoiceRetainage } from "@/lib/retainage-sync";
 
 type Supabase = SupabaseClient<Database>;
 
-const BATCH_SIZE = 15; // bills processed per cron tick — attachment
+const BATCH_SIZE = 15; // bills PROCESSED per tick when every fetched
+// bill goes all the way through (no project filter) — attachment
 // downloads make each bill several HTTP round trips, and a batch this
 // size comfortably fits a serverless function's time budget.
+
+// When scoped to one project, most fetched bills get discarded before
+// ever touching an attachment — QBO can't filter Bills by which project
+// a LINE belongs to (CustomerRef lives on the line, not the bill header,
+// and only header fields are queryable), so scoping is a post-fetch
+// filter over whatever the date range returns. A three-year-old project
+// crawling at 15 bills a tick would take forever; scan far more per
+// tick and only pay the attachment cost for the ones that actually
+// match.
+const SCAN_PAGE_SIZE = 300;
 
 export async function startQboBillImport(
   supabase: Supabase,
   organizationId: string,
   dateFrom: string,
   dateTo: string,
-  createdBy: string
+  createdBy: string,
+  projectId: string | null = null
 ): Promise<{ ok: boolean; error?: string }> {
   const { data: existing } = await supabase
     .from("qbo_bill_import_jobs")
@@ -64,6 +76,7 @@ export async function startQboBillImport(
     organization_id: organizationId,
     date_from: dateFrom,
     date_to: dateTo,
+    project_id: projectId,
     created_by: createdBy,
   });
   if (error) return { ok: false, error: error.message };
@@ -98,9 +111,26 @@ export async function runQboBillImportJob(supabase: Supabase, organizationId: st
     .update({ status: "processing", updated_at: new Date().toISOString() })
     .eq("id", job.id);
 
-  let bills: QboBillForImport[];
+  // Resolve the scoping project's QBO id once, if this job is scoped.
+  let targetQboProjectId: string | null = null;
+  if (job.project_id) {
+    const { data: proj } = await supabase
+      .from("projects")
+      .select("qbo_id")
+      .eq("id", job.project_id)
+      .maybeSingle();
+    targetQboProjectId = proj?.qbo_id ?? null;
+  }
+
+  let fetchedBills: QboBillForImport[];
   try {
-    bills = await listBillsForImport(conn, job.date_from, job.date_to, job.cursor_position, BATCH_SIZE);
+    fetchedBills = await listBillsForImport(
+      conn,
+      job.date_from,
+      job.date_to,
+      job.cursor_position,
+      job.project_id ? SCAN_PAGE_SIZE : BATCH_SIZE
+    );
   } catch (err) {
     await supabase
       .from("qbo_bill_import_jobs")
@@ -113,7 +143,17 @@ export async function runQboBillImportJob(supabase: Supabase, organizationId: st
     return;
   }
 
-  if (bills.length === 0) {
+  // Bringing in the WHOLE bill when any line touches the target project,
+  // never a partial slice of one — a Bill is one real financial document
+  // with its own total, vendor and attachment; splitting it would
+  // misrepresent it. The line-level project a customer actually cares
+  // about is preserved per line either way, same as it already is for
+  // every live invoice in the app.
+  const bills = targetQboProjectId
+    ? fetchedBills.filter((b) => b.lines.some((l) => l.customerId === targetQboProjectId))
+    : fetchedBills;
+
+  if (fetchedBills.length === 0) {
     await supabase
       .from("qbo_bill_import_jobs")
       .update({ status: "done", completed_at: new Date().toISOString(), updated_at: new Date().toISOString() })
@@ -306,11 +346,13 @@ export async function runQboBillImportJob(supabase: Supabase, organizationId: st
     }
   }
 
-  const isLastPage = bills.length < BATCH_SIZE;
+  const scanned = fetchedBills.length;
+  const pageSize = job.project_id ? SCAN_PAGE_SIZE : BATCH_SIZE;
+  const isLastPage = scanned < pageSize;
   await supabase
     .from("qbo_bill_import_jobs")
     .update({
-      cursor_position: job.cursor_position + bills.length,
+      cursor_position: job.cursor_position + scanned,
       imported_count: job.imported_count + imported,
       skipped_count: job.skipped_count + skipped,
       failed_count: job.failed_count + failed,

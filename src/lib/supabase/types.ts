@@ -164,6 +164,9 @@ export interface Database {
           organization_id: string;
           date_from: string;
           date_to: string;
+          // Only import bills touching this project — see migration
+          // 0105. Null imports everything in the date range.
+          project_id: string | null;
           status: "queued" | "processing" | "done" | "error";
           cursor_position: number;
           imported_count: number;

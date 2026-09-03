@@ -62,6 +62,22 @@ export default async function AdminOrganizationsPage({
     .order("created_at", { ascending: false });
   const { data: qboConnections } = await admin.from("qbo_connections").select("organization_id");
   const orgsWithQbo = new Set((qboConnections ?? []).map((c) => c.organization_id));
+
+  // For the "only this project" scope on the import form below — every
+  // org's QBO-synced projects, small enough to fetch up front rather
+  // than per-row.
+  const { data: allProjects } = await admin
+    .from("projects")
+    .select("id, organization_id, name")
+    .eq("source", "qbo")
+    .eq("active", true)
+    .order("name");
+  const projectsByOrg = new Map<string, { id: string; name: string }[]>();
+  for (const p of allProjects ?? []) {
+    const list = projectsByOrg.get(p.organization_id) ?? [];
+    list.push({ id: p.id, name: p.name });
+    projectsByOrg.set(p.organization_id, list);
+  }
   const latestImportJobByOrg = new Map<string, NonNullable<typeof importJobs>[number]>();
   for (const j of importJobs ?? []) {
     if (!latestImportJobByOrg.has(j.organization_id)) latestImportJobByOrg.set(j.organization_id, j);
@@ -214,6 +230,7 @@ export default async function AdminOrganizationsPage({
         {(orgs ?? []).map((org) => {
           const custom = parseCustomPlan(org.custom_plan);
           const importJob = latestImportJobByOrg.get(org.id);
+          const orgProjects = projectsByOrg.get(org.id) ?? [];
           const fee = resolveSetupFee(org);
           const members = memberCounts.get(org.id) ?? 0;
           const supportCount = supportCounts.get(org.id) ?? 0;
@@ -523,6 +540,11 @@ export default async function AdminOrganizationsPage({
               <details className="border-t border-brand-line">
                 <summary className="cursor-pointer px-5 py-2.5 text-xs font-medium text-brand-muted hover:bg-brand-mist">
                   Import bills from QuickBooks (owner tool)
+                  {importJob?.project_id && (
+                    <span className="ml-1.5 text-brand-muted">
+                      · scoped to {orgProjects.find((p) => p.id === importJob.project_id)?.name ?? "one job"}
+                    </span>
+                  )}
                   {importJob?.status === "processing" && (
                     <span className="ml-1.5 text-brand-navy">
                       · running — {importJob.imported_count} imported so far
@@ -549,6 +571,13 @@ export default async function AdminOrganizationsPage({
                     QuickBooks — Flow will never try to push it back and create a duplicate.
                     Runs in the background over a few minutes; refresh this page for progress.
                   </p>
+                  <p className="mt-1.5 text-[11px] leading-relaxed text-brand-muted">
+                    Picking a job below imports only bills that touch it — useful for a job
+                    that&apos;s been running for years, where you don&apos;t want everything
+                    from that whole period. QuickBooks can&apos;t filter by job on its own
+                    end, so the date range still has to be wide enough to cover it; scoping
+                    just decides what actually comes in out of that range.
+                  </p>
                   {!orgsWithQbo.has(org.id) && (
                     <p className="mt-2 text-[11px] font-medium text-amber-700">
                       This org has no QuickBooks connection yet — connect it from their own
@@ -564,6 +593,17 @@ export default async function AdminOrganizationsPage({
                     <div>
                       <label className={adminLabelCls}>To</label>
                       <input name="date_to" type="date" required className={adminFieldCls} />
+                    </div>
+                    <div className="min-w-[14rem]">
+                      <label className={adminLabelCls}>Only this job (optional)</label>
+                      <select name="project_id" defaultValue="" className={adminFieldCls}>
+                        <option value="">Every bill in the date range</option>
+                        {orgProjects.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.name}
+                          </option>
+                        ))}
+                      </select>
                     </div>
                     <SubmitButton
                       disabled={importJob?.status === "queued" || importJob?.status === "processing"}
