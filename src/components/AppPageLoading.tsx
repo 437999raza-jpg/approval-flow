@@ -1,3 +1,5 @@
+import Image from "next/image";
+
 export function AppPageLoading({
   title = "Opening page",
   description = "Loading the latest workspace data…",
@@ -7,9 +9,18 @@ export function AppPageLoading({
 }) {
   return (
     <main className="mx-auto w-full max-w-3xl px-6 py-10">
-      <div className="animate-pulse">
-        <div className="h-3 w-24 rounded-full bg-brand-green/20" />
-        <div className="mt-3 h-8 w-64 rounded-lg bg-slate-200" />
+      {/* The wordmark, not another grey bar. For the second a page takes,
+          you should be looking at the product rather than at nothing. */}
+      <Image
+        src="/brand/ufirst-wordmark.png"
+        alt="ufirst"
+        width={2400}
+        height={878}
+        priority
+        className="h-6 w-auto animate-pulse-soft"
+      />
+      <div className="mt-5 animate-pulse">
+        <div className="h-8 w-64 rounded-lg bg-slate-200" />
         <div className="mt-3 h-4 w-96 max-w-full rounded-full bg-slate-100" />
       </div>
 

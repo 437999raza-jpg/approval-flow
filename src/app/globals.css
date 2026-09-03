@@ -64,3 +64,21 @@
     @apply rounded-xl border border-brand-line bg-white shadow-elevation-1;
   }
 }
+
+/* Wordmark breathing while a page loads (see BrandLoading). A slow fade
+   rather than a spin: a spinner reads as "something might be wrong",
+   a pulse reads as "this is coming". Held above 0.45 so the mark never
+   looks like it is disappearing. */
+@keyframes pulse-soft {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+.animate-pulse-soft {
+  animation: pulse-soft 1.6s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .animate-pulse-soft {
+    animation: none;
+    opacity: 0.75;
+  }
+}
