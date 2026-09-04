@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { computeOrgPending } from "@/lib/reminders";
-import { sendDigestEmail, sendEscalationEmail } from "@/lib/notify";
+import { sendDigestEmail, sendEscalationEmail, sendNoApproverMatchEmail, sendTrialEndingSoonEmail } from "@/lib/notify";
 import { getAppUrl } from "@/lib/app-url";
 import { authorizeCronRequest } from "@/lib/cron-auth";
+import { resolvePlan, isTrialActive } from "@/lib/plans";
 
 // Reads request.headers directly (not next/headers' headers()) and touches
 // no cookies, so Next has no signal to treat this as dynamic on its own —
@@ -25,7 +26,9 @@ export async function GET(request: NextRequest) {
   const admin = createAdminClient();
   const appUrl = getAppUrl();
 
-  const { data: orgs } = await admin.from("organizations").select("id");
+  const { data: orgs } = await admin
+    .from("organizations")
+    .select("id, name, is_internal, plan, custom_plan, trial_ends_at, trial_reminder_sent_at");
   // Per-user lookups (cached, not re-fetched for the same person across
   // orgs), not a bulk listUsers({ perPage: 1000 }) — that silently
   // truncates past 1000 users platform-wide, meaning any approver beyond
@@ -44,9 +47,54 @@ export async function GET(request: NextRequest) {
 
   let digestsSent = 0;
   let escalationsSent = 0;
+  let noApproverNoticesSent = 0;
+  let trialRemindersSent = 0;
+  const NO_APPROVER_RENOTIFY_DAYS = 3;
+  const TRIAL_REMINDER_WITHIN_DAYS = 3;
 
   for (const org of orgs ?? []) {
-    const { byApprover, escalations } = await computeOrgPending(org.id);
+    // "No trial-ending email exists at all" — TrialBanner is in-app
+    // only, so this is the sole warning anyone gets if they're not
+    // actively looking at flow in the final days. One-shot per trial.
+    if (
+      !org.is_internal &&
+      !resolvePlan(org) &&
+      isTrialActive(org.trial_ends_at) &&
+      !org.trial_reminder_sent_at
+    ) {
+      const daysLeft = Math.ceil(
+        (new Date(org.trial_ends_at as string).getTime() - Date.now()) / (24 * 60 * 60 * 1000)
+      );
+      if (daysLeft <= TRIAL_REMINDER_WITHIN_DAYS) {
+        const { data: trialAdmins } = await admin
+          .from("organization_members")
+          .select("user_id")
+          .eq("organization_id", org.id)
+          .eq("role", "admin");
+        const trialAdminEmails = (
+          await Promise.all((trialAdmins ?? []).map((a) => getEmail(a.user_id)))
+        ).filter((e): e is string => !!e);
+        if (trialAdminEmails.length > 0) {
+          await Promise.all(
+            trialAdminEmails.map((to) =>
+              sendTrialEndingSoonEmail({
+                to,
+                orgName: org.name,
+                daysLeft: Math.max(1, daysLeft),
+                billingUrl: `${appUrl}/billing`,
+              })
+            )
+          );
+          await admin
+            .from("organizations")
+            .update({ trial_reminder_sent_at: new Date().toISOString() })
+            .eq("id", org.id);
+          trialRemindersSent++;
+        }
+      }
+    }
+
+    const { byApprover, escalations, noApprover } = await computeOrgPending(org.id);
 
     for (const [userId, items] of byApprover) {
       const email = await getEmail(userId);
@@ -112,7 +160,59 @@ export async function GET(request: NextRequest) {
           .eq("id", esc.invoiceId);
       }
     }
+
+    // "An invoice can get stuck forever with zero notification to
+    // anyone" — these have no approver at all, so they can never earn
+    // a digest or an escalation on their own. Re-notified periodically
+    // (not once-ever) since nothing else will ever surface one again
+    // if a single email gets missed.
+    const dueForNotice = noApprover.filter((n) => {
+      if (!n.noticeSentAt) return true;
+      const daysSinceNotice = (Date.now() - new Date(n.noticeSentAt).getTime()) / (24 * 60 * 60 * 1000);
+      return daysSinceNotice >= NO_APPROVER_RENOTIFY_DAYS;
+    });
+    if (dueForNotice.length > 0) {
+      const { data: admins } = await admin
+        .from("organization_members")
+        .select("user_id")
+        .eq("organization_id", org.id)
+        .eq("role", "admin");
+      const adminEmails = (
+        await Promise.all((admins ?? []).map((a) => getEmail(a.user_id)))
+      ).filter((e): e is string => !!e);
+
+      if (adminEmails.length > 0) {
+        const items = dueForNotice.map((n) => ({
+          label: n.label,
+          stepName: n.stepName,
+          url: `${appUrl}/dashboard/${n.invoiceId}`,
+        }));
+        await Promise.all(
+          adminEmails.map((to) =>
+            sendNoApproverMatchEmail({
+              to,
+              orgName: org.name,
+              items,
+              workflowsUrl: `${appUrl}/workflows`,
+            })
+          )
+        );
+        const now = new Date().toISOString();
+        await Promise.all(
+          dueForNotice.map((n) =>
+            admin.from("invoices").update({ no_approver_notice_sent_at: now }).eq("id", n.invoiceId)
+          )
+        );
+        noApproverNoticesSent += dueForNotice.length;
+      }
+    }
   }
 
-  return NextResponse.json({ ok: true, digestsSent, escalationsSent });
+  return NextResponse.json({
+    ok: true,
+    digestsSent,
+    escalationsSent,
+    noApproverNoticesSent,
+    trialRemindersSent,
+  });
 }

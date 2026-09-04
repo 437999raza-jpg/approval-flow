@@ -1,0 +1,21 @@
+-- "An invoice can get stuck forever with zero notification to anyone."
+-- reminders.ts's own digest/escalation logic explicitly skips any
+-- invoice where NO approver currently matches its step
+-- (`if (approverIds.length === 0) continue`) — meaning a workflow
+-- misconfiguration, or a Class/Category/Supplier change that stops
+-- matching any approver rule, produced a real bill that never nags
+-- anyone, never escalates, and sits there until a human happens to
+-- open that exact invoice and notices the in-app warning banner.
+--
+-- Same reset convention as the existing escalated_at column
+-- (dashboard-actions.ts's stepEnteredReset): cleared whenever the
+-- invoice moves to a new step, since the problem is tied to the
+-- CURRENT step's configuration.
+--
+-- Re-notified periodically (not a one-shot like escalated_at) — unlike
+-- a slow invoice that at least has someone able to act on it, nothing
+-- else will ever surface this one again if a single email gets missed.
+--
+-- Authored by Araza.
+
+alter table invoices add column if not exists no_approver_notice_sent_at timestamptz;

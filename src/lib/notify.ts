@@ -708,3 +708,99 @@ export async function sendUsagePaymentOverdueAdminAlert({
 
   await sendEmail({ to, subject: `${orgName} hasn't paid in ${daysSincePaid} days`, html });
 }
+
+// "An invoice can get stuck forever with zero notification to anyone"
+// — reminders.ts's own digest/escalation logic used to just skip any
+// invoice where NO approver currently matches its step at all (a
+// workflow misconfiguration, or the invoice's own fields changing
+// after landing there). One email, listing every such invoice for
+// this org, to every admin — grouped per org rather than one email per
+// invoice, since this is rare enough that a list is more useful than a
+// flood.
+export async function sendNoApproverMatchEmail({
+  to,
+  orgName,
+  items,
+  workflowsUrl,
+}: {
+  to: string;
+  orgName: string;
+  items: { label: string; stepName: string | null; url: string }[];
+  workflowsUrl: string;
+}): Promise<void> {
+  const rows = items
+    .map(
+      (i) =>
+        `<div style="margin:4px 0 0 0;padding:10px 14px;background:#f8fafc;border-left:3px solid #cbd5e1;border-radius:4px;">
+          <a href="${i.url}" style="color:#0f172a;font-weight:600;text-decoration:none;">${escapeHtml(i.label)}</a>
+          <span style="color:#64748b;"> — stuck on "${escapeHtml(i.stepName ?? "an unnamed step")}", no one currently qualifies to approve it</span>
+        </div>`
+    )
+    .join("");
+
+  const html = emailShell({
+    accentColor: "#B45309",
+    eyebrow: orgName,
+    headline: items.length > 1 ? `${items.length} bills have no approver` : "A bill has no approver",
+    bodyHtml: `
+      <p style="margin:0 0 10px 0;">These aren't overdue — they're stuck: nobody currently matches the approval rules for the step they're sitting on, so they can't move forward, be reminded, or escalate on their own.</p>
+      ${rows}
+      <p style="margin:12px 0 0 0;">Fix by reassigning the invoice directly, or updating the step's approver rules in Workflows.</p>
+    `,
+    ctaLabel: "Open Workflows",
+    ctaUrl: workflowsUrl,
+  });
+
+  await sendEmail({
+    to,
+    subject:
+      items.length > 1
+        ? `${orgName}: ${items.length} bills have no approver`
+        : `${orgName}: a bill has no approver`,
+    html,
+    headers: urgencyHeaders("overdue"),
+  });
+}
+
+// "No trial-ending email exists at all" — TrialBanner.tsx already
+// escalates its own tone in-app as the trial runs out, but that only
+// works if someone happens to be looking at flow in those final days.
+// One-shot per trial (organizations.trial_reminder_sent_at), sent once
+// the trial is down to its last few days with no plan chosen yet.
+export async function sendTrialEndingSoonEmail({
+  to,
+  orgName,
+  daysLeft,
+  billingUrl,
+}: {
+  to: string;
+  orgName: string;
+  daysLeft: number;
+  billingUrl: string;
+}): Promise<void> {
+  const html = emailShell({
+    accentColor: "#B45309",
+    bandLabel: "Trial ending soon",
+    eyebrow: orgName,
+    headline:
+      daysLeft <= 1
+        ? "Your trial ends tomorrow"
+        : `Your trial ends in ${daysLeft} days`,
+    bodyHtml: `
+      <p style="margin:0 0 12px 0;">No plan has been chosen for <strong>${escapeHtml(orgName)}</strong> yet. Once the trial ends, the app locks to read-only until a plan is picked — nothing is deleted, but new invoices won't process.</p>
+      <p style="margin:0;">Pick a plan on the Billing page any time before then to keep everything running without interruption.</p>
+    `,
+    ctaLabel: "Choose a plan",
+    ctaUrl: billingUrl,
+  });
+
+  await sendEmail({
+    to,
+    subject:
+      daysLeft <= 1
+        ? `${orgName}: your trial ends tomorrow`
+        : `${orgName}: your trial ends in ${daysLeft} days`,
+    html,
+    headers: urgencyHeaders("overdue"),
+  });
+}

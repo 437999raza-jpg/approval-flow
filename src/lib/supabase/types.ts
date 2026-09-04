@@ -54,6 +54,7 @@ export interface Database {
           plan_selected_at: string | null;
           usage_last_paid_at: string | null;
           usage_reminder_sent_at: string | null;
+          trial_reminder_sent_at: string | null;
           statement_reply_to: string | null;
           trial_ends_at: string | null;
           // Negotiated per-org plan overriding `plan`, and the one-time
@@ -357,6 +358,7 @@ export interface Database {
           current_step_order: number;
           current_step_entered_at: string;
           escalated_at: string | null;
+          no_approver_notice_sent_at: string | null;
           accounting_instructions: string | null;
           step_override_approver_id: string | null;
           qbo_bill_id: string | null;

@@ -32,9 +32,27 @@ export interface EscalationCandidate {
   escalateToUserId: string | null;
 }
 
+// "An invoice can get stuck forever with zero notification to anyone"
+// — a step whose Class/Category/Supplier/Customer conditions match no
+// current approver at all (a workflow misconfiguration, or the
+// invoice's own fields changing after it landed there). Worse than a
+// slow invoice: nothing else will ever surface this on its own, since
+// it has no approver to nag or escalate FROM in the first place.
+export interface NoApproverItem {
+  invoiceId: string;
+  label: string;
+  stepName: string | null;
+  // Null means never notified yet; the caller throttles re-sends
+  // against this rather than a one-shot flag (unlike escalated_at) —
+  // a slow invoice at least has someone who can act on it, this one
+  // doesn't until a human happens to fix the workflow.
+  noticeSentAt: string | null;
+}
+
 export interface OrgPending {
   byApprover: Map<string, PendingItem[]>;
   escalations: EscalationCandidate[];
+  noApprover: NoApproverItem[];
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -49,6 +67,7 @@ export async function computeOrgPending(organizationId: string): Promise<OrgPend
   const admin = createAdminClient();
   const byApprover = new Map<string, PendingItem[]>();
   const escalations: EscalationCandidate[] = [];
+  const noApprover: NoApproverItem[] = [];
 
   const { data: orgRow } = await admin
     .from("organizations")
@@ -60,12 +79,12 @@ export async function computeOrgPending(organizationId: string): Promise<OrgPend
   const { data: invoicesRaw } = await admin
     .from("invoices")
     .select(
-      "id, vendor_name, invoice_number, file_name, workflow_id, current_step_order, current_step_entered_at, step_override_approver_id, project_id, escalated_at"
+      "id, vendor_name, invoice_number, file_name, workflow_id, current_step_order, current_step_entered_at, step_override_approver_id, project_id, escalated_at, no_approver_notice_sent_at"
     )
     .eq("organization_id", organizationId)
     .eq("status", "on_approval");
   const invoices = invoicesRaw ?? [];
-  if (invoices.length === 0) return { byApprover, escalations };
+  if (invoices.length === 0) return { byApprover, escalations, noApprover };
 
   const workflowIds = [
     ...new Set(invoices.map((i) => i.workflow_id).filter((v): v is string => !!v)),
@@ -90,15 +109,24 @@ export async function computeOrgPending(organizationId: string): Promise<OrgPend
       project_id: inv.project_id,
       step_override_approver_id: inv.step_override_approver_id,
     });
-    if (approverIds.length === 0) continue;
+    const label = `${inv.vendor_name ?? inv.file_name}${
+      inv.invoice_number ? ` #${inv.invoice_number}` : ""
+    }`;
+
+    if (approverIds.length === 0) {
+      noApprover.push({
+        invoiceId: inv.id,
+        label,
+        stepName: step.name || null,
+        noticeSentAt: inv.no_approver_notice_sent_at,
+      });
+      continue;
+    }
 
     const enteredAt = new Date(inv.current_step_entered_at).getTime();
     const daysOnStep = Math.floor((now - enteredAt) / DAY_MS);
     const deadlineDays = step.deadline_days;
     const overdue = deadlineDays != null && daysOnStep >= deadlineDays;
-    const label = `${inv.vendor_name ?? inv.file_name}${
-      inv.invoice_number ? ` #${inv.invoice_number}` : ""
-    }`;
 
     const item: PendingItem = {
       invoiceId: inv.id,
@@ -127,5 +155,5 @@ export async function computeOrgPending(organizationId: string): Promise<OrgPend
     }
   }
 
-  return { byApprover, escalations };
+  return { byApprover, escalations, noApprover };
 }

@@ -3,7 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { isPlatformAdmin } from "@/lib/platform-admin";
 import { getCurrentOrg } from "@/lib/current-org";
 import { getAppUrl } from "@/lib/app-url";
-import { sendDigestEmail, sendEscalationEmail, sendPdfOnlyRequestEmail, sendInvoiceReceiptEmail, sendQboDisconnectedEmail, sendUsagePaymentReminderEmail, sendUsagePaymentOverdueAdminAlert } from "@/lib/notify";
+import { sendDigestEmail, sendEscalationEmail, sendPdfOnlyRequestEmail, sendInvoiceReceiptEmail, sendQboDisconnectedEmail, sendUsagePaymentReminderEmail, sendUsagePaymentOverdueAdminAlert, sendNoApproverMatchEmail, sendTrialEndingSoonEmail } from "@/lib/notify";
 
 // Sends one of each notification tier to the caller's own address, so the
 // templates can be reviewed where they actually matter — in a real inbox,
@@ -110,6 +110,26 @@ export async function GET() {
     orgSettingsUrl: `${appUrl}/admin/organizations`,
   });
 
+  // 10 — an invoice has no matching approver at all, so it can never
+  // earn a digest or an escalation on its own.
+  await sendNoApproverMatchEmail({
+    to,
+    orgName: "Fluid Construction",
+    items: [
+      { label: "Battlefield Equipment Rentals #24296743", stepName: "CO Team Approval", url: `${appUrl}/dashboard/sample-1` },
+    ],
+    workflowsUrl: `${appUrl}/workflows`,
+  });
+
+  // 11 — trial ending soon, the one warning anyone gets if they're not
+  // actively looking at flow in the final days.
+  await sendTrialEndingSoonEmail({
+    to,
+    orgName: "Fluid Construction",
+    daysLeft: 2,
+    billingUrl: `${appUrl}/billing`,
+  });
+
   return NextResponse.json({
     ok: true,
     sentTo: to,
@@ -123,6 +143,8 @@ export async function GET() {
       "7 — QuickBooks disconnected",
       "8 — usage payment reminder (customer)",
       "9 — usage payment overdue (platform admin)",
+      "10 — no approver matches this invoice",
+      "11 — trial ending soon",
     ],
   });
 }

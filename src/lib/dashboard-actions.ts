@@ -59,6 +59,7 @@ function stepEnteredReset() {
   return {
     current_step_entered_at: new Date().toISOString(),
     escalated_at: null,
+    no_approver_notice_sent_at: null,
   };
 }
 
