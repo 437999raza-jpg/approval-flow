@@ -1,6 +1,9 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/types";
 import { normalizeForMatching } from "@/lib/matching";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { sendQboDisconnectedEmail } from "@/lib/notify";
+import { getAppUrl } from "@/lib/app-url";
 
 // QuickBooks Online integration: OAuth2 (three-legged), token refresh,
 // bill creation, and document attachment (audit PDF + invoice files).
@@ -142,6 +145,7 @@ export async function getQboConnection(
             Date.now() + refreshed.expiresIn * 1000
           ).toISOString(),
           updated_at: new Date().toISOString(),
+          disconnected_at: null,
         })
         .eq("id", data.id);
       return {
@@ -150,6 +154,19 @@ export async function getQboConnection(
         accessToken: refreshed.accessToken,
       };
     } catch {
+      // Refresh failed — the connection is dead (revoked from Intuit's
+      // side, or the refresh token itself expired from inactivity).
+      // "Do we have something like this for clients" (reported live,
+      // next to ApprovalMax's own disconnect email) — until this, this
+      // failure was completely silent: every QBO-dependent feature just
+      // quietly stopped working. Notify once, not on every call this
+      // makes from here on (every caller hits this same catch block on
+      // every attempt until reconnected).
+      if (!data.disconnected_at) {
+        await notifyQboDisconnected(organizationId, data.id).catch((err) =>
+          console.error("notifyQboDisconnected failed:", err)
+        );
+      }
       return null;
     }
   }
@@ -159,6 +176,44 @@ export async function getQboConnection(
     companyName: data.company_name,
     accessToken: data.access_token,
   };
+}
+
+// Marks the connection broken (so this only ever fires once per break —
+// see the caller) and emails every admin of the org. Uses the admin
+// client throughout regardless of what client the caller passed to
+// getQboConnection, since the caller may be a request-scoped client
+// without the reach to look up other members' emails.
+async function notifyQboDisconnected(
+  organizationId: string,
+  connectionId: string
+): Promise<void> {
+  const admin = createAdminClient();
+  await admin
+    .from("qbo_connections")
+    .update({ disconnected_at: new Date().toISOString() })
+    .eq("id", connectionId);
+
+  const [{ data: org }, { data: admins }] = await Promise.all([
+    admin.from("organizations").select("name").eq("id", organizationId).maybeSingle(),
+    admin
+      .from("organization_members")
+      .select("user_id")
+      .eq("organization_id", organizationId)
+      .eq("role", "admin"),
+  ]);
+  if (!admins || admins.length === 0) return;
+
+  const emails = (
+    await Promise.all(
+      admins.map(async (a) => (await admin.auth.admin.getUserById(a.user_id)).data.user?.email ?? null)
+    )
+  ).filter((e): e is string => !!e);
+
+  const orgName = org?.name ?? "Your organization";
+  const settingsUrl = `${getAppUrl()}/settings#integrations`;
+  await Promise.all(
+    emails.map((to) => sendQboDisconnectedEmail({ to, orgName, settingsUrl }))
+  );
 }
 
 async function qboFetch(

@@ -688,6 +688,7 @@ export interface Database {
           company_name: string | null;
           connected_at: string;
           updated_at: string;
+          disconnected_at: string | null;
         };
         Insert: Partial<
           Database["public"]["Tables"]["qbo_connections"]["Row"]

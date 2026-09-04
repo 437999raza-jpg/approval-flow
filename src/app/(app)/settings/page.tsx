@@ -378,7 +378,7 @@ export default async function SettingsPage({
     // QBO connection (RLS: admins only — everyone else sees nothing).
     supabase
       .from("qbo_connections")
-      .select("realm_id, company_name, connected_at")
+      .select("realm_id, company_name, connected_at, disconnected_at")
       .eq("organization_id", org.id)
       .maybeSingle(),
     // Tax codes with resolved rates pulled from QBO (read-only mirror) —
@@ -761,10 +761,16 @@ export default async function SettingsPage({
               <div className="mt-2">
               {qboConnection ? (
                 <div className="flex flex-wrap items-center gap-3">
-                  <span className="text-slate-700">
-                    Connected to{" "}
-                    <strong>{qboConnection.company_name ?? "QuickBooks"}</strong>
-                  </span>
+                  {qboConnection.disconnected_at ? (
+                    <span className="rounded-md border border-red-200 bg-red-50 px-2.5 py-1 text-xs font-semibold text-red-700">
+                      Disconnected — reconnect to resume syncing
+                    </span>
+                  ) : (
+                    <span className="text-slate-700">
+                      Connected to{" "}
+                      <strong>{qboConnection.company_name ?? "QuickBooks"}</strong>
+                    </span>
+                  )}
                   <span className="text-xs text-slate-400">
                     realm {qboConnection.realm_id}
                   </span>

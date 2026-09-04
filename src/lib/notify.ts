@@ -609,3 +609,43 @@ export async function sendHoldbackClaimEmail({
     return { ok: false, error: err instanceof Error ? err.message : "Send failed." };
   }
 }
+
+// "Do we have something like this for clients" — reported live, next to
+// a screenshot of ApprovalMax's own "Your Organisation has been
+// disconnected from QuickBooks Online" email. flow's QBO refresh token
+// can go dead the same way theirs can (revoked from Intuit's side, or
+// simply expired from inactivity) — until this, that failure was
+// completely silent: every QBO-dependent feature (sync, category/
+// supplier refresh) just quietly stopped working with nobody told. Sent
+// at most once per disconnect (see qbo.ts's getQboConnection, which
+// only calls this the first time it detects the break) to every admin
+// of the org.
+export async function sendQboDisconnectedEmail({
+  to,
+  orgName,
+  settingsUrl,
+}: {
+  to: string;
+  orgName: string;
+  settingsUrl: string;
+}): Promise<void> {
+  const html = emailShell({
+    accentColor: "#DC2626",
+    bandLabel: "Action needed",
+    eyebrow: orgName,
+    headline: "QuickBooks Online has disconnected",
+    bodyHtml: `
+      <p style="margin:0 0 12px 0;">flow's connection to QuickBooks Online for <strong>${escapeHtml(orgName)}</strong> has stopped working — usually because access was revoked or the connection expired from the QuickBooks side.</p>
+      <p style="margin:0;">Until it's reconnected, approved bills won't sync, and QuickBooks-synced data (suppliers, classes, categories, tax rates) won't refresh.</p>
+    `,
+    ctaLabel: "Reconnect QuickBooks",
+    ctaUrl: settingsUrl,
+  });
+
+  await sendEmail({
+    to,
+    subject: `${orgName}: QuickBooks Online has disconnected`,
+    html,
+    headers: urgencyHeaders("critical"),
+  });
+}

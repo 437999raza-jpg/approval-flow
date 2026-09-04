@@ -88,6 +88,7 @@ export async function GET(request: Request) {
             Date.now() + tokens.expiresIn * 1000
           ).toISOString(),
           updated_at: new Date().toISOString(),
+          disconnected_at: null,
         },
         { onConflict: "organization_id" }
       );

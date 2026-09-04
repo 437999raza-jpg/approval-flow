@@ -3,7 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { isPlatformAdmin } from "@/lib/platform-admin";
 import { getCurrentOrg } from "@/lib/current-org";
 import { getAppUrl } from "@/lib/app-url";
-import { sendDigestEmail, sendEscalationEmail, sendPdfOnlyRequestEmail, sendInvoiceReceiptEmail } from "@/lib/notify";
+import { sendDigestEmail, sendEscalationEmail, sendPdfOnlyRequestEmail, sendInvoiceReceiptEmail, sendQboDisconnectedEmail } from "@/lib/notify";
 
 // Sends one of each notification tier to the caller's own address, so the
 // templates can be reviewed where they actually matter — in a real inbox,
@@ -88,6 +88,14 @@ export async function GET() {
   // one invoice.
   await sendInvoiceReceiptEmail({ to, organizationId: org.id, orgName: "Fluid Construction", invoiceCount: 1 });
 
+  // 7 — QuickBooks disconnected, sent to org admins when the refresh
+  // token dies (revoked or expired from inactivity).
+  await sendQboDisconnectedEmail({
+    to,
+    orgName: "Fluid Construction",
+    settingsUrl: `${appUrl}/settings#integrations`,
+  });
+
   return NextResponse.json({
     ok: true,
     sentTo: to,
@@ -98,6 +106,7 @@ export async function GET() {
       "4 — escalation (dark red 🚨, high priority)",
       "5 — PDF-only nudge",
       "6 — invoice receipt acknowledgement",
+      "7 — QuickBooks disconnected",
     ],
   });
 }
