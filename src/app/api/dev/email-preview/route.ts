@@ -3,7 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { isPlatformAdmin } from "@/lib/platform-admin";
 import { getCurrentOrg } from "@/lib/current-org";
 import { getAppUrl } from "@/lib/app-url";
-import { sendDigestEmail, sendEscalationEmail, sendPdfOnlyRequestEmail, sendInvoiceReceiptEmail, sendQboDisconnectedEmail } from "@/lib/notify";
+import { sendDigestEmail, sendEscalationEmail, sendPdfOnlyRequestEmail, sendInvoiceReceiptEmail, sendQboDisconnectedEmail, sendUsagePaymentReminderEmail, sendUsagePaymentOverdueAdminAlert } from "@/lib/notify";
 
 // Sends one of each notification tier to the caller's own address, so the
 // templates can be reviewed where they actually matter — in a real inbox,
@@ -96,6 +96,20 @@ export async function GET() {
     settingsUrl: `${appUrl}/settings#integrations`,
   });
 
+  // 8/9 — usage payment overdue: one to the customer, one to platform
+  // admins. "Pay now" is manual, so nothing else would ever notice.
+  await sendUsagePaymentReminderEmail({
+    to,
+    orgName: "Fluid Construction",
+    billingUrl: `${appUrl}/billing`,
+  });
+  await sendUsagePaymentOverdueAdminAlert({
+    to,
+    orgName: "Fluid Construction",
+    daysSincePaid: 37,
+    orgSettingsUrl: `${appUrl}/admin/organizations`,
+  });
+
   return NextResponse.json({
     ok: true,
     sentTo: to,
@@ -107,6 +121,8 @@ export async function GET() {
       "5 — PDF-only nudge",
       "6 — invoice receipt acknowledgement",
       "7 — QuickBooks disconnected",
+      "8 — usage payment reminder (customer)",
+      "9 — usage payment overdue (platform admin)",
     ],
   });
 }

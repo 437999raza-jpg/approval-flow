@@ -52,6 +52,8 @@ export interface Database {
           stripe_customer_id: string | null;
           plan: "starter" | "growth" | "scale" | "detailed" | null;
           plan_selected_at: string | null;
+          usage_last_paid_at: string | null;
+          usage_reminder_sent_at: string | null;
           statement_reply_to: string | null;
           trial_ends_at: string | null;
           // Negotiated per-org plan overriding `plan`, and the one-time

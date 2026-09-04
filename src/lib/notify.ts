@@ -649,3 +649,62 @@ export async function sendQboDisconnectedEmail({
     headers: urgencyHeaders("critical"),
   });
 }
+
+// "We have to build it" — a customer's usage payment is a manual "Pay
+// now" click, not an auto-charged subscription, so nothing forces them
+// back to Billing once the trial ends. Sent to the org's own admins
+// when they've gone ~35 days since their last completed payment — a
+// nudge, not a lockout (isOrgLocked() is untouched by this; the
+// decision was explicitly "remind, don't lock" for now).
+export async function sendUsagePaymentReminderEmail({
+  to,
+  orgName,
+  billingUrl,
+}: {
+  to: string;
+  orgName: string;
+  billingUrl: string;
+}): Promise<void> {
+  const html = emailShell({
+    accentColor: "#B45309",
+    eyebrow: orgName,
+    headline: "A quick billing reminder",
+    bodyHtml: `
+      <p style="margin:0 0 12px 0;">It's been a little while since <strong>${escapeHtml(orgName)}</strong> paid for flow usage — "Pay now" on the Billing page settles it in under a minute.</p>
+      <p style="margin:0;">Nothing is blocked in the meantime — this is just a nudge so it doesn't slip.</p>
+    `,
+    ctaLabel: "Go to Billing",
+    ctaUrl: billingUrl,
+  });
+
+  await sendEmail({ to, subject: `${orgName}: a quick billing reminder`, html });
+}
+
+// The other half of the same nudge — sent to every platform admin so a
+// customer quietly falling behind on payment is something you actually
+// find out about, rather than something only Stripe's own dashboard
+// would show if you happened to go check it.
+export async function sendUsagePaymentOverdueAdminAlert({
+  to,
+  orgName,
+  daysSincePaid,
+  orgSettingsUrl,
+}: {
+  to: string;
+  orgName: string;
+  daysSincePaid: number;
+  orgSettingsUrl: string;
+}): Promise<void> {
+  const html = emailShell({
+    accentColor: "#B45309",
+    eyebrow: "Billing",
+    headline: `${orgName} hasn't paid in ${daysSincePaid} days`,
+    bodyHtml: `
+      <p style="margin:0;">They've also been emailed a reminder. No access has been restricted — this is informational, so you know before it comes up.</p>
+    `,
+    ctaLabel: "View organization",
+    ctaUrl: orgSettingsUrl,
+  });
+
+  await sendEmail({ to, subject: `${orgName} hasn't paid in ${daysSincePaid} days`, html });
+}

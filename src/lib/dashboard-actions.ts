@@ -2932,6 +2932,10 @@ export async function createUsageCheckout(): Promise<{ ok: boolean; url?: string
       // params — a bare `metadata=<JSON string>` field is an invalid
       // parameter (a real 400 seen in production), not a JSON blob.
       "metadata[organization_id]": org.id,
+      // Read by the Stripe webhook (src/app/api/webhooks/stripe) to know
+      // this is a usage payment, not the setup fee riding the same
+      // session — see the "metadata[setup_fee]" flag set below.
+      "metadata[type]": "usage",
     };
     if (overageDocs > 0) {
       bodyParams["line_items[1][quantity]"] = "1";
