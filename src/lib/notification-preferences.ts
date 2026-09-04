@@ -14,6 +14,11 @@ export const DEFAULT_NOTIFICATION_PREFERENCES = {
   digest_hour: 9,
   timezone: "America/Toronto",
   digest_last_sent_at: null as string | null,
+  // Whether the "it's your turn" email includes one-click Approve/Reject
+  // buttons (migration 0116). On by default — that's the point of the
+  // feature — but someone on a shared inbox, or who'd rather a decision
+  // always go through a login, can turn it off.
+  approve_by_email_enabled: true,
 };
 
 export type NotificationPreferences = typeof DEFAULT_NOTIFICATION_PREFERENCES;
@@ -24,7 +29,7 @@ export async function getNotificationPreferences(
 ): Promise<NotificationPreferences> {
   const { data } = await supabase
     .from("user_notification_preferences")
-    .select("mentions_enabled, assigned_enabled, digest_enabled, digest_days, digest_hour, timezone, digest_last_sent_at")
+    .select("mentions_enabled, assigned_enabled, digest_enabled, digest_days, digest_hour, timezone, digest_last_sent_at, approve_by_email_enabled")
     .eq("user_id", userId)
     .maybeSingle();
   return data ? { ...DEFAULT_NOTIFICATION_PREFERENCES, ...data } : DEFAULT_NOTIFICATION_PREFERENCES;
@@ -41,7 +46,7 @@ export async function getNotificationPreferencesMap(
   if (userIds.length === 0) return map;
   const { data } = await supabase
     .from("user_notification_preferences")
-    .select("user_id, mentions_enabled, assigned_enabled, digest_enabled, digest_days, digest_hour, timezone, digest_last_sent_at")
+    .select("user_id, mentions_enabled, assigned_enabled, digest_enabled, digest_days, digest_hour, timezone, digest_last_sent_at, approve_by_email_enabled")
     .in("user_id", [...new Set(userIds)]);
   for (const row of data ?? []) {
     const { user_id, ...prefs } = row;

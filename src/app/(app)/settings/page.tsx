@@ -195,6 +195,7 @@ async function saveNotificationPreferences(formData: FormData) {
     digest_days: digestDays.length > 0 ? digestDays : DEFAULT_NOTIFICATION_PREFERENCES.digest_days,
     digest_hour: digestHour,
     timezone: String(formData.get("timezone") ?? DEFAULT_NOTIFICATION_PREFERENCES.timezone),
+    approve_by_email_enabled: formData.get("approve_by_email_enabled") === "on",
     updated_at: new Date().toISOString(),
   });
 

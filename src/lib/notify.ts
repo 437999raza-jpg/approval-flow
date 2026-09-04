@@ -74,6 +74,8 @@ function emailShell({
   bodyHtml,
   ctaLabel,
   ctaUrl,
+  secondaryCtaLabel,
+  secondaryCtaUrl,
   bandLabel,
 }: {
   accentColor: string;
@@ -85,6 +87,11 @@ function emailShell({
   // fabricated CTA linking into the app would be meaningless to them.
   ctaLabel?: string;
   ctaUrl?: string;
+  // A second, de-emphasized button next to the primary one — e.g.
+  // Approve (primary) + Reject (outlined) side by side on the
+  // "it's your turn" email. Only rendered together with ctaLabel/ctaUrl.
+  secondaryCtaLabel?: string;
+  secondaryCtaUrl?: string;
   // When set, the 4px hairline is replaced by a full-width colored band
   // carrying this text — the part that actually reads as urgent at a
   // glance, rather than a stripe most people never consciously see.
@@ -120,6 +127,11 @@ function emailShell({
             ? `<tr>
           <td style="padding:0 28px 32px 28px;">
             <a href="${ctaUrl}" style="display:inline-block;background:${accentColor};color:#ffffff;text-decoration:none;font-size:14px;font-weight:600;padding:10px 20px;border-radius:6px;">${escapeHtml(ctaLabel)} &rarr;</a>
+            ${
+              secondaryCtaLabel && secondaryCtaUrl
+                ? `<a href="${secondaryCtaUrl}" style="display:inline-block;margin-left:10px;background:#ffffff;color:#334155;text-decoration:none;font-size:14px;font-weight:600;padding:9px 20px;border-radius:6px;border:1px solid #cbd5e1;">${escapeHtml(secondaryCtaLabel)}</a>`
+                : ""
+            }
           </td>
         </tr>`
             : `<tr><td style="padding:0 28px 20px 28px;">&nbsp;</td></tr>`
@@ -315,22 +327,36 @@ export async function sendAssignedEmail({
   reason,
   stepName,
   invoiceUrl,
+  approveUrl,
+  rejectUrl,
 }: {
   to: string;
   invoiceLabel: string;
   reason: string;
   stepName?: string | null;
   invoiceUrl: string;
+  // One-click decision links (/decide, verified via decision-token.ts) —
+  // approve or reject straight from the email, no sign-in required. Null
+  // when EMAIL_DECISION_SECRET isn't configured; the email still works,
+  // it just falls back to "Review the invoice" like before.
+  approveUrl?: string | null;
+  rejectUrl?: string | null;
 }): Promise<void> {
   const html = emailShell({
     accentColor: "#059669",
     eyebrow: "Waiting on you",
     headline: `${escapeHtml(invoiceLabel)} ${escapeHtml(reason)}`,
-    bodyHtml: stepName
-      ? `<p style="margin:0;">Step: <strong>${escapeHtml(stepName)}</strong></p>`
-      : `<p style="margin:0;color:#64748b;">No further approvers are ahead of you on this step.</p>`,
-    ctaLabel: "Review the invoice",
-    ctaUrl: invoiceUrl,
+    bodyHtml:
+      (stepName
+        ? `<p style="margin:0;">Step: <strong>${escapeHtml(stepName)}</strong></p>`
+        : `<p style="margin:0;color:#64748b;">No further approvers are ahead of you on this step.</p>`) +
+      (approveUrl
+        ? `<p style="margin:14px 0 0 0;"><a href="${invoiceUrl}" style="color:#94a3b8;font-size:12px;">or review the full invoice in Flow &rarr;</a></p>`
+        : ""),
+    ctaLabel: approveUrl ? "Approve" : "Review the invoice",
+    ctaUrl: approveUrl ?? invoiceUrl,
+    secondaryCtaLabel: approveUrl && rejectUrl ? "Reject" : undefined,
+    secondaryCtaUrl: approveUrl && rejectUrl ? rejectUrl : undefined,
   });
 
   await sendEmail({ to, subject: `${invoiceLabel} ${reason}`, html });

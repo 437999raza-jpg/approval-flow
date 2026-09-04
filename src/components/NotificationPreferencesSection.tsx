@@ -59,6 +59,12 @@ export function NotificationPreferencesSection({
       {dayOptions.map((d) => (
         <input key={d.code} type="hidden" name={`digest_day_${d.code}`} value={prefs.digest_days.includes(d.code) ? "on" : ""} />
       ))}
+      {/* Hidden, not the checkbox's own name — that row unmounts when
+          "It's your turn" is off (below), and an unmounted checkbox
+          submits nothing, which would silently reset this to false on
+          every save made while collapsed. This always reflects current
+          state regardless of whether the row is visible. */}
+      <input type="hidden" name="approve_by_email_enabled" value={prefs.approve_by_email_enabled ? "on" : ""} />
 
       <ToggleRow
         label="Mentions"
@@ -74,6 +80,16 @@ export function NotificationPreferencesSection({
         name="assigned_enabled"
         onChange={(v) => setPrefs((p) => ({ ...p, assigned_enabled: v }))}
       />
+      {prefs.assigned_enabled && (
+        <div className="ml-1 border-l-2 border-slate-100 pl-3">
+          <ToggleRow
+            label="Approve or reject right from that email"
+            description="Adds one-click Approve/Reject buttons — no sign-in needed. Turn this off if you'd rather every decision go through a login."
+            checked={prefs.approve_by_email_enabled}
+            onChange={(v) => setPrefs((p) => ({ ...p, approve_by_email_enabled: v }))}
+          />
+        </div>
+      )}
 
       <div className="border-t border-slate-100 pt-4">
         <ToggleRow
@@ -163,7 +179,12 @@ function ToggleRow({
   label: string;
   description: string;
   checked: boolean;
-  name: string;
+  // Omitted for a row that unmounts conditionally — its own checkbox
+  // would submit nothing while hidden, silently resetting a boolean
+  // field the form still needs on every save made while collapsed. Use
+  // a separate always-rendered hidden input for that field instead (see
+  // approve_by_email_enabled above).
+  name?: string;
   onChange: (v: boolean) => void;
 }) {
   return (

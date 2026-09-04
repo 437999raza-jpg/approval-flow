@@ -19,11 +19,13 @@
 // mutation made from the Dashboard.
 import { redirect } from "next/navigation";
 import { revalidatePath, revalidateTag } from "next/cache";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentOrg } from "@/lib/current-org";
 import { sendMentionEmail, sendAssignedEmail, sendRejectedEmail } from "@/lib/notify";
 import { getNotificationPreferencesMap, prefsFor } from "@/lib/notification-preferences";
+import { decisionUrl } from "@/lib/decision-token";
 import {
   extractInvoiceFields,
   mapExtractionToInvoice,
@@ -76,7 +78,7 @@ function stepEnteredReset() {
 // nobody can reason about who is actually accountable once cover is
 // two people deep.
 async function applySubstitutes(
-  supabase: ReturnType<typeof createClient>,
+  supabase: SupabaseClient<Database>,
   organizationId: string,
   userIds: string[]
 ): Promise<string[]> {
@@ -104,7 +106,7 @@ async function applySubstitutes(
 }
 
 export async function requiredApproversFor(
-  supabase: ReturnType<typeof createClient>,
+  supabase: SupabaseClient<Database>,
   step: Database["public"]["Tables"]["approval_workflow_steps"]["Row"],
   invoice: {
     id: string;
@@ -230,7 +232,7 @@ interface MatchingStep {
 }
 
 async function firstMatchingStepFrom(
-  supabase: ReturnType<typeof createClient>,
+  supabase: SupabaseClient<Database>,
   steps: Database["public"]["Tables"]["approval_workflow_steps"]["Row"][],
   from: number,
   invoice: {
@@ -264,7 +266,7 @@ async function firstMatchingStepFrom(
 // Failures here never block the caller's own action — the decision/
 // reassignment that triggered this already succeeded.
 async function notifyNewApprovers(
-  supabase: ReturnType<typeof createClient>,
+  supabase: SupabaseClient<Database>,
   params: {
     organizationId: string;
     invoiceId: string;
@@ -333,12 +335,18 @@ async function notifyNewApprovers(
         const email = emailById.get(uid);
         if (!email || !prefsFor(prefsMap, uid).assigned_enabled) return Promise.resolve();
         const notificationId = notificationIdByUser.get(uid);
+        const allowEmailDecision = prefsFor(prefsMap, uid).approve_by_email_enabled;
         return sendAssignedEmail({
           to: email,
           invoiceLabel,
           reason: params.reason,
           stepName: params.stepName,
           invoiceUrl: notificationId ? `${invoiceUrl}?n=${notificationId}` : invoiceUrl,
+          // One-click decision links — null (falls back to "Review the
+          // invoice") when this recipient has turned the feature off
+          // (migration 0116) or EMAIL_DECISION_SECRET isn't configured.
+          approveUrl: allowEmailDecision ? decisionUrl("approve", params.invoiceId, uid) : null,
+          rejectUrl: allowEmailDecision ? decisionUrl("reject", params.invoiceId, uid) : null,
         });
       })
     );
@@ -347,34 +355,35 @@ async function notifyNewApprovers(
   }
 }
 
-// When the form carries an "instructions" field (the Approve button lives
-// in the Instructions for accounting section), it is saved as the bill
-// memo before the decision — so "type the note, press Approve" works in
-// one motion.
-export async function decide(
+export type DecisionOutcome =
+  | { ok: true }
+  | { ok: false; error: "not-your-step" | "trial-locked" | "already-decided" | "reject-reason-required" };
+
+// Core decision-recording logic — every eligibility check, step-advance,
+// and audit-log write that used to live directly in decide(). Extracted
+// so the no-login email decision flow (/decide/page.tsx, reached via a
+// signed link in the "it's your turn" email — see decision-token.ts) can
+// call the EXACT same logic an authenticated dashboard click does,
+// rather than a second implementation that could quietly drift from
+// this one. The caller supplies whichever client fits its own auth
+// model (RLS-scoped for the dashboard, admin for the token-verified
+// email flow) and an already-resolved userId; this never derives either
+// itself, and never redirects — callers decide what "not ok" means for
+// their own context.
+export async function recordDecision(
+  supabase: SupabaseClient<Database>,
+  userId: string,
   invoiceId: string,
   decision: "approved" | "rejected",
-  formData: FormData
-) {
-
-  const supabase = createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
-
-  // The accounting-instructions thread is append-only: whatever the
-  // approver typed is added as their own line, never overwriting anyone
-  // else's (the whole thread becomes the QBO memo on sync).
-  const instructions = String(formData.get("instructions") ?? "").trim();
-
+  instructions: string
+): Promise<DecisionOutcome> {
   const { data: invoice } = await supabase
     .from("invoices")
     .select("*")
     .eq("id", invoiceId)
     .single();
   if (!invoice || !invoice.workflow_id) {
-    redirect(`/dashboard/${invoiceId}?error=not-your-step`);
+    return { ok: false, error: "not-your-step" };
   }
 
   // Trial-lapsed orgs are read-only for new decisions — everything they
@@ -386,19 +395,22 @@ export async function decide(
     .eq("id", invoice.organization_id)
     .single();
   if (orgRow && isOrgLocked(orgRow)) {
-    redirect(`/dashboard/${invoiceId}?error=trial-locked`);
+    return { ok: false, error: "trial-locked" };
   }
 
+  // The accounting-instructions thread is append-only: whatever the
+  // approver typed is added as their own line, never overwriting anyone
+  // else's (the whole thread becomes the QBO memo on sync).
   if (instructions) {
     await supabase.from("accounting_instructions").insert({
       invoice_id: invoiceId,
-      author_id: user.id,
+      author_id: userId,
       body: instructions,
     });
   }
 
   if (invoice.status !== "on_approval") {
-    redirect(`/dashboard/${invoiceId}?error=already-decided`);
+    return { ok: false, error: "already-decided" };
   }
 
   const { data: steps } = await supabase
@@ -412,14 +424,14 @@ export async function decide(
     (s) => s.step_order === invoice.current_step_order
   );
   if (!currentStep) {
-    redirect(`/dashboard/${invoiceId}?error=not-your-step`);
+    return { ok: false, error: "not-your-step" };
   }
 
   // Who's actually required to decide this step for THIS invoice.
   const requiredApproverIds = await requiredApproversFor(supabase, currentStep, invoice);
 
-  if (!requiredApproverIds.includes(user.id)) {
-    redirect(`/dashboard/${invoiceId}?error=not-your-step`);
+  if (!requiredApproverIds.includes(userId)) {
+    return { ok: false, error: "not-your-step" };
   }
 
   const { data: existingDecisions } = await supabase
@@ -429,7 +441,7 @@ export async function decide(
     .eq("step_order", invoice.current_step_order);
 
   const alreadyDecided = (existingDecisions ?? []).some(
-    (a) => a.approver_id === user.id
+    (a) => a.approver_id === userId
   );
   if (alreadyDecided) {
     // Self-heal: if this step is already fully resolved (e.g. an earlier
@@ -469,15 +481,15 @@ export async function decide(
           organizationId: invoice.organization_id,
           invoiceId,
           approverIds: next.approverIds,
-          excludeUserId: user.id,
+          excludeUserId: userId,
           reason: "is ready for your approval",
           stepName: next.stepName,
         });
       }
       revalidateTag(INVOICES_TAG);
-      return;
+      return { ok: true };
     }
-    redirect(`/dashboard/${invoiceId}?error=already-decided`);
+    return { ok: false, error: "already-decided" };
   }
 
   const { error: insertError } = await supabase
@@ -485,11 +497,11 @@ export async function decide(
     .insert({
       invoice_id: invoiceId,
       step_order: invoice.current_step_order,
-      approver_id: user.id,
+      approver_id: userId,
       decision,
     });
   if (insertError) {
-    redirect(`/dashboard/${invoiceId}?error=already-decided`);
+    return { ok: false, error: "already-decided" };
   }
 
   // Where this step's decision stands now that this vote is in. "all"
@@ -499,7 +511,7 @@ export async function decide(
   // the whole invoice) immediately, regardless of mode.
   const state = stepDecisionState(currentStep.approval_mode, requiredApproverIds, [
     ...(existingDecisions ?? []),
-    { approver_id: user.id, decision },
+    { approver_id: userId, decision },
   ]);
 
   if (state === "rejected") {
@@ -552,7 +564,7 @@ export async function decide(
         organizationId: invoice.organization_id,
         invoiceId,
         approverIds: next.approverIds,
-        excludeUserId: user.id,
+        excludeUserId: userId,
         reason: "is ready for your approval",
         stepName: next.stepName,
       });
@@ -562,15 +574,40 @@ export async function decide(
   // approvers; this vote is recorded but the invoice stays on the same
   // step until everyone required has weighed in.
 
-
   await supabase.from("audit_log").insert({
     organization_id: invoice.organization_id,
     invoice_id: invoiceId,
-    actor_id: user.id,
+    actor_id: userId,
     action: `invoice.${decision}`,
   });
 
   revalidateTag(INVOICES_TAG);
+  return { ok: true };
+}
+
+// Thin wrapper around recordDecision for the authenticated dashboard —
+// resolves the signed-in user from cookies, then redirects based on the
+// outcome (same URLs as before this was extracted). When the form
+// carries an "instructions" field (the Approve button lives in the
+// Instructions for accounting section), it is saved as the bill memo
+// before the decision — so "type the note, press Approve" works in one
+// motion.
+export async function decide(
+  invoiceId: string,
+  decision: "approved" | "rejected",
+  formData: FormData
+) {
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
+  const instructions = String(formData.get("instructions") ?? "").trim();
+  const result = await recordDecision(supabase, user.id, invoiceId, decision, instructions);
+  if (!result.ok) {
+    redirect(`/dashboard/${invoiceId}?error=${result.error}`);
+  }
 }
 
 // Reject requires a reason — typed into a required field in a popup
@@ -579,30 +616,33 @@ export async function decide(
 // accounting-notes thread (that stays reserved for notes to accounting,
 // per explicit instruction) — everyone already watches Discussion for
 // back-and-forth on an invoice, including @mentions.
-export async function rejectWithReason(invoiceId: string, formData: FormData) {
-
-  const supabase = createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
-
-  const reason = String(formData.get("reason") ?? "").trim();
-  if (!reason) {
-    redirect(`/dashboard/${invoiceId}?error=reject-reason-required`);
+//
+// Same extraction as recordDecision above: the core logic is reusable by
+// both the authenticated dashboard and the no-login email decision flow
+// (/decide/page.tsx).
+export async function recordRejectionWithReason(
+  supabase: SupabaseClient<Database>,
+  userId: string,
+  invoiceId: string,
+  reason: string
+): Promise<DecisionOutcome> {
+  const trimmedReason = reason.trim();
+  if (!trimmedReason) {
+    return { ok: false, error: "reject-reason-required" };
   }
 
   await supabase.from("invoice_comments").insert({
     invoice_id: invoiceId,
-    author_id: user.id,
-    body: `Rejected: ${reason}`,
+    author_id: userId,
+    body: `Rejected: ${trimmedReason}`,
     mentioned_user_ids: [],
   });
 
-  // Reuse decide()'s exact eligibility/step/audit logic — pass a FRESH,
-  // empty FormData (no "instructions" key) so nothing also lands in the
-  // accounting-notes thread; the reason above is the only record of why.
-  await decide(invoiceId, "rejected", new FormData());
+  // Reuse recordDecision's exact eligibility/step/audit logic — empty
+  // instructions so nothing also lands in the accounting-notes thread;
+  // the reason above is the only record of why.
+  const result = await recordDecision(supabase, userId, invoiceId, "rejected", "");
+  if (!result.ok) return result;
 
   // Tell the submitter — previously nothing did, beyond the Discussion
   // comment above, which they'd only see if they happened to open the
@@ -615,13 +655,13 @@ export async function rejectWithReason(invoiceId: string, formData: FormData) {
       .select("organization_id, submitted_by, vendor_name, invoice_number, file_name")
       .eq("id", invoiceId)
       .maybeSingle();
-    if (inv?.submitted_by && inv.submitted_by !== user.id) {
+    if (inv?.submitted_by && inv.submitted_by !== userId) {
       const { data: insertedNotification } = await supabase
         .from("notifications")
         .insert({
           organization_id: inv.organization_id,
           user_id: inv.submitted_by,
-          actor_id: user.id,
+          actor_id: userId,
           invoice_id: invoiceId,
           type: "rejected" as const,
         })
@@ -633,7 +673,7 @@ export async function rejectWithReason(invoiceId: string, formData: FormData) {
       // already found and fixed for @mentions, "it's your turn", and
       // support chat.
       const [{ data: actorProfile }, submitterUser] = await Promise.all([
-        supabase.from("profiles").select("full_name").eq("id", user.id).single(),
+        supabase.from("profiles").select("full_name").eq("id", userId).single(),
         createAdminClient().auth.admin.getUserById(inv.submitted_by),
       ]);
       const submitterEmail = submitterUser.data.user?.email;
@@ -649,13 +689,31 @@ export async function rejectWithReason(invoiceId: string, formData: FormData) {
             inv.invoice_number ? ` #${inv.invoice_number}` : ""
           }`,
           actorName: actorProfile?.full_name ?? "A teammate",
-          reason,
+          reason: trimmedReason,
           invoiceUrl,
         });
       }
     }
   } catch {
     // best-effort — see comment above
+  }
+
+  return { ok: true };
+}
+
+// Thin wrapper around recordRejectionWithReason for the authenticated
+// dashboard — same URLs/behavior as before this was extracted.
+export async function rejectWithReason(invoiceId: string, formData: FormData) {
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
+  const reason = String(formData.get("reason") ?? "");
+  const result = await recordRejectionWithReason(supabase, user.id, invoiceId, reason);
+  if (!result.ok) {
+    redirect(`/dashboard/${invoiceId}?error=${result.error}`);
   }
 }
 

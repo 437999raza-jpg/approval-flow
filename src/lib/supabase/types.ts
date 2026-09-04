@@ -220,6 +220,7 @@ export interface Database {
           digest_hour: number;
           timezone: string;
           digest_last_sent_at: string | null;
+          approve_by_email_enabled: boolean;
           updated_at: string;
         };
         Insert: Partial<

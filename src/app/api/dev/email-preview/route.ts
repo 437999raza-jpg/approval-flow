@@ -3,7 +3,8 @@ import { createClient } from "@/lib/supabase/server";
 import { isPlatformAdmin } from "@/lib/platform-admin";
 import { getCurrentOrg } from "@/lib/current-org";
 import { getAppUrl } from "@/lib/app-url";
-import { sendDigestEmail, sendEscalationEmail, sendPdfOnlyRequestEmail, sendInvoiceReceiptEmail, sendQboDisconnectedEmail, sendUsagePaymentReminderEmail, sendUsagePaymentOverdueAdminAlert, sendNoApproverMatchEmail, sendTrialEndingSoonEmail, sendCronErrorAlert } from "@/lib/notify";
+import { sendDigestEmail, sendEscalationEmail, sendPdfOnlyRequestEmail, sendInvoiceReceiptEmail, sendQboDisconnectedEmail, sendUsagePaymentReminderEmail, sendUsagePaymentOverdueAdminAlert, sendNoApproverMatchEmail, sendTrialEndingSoonEmail, sendCronErrorAlert, sendAssignedEmail } from "@/lib/notify";
+import { decisionUrl } from "@/lib/decision-token";
 
 // Sends one of each notification tier to the caller's own address, so the
 // templates can be reviewed where they actually matter — in a real inbox,
@@ -137,6 +138,21 @@ export async function GET() {
     errors: ["9554c95f-03f3-4a67-a784-7a138510be7b: QBO: query failed (500): Internal Server Error"],
   });
 
+  // 13 — "it's your turn" with the new one-click Approve/Reject buttons.
+  // decisionUrl() signs a real token against this caller's own user.id,
+  // so the buttons in this preview actually work end-to-end against
+  // /decide — but only for THIS account (same lockdown as the rest of
+  // this route), and only if EMAIL_DECISION_SECRET is configured.
+  await sendAssignedEmail({
+    to,
+    invoiceLabel: "Bill 1063 — Profixio Construction Services Inc. · CA$57,132.80",
+    reason: "is ready for your approval",
+    stepName: "PM Approval",
+    invoiceUrl: inv("sample-3"),
+    approveUrl: decisionUrl("approve", "sample-3", user.id),
+    rejectUrl: decisionUrl("reject", "sample-3", user.id),
+  });
+
   return NextResponse.json({
     ok: true,
     sentTo: to,
@@ -153,6 +169,7 @@ export async function GET() {
       "10 — no approver matches this invoice",
       "11 — trial ending soon",
       "12 — cron error alert",
+      "13 — it's your turn, with Approve/Reject buttons (real /decide links, this account only)",
     ],
   });
 }
