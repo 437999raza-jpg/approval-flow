@@ -8,7 +8,6 @@ import { CollapsibleSection } from "@/components/CollapsibleSection";
 import { disconnectQbo, refreshQboData, saveDefaultTaxRate, saveInboundEmailLocal, saveStatementReplyTo, syncQboTaxes, syncQboClasses, syncQboCategories, syncQboSuppliers, syncQboProjects, syncQboPaymentStatus } from "@/lib/dashboard-actions";
 import { StatementReplyToForm } from "@/components/StatementReplyToForm";
 import { SecurityMfaSection } from "@/components/SecurityMfaSection";
-import { ProfileTabs } from "@/components/ProfileTabs";
 import { NotificationPreferencesSection } from "@/components/NotificationPreferencesSection";
 import {
   getNotificationPreferences,
@@ -689,62 +688,56 @@ export default async function SettingsPage({
 
           <div className="settings-tabs">
 
-          {/* My profile — General / Notifications / Security as sub-tabs
-              within this one panel (ProfileTabs), mirroring ApprovalMax's
-              own "Edit profile" modal, rather than three separate
-              top-level Settings tabs. */}
+          {/* My profile — profile info, Notifications, and Security all
+              stacked on this one panel/page (not separate tabs). */}
           <section id="profile" className="settings-panel mt-8">
             <h2 className="text-xl font-semibold text-brand-ink">My profile</h2>
-            <div className="mt-3">
-              <ProfileTabs
-                general={
-                  <div className="flex items-center gap-4 rounded-lg border border-slate-200 bg-white shadow-elevation-1 p-4">
-                    <Avatar name={myName || user.email || "?"} photoUrl={myAvatar} size="lg" />
-                    <div className="flex-1">
-                      <InlineTextSave
-                        name="full_name"
-                        defaultValue={myName}
-                        placeholder="Your name"
-                        action={updateProfileName}
-                      />
-                      <div className="mt-2">
-                        <AvatarUploadForm uploadAction={uploadAvatar} />
-                      </div>
-                    </div>
-                  </div>
-                }
-                notifications={
-                  // Per-user opt-out of the "personal convenience" emails
-                  // only (mentions, "it's your turn", the daily digest).
-                  // Escalations and the business-risk alerts (QBO
-                  // disconnected, unpaid usage, trial ending,
-                  // no-approver-match) are NOT here and never will be —
-                  // those exist specifically to reach someone through a
-                  // channel they might otherwise be missing, so letting
-                  // them be silenced would defeat the point.
-                  <div>
-                    <p className="text-sm text-slate-500">
-                      Escalations and account alerts (QuickBooks, billing, trial) always go out — everything below is your own preference.
-                    </p>
-                    <NotificationPreferencesSection
-                      initialPrefs={myNotificationPrefs}
-                      dayOptions={DIGEST_DAY_OPTIONS}
-                      saveAction={saveNotificationPreferences}
-                    />
-                  </div>
-                }
-                security={
-                  // Per-user opt-in, set up under your own login (not
-                  // admin-assignable; an admin can only see the status in
-                  // the Members table and remind someone directly).
-                  <div>
-                    <p className="text-sm text-slate-500">
-                      Two-factor authentication for your own account.
-                    </p>
-                    <SecurityMfaSection initialEnabled={mfaEnabledById.get(user.id) ?? false} />
-                  </div>
-                }
+            <div className="mt-3 flex items-center gap-4 rounded-lg border border-slate-200 bg-white shadow-elevation-1 p-4">
+              <Avatar name={myName || user.email || "?"} photoUrl={myAvatar} size="lg" />
+              <div className="flex-1">
+                <InlineTextSave
+                  name="full_name"
+                  defaultValue={myName}
+                  placeholder="Your name"
+                  action={updateProfileName}
+                />
+                <div className="mt-2">
+                  <AvatarUploadForm uploadAction={uploadAvatar} />
+                </div>
+              </div>
+            </div>
+
+            {/* Notifications — per-user opt-out of the "personal
+                convenience" emails only (mentions, "it's your turn", the
+                daily digest). Escalations and the business-risk alerts
+                (QBO disconnected, unpaid usage, trial ending,
+                no-approver-match) are NOT here and never will be — those
+                exist specifically to reach someone through a channel
+                they might otherwise be missing, so letting them be
+                silenced would defeat the point. */}
+            <div className="mt-8 border-t border-slate-100 pt-6">
+              <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-500">Notifications</h3>
+              <p className="mt-1 text-sm text-slate-500">
+                Escalations and account alerts (QuickBooks, billing, trial) always go out — everything below is your own preference.
+              </p>
+              <NotificationPreferencesSection
+                initialPrefs={myNotificationPrefs}
+                dayOptions={DIGEST_DAY_OPTIONS}
+                saveAction={saveNotificationPreferences}
               />
+            </div>
+
+            {/* Security — per-user opt-in, set up under your own login
+                (not admin-assignable; an admin can only see the status
+                in the Members table and remind someone directly). id
+                preserved so /login/mfa's redirect to #security still
+                scrolls straight here after a recovery-code sign-in. */}
+            <div id="security" className="mt-8 border-t border-slate-100 pt-6">
+              <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-500">Security</h3>
+              <p className="mt-1 text-sm text-slate-500">
+                Two-factor authentication for your own account.
+              </p>
+              <SecurityMfaSection initialEnabled={mfaEnabledById.get(user.id) ?? false} />
             </div>
           </section>
 
