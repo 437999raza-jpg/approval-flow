@@ -3,7 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { isPlatformAdmin } from "@/lib/platform-admin";
 import { getCurrentOrg } from "@/lib/current-org";
 import { getAppUrl } from "@/lib/app-url";
-import { sendDigestEmail, sendEscalationEmail, sendPdfOnlyRequestEmail, sendInvoiceReceiptEmail, sendQboDisconnectedEmail, sendUsagePaymentReminderEmail, sendUsagePaymentOverdueAdminAlert, sendNoApproverMatchEmail, sendTrialEndingSoonEmail } from "@/lib/notify";
+import { sendDigestEmail, sendEscalationEmail, sendPdfOnlyRequestEmail, sendInvoiceReceiptEmail, sendQboDisconnectedEmail, sendUsagePaymentReminderEmail, sendUsagePaymentOverdueAdminAlert, sendNoApproverMatchEmail, sendTrialEndingSoonEmail, sendCronErrorAlert } from "@/lib/notify";
 
 // Sends one of each notification tier to the caller's own address, so the
 // templates can be reviewed where they actually matter — in a real inbox,
@@ -130,6 +130,13 @@ export async function GET() {
     billingUrl: `${appUrl}/billing`,
   });
 
+  // 12 — a background cron hit errors nobody would otherwise see.
+  await sendCronErrorAlert({
+    to,
+    jobName: "QBO payment status sync",
+    errors: ["9554c95f-03f3-4a67-a784-7a138510be7b: QBO: query failed (500): Internal Server Error"],
+  });
+
   return NextResponse.json({
     ok: true,
     sentTo: to,
@@ -145,6 +152,7 @@ export async function GET() {
       "9 — usage payment overdue (platform admin)",
       "10 — no approver matches this invoice",
       "11 — trial ending soon",
+      "12 — cron error alert",
     ],
   });
 }

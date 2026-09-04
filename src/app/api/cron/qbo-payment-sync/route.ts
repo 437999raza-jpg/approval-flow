@@ -4,6 +4,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getQboConnection, runQboPaymentSync } from "@/lib/qbo";
 import { authorizeCronRequest } from "@/lib/cron-auth";
+import { platformAdminEmails } from "@/lib/platform-admin";
+import { sendCronErrorAlert } from "@/lib/notify";
 
 // Nightly (see vercel.json's "crons" entry): pulls payment status
 // (paid/unpaid + date paid) from QuickBooks for every bill each connected
@@ -38,6 +40,20 @@ export async function GET(request: NextRequest) {
         `${row.organization_id}: ${err instanceof Error ? err.message : String(err)}`
       );
     }
+  }
+
+  // "That errors array only ever went into a JSON response nobody
+  // reads" — this cron has no human watching it run, unlike the manual
+  // "Sync payment status" button, so a real failure needs to reach
+  // someone on its own rather than wait for someone to check Vercel's
+  // logs.
+  if (errors.length > 0) {
+    const admins = platformAdminEmails();
+    await Promise.all(
+      admins.map((to) =>
+        sendCronErrorAlert({ to, jobName: "QBO payment status sync", errors })
+      )
+    );
   }
 
   return NextResponse.json({ ok: true, orgsChecked, totalUpdated, errors });

@@ -804,3 +804,44 @@ export async function sendTrialEndingSoonEmail({
     headers: urgencyHeaders("overdue"),
   });
 }
+
+// "There's a real gap, same pattern as everything else this session" —
+// the nightly QBO payment-status cron used to just collect failures
+// into an array that only ever went into a JSON response nobody reads.
+// Sent to platform admins, not the org itself — these are transient/
+// technical failures (a malformed response, a rate limit, a QBO API
+// hiccup) an org's own admin couldn't act on anyway. Deliberately no
+// throttling: this is an internal ops alert, not a customer-facing
+// nag, so a real problem persisting every night should keep saying so
+// until it's fixed.
+export async function sendCronErrorAlert({
+  to,
+  jobName,
+  errors,
+}: {
+  to: string;
+  jobName: string;
+  errors: string[];
+}): Promise<void> {
+  const rows = errors
+    .map(
+      (e) =>
+        `<div style="margin:4px 0 0 0;padding:8px 12px;background:#f8fafc;border-left:3px solid #cbd5e1;border-radius:4px;font-family:monospace;font-size:12px;color:#475569;white-space:pre-wrap;">${escapeHtml(e)}</div>`
+    )
+    .join("");
+
+  const html = emailShell({
+    accentColor: "#991B1B",
+    bandLabel: "Cron failure",
+    eyebrow: jobName,
+    headline: `${errors.length} error${errors.length === 1 ? "" : "s"} last run`,
+    bodyHtml: rows,
+  });
+
+  await sendEmail({
+    to,
+    subject: `${jobName}: ${errors.length} error${errors.length === 1 ? "" : "s"} last run`,
+    html,
+    headers: urgencyHeaders("overdue"),
+  });
+}
