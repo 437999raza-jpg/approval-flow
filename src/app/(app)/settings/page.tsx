@@ -8,6 +8,12 @@ import { CollapsibleSection } from "@/components/CollapsibleSection";
 import { disconnectQbo, refreshQboData, saveDefaultTaxRate, saveInboundEmailLocal, saveStatementReplyTo, syncQboTaxes, syncQboClasses, syncQboCategories, syncQboSuppliers, syncQboProjects, syncQboPaymentStatus } from "@/lib/dashboard-actions";
 import { StatementReplyToForm } from "@/components/StatementReplyToForm";
 import { SecurityMfaSection } from "@/components/SecurityMfaSection";
+import { NotificationPreferencesSection } from "@/components/NotificationPreferencesSection";
+import {
+  getNotificationPreferences,
+  DEFAULT_NOTIFICATION_PREFERENCES,
+  DIGEST_DAY_OPTIONS,
+} from "@/lib/notification-preferences";
 import { qboEnv } from "@/lib/qbo";
 import { Avatar } from "@/components/Avatar";
 import { AvatarUploadForm } from "@/components/AvatarUploadForm";
@@ -161,6 +167,38 @@ async function uploadAvatar(formData: FormData) {
 
   revalidatePath("/settings");
   revalidatePath("/dashboard");
+}
+
+// Saves the signed-in user's own notification preferences (migration
+// 0115). RLS on user_notification_preferences already scopes writes to
+// auth.uid(), so the request-scoped client (not the admin client) is
+// enough here — same as updateProfileName above.
+async function saveNotificationPreferences(formData: FormData) {
+  "use server";
+
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
+  const digestDays = DIGEST_DAY_OPTIONS.map((d) => d.code).filter(
+    (code) => formData.get(`digest_day_${code}`) === "on"
+  );
+  const digestHour = Math.min(23, Math.max(0, Number(formData.get("digest_hour") ?? 9)));
+
+  await supabase.from("user_notification_preferences").upsert({
+    user_id: user.id,
+    mentions_enabled: formData.get("mentions_enabled") === "on",
+    assigned_enabled: formData.get("assigned_enabled") === "on",
+    digest_enabled: formData.get("digest_enabled") === "on",
+    digest_days: digestDays.length > 0 ? digestDays : DEFAULT_NOTIFICATION_PREFERENCES.digest_days,
+    digest_hour: digestHour,
+    timezone: String(formData.get("timezone") ?? DEFAULT_NOTIFICATION_PREFERENCES.timezone),
+    updated_at: new Date().toISOString(),
+  });
+
+  revalidatePath("/settings");
 }
 
 async function updateMemberRole(membershipId: string, formData: FormData) {
@@ -424,6 +462,8 @@ export default async function SettingsPage({
       .order("created_at", { ascending: true }),
   ]);
 
+  const myNotificationPrefs = await getNotificationPreferences(supabase, user.id);
+
   // Default-tax choices = the synced tax CODES (H 13%, M&E (ON) 13%…).
   // Stored as a code so ingest puts the exact code on new lines — two codes
   // can share a rate and the QBO sync refuses to guess between them.
@@ -576,6 +616,9 @@ export default async function SettingsPage({
           <a href="#profile" className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600 hover:bg-slate-200">
             My profile
           </a>
+          <a href="#notifications" className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600 hover:bg-slate-200">
+            Notifications
+          </a>
           <a href="#security" className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600 hover:bg-slate-200">
             Security
           </a>
@@ -619,6 +662,7 @@ export default async function SettingsPage({
            open — the tab bar gave no indication of where you were. Brand
            green (#57A14C at 10%) matches the sidebar's own active state. */
         main:has(#profile:target) .settings-tab-nav a[href="#profile"],
+        main:has(#notifications:target) .settings-tab-nav a[href="#notifications"],
         main:has(#security:target) .settings-tab-nav a[href="#security"],
         main:has(#integrations:target) .settings-tab-nav a[href="#integrations"],
         main:has(#invoice-email:target) .settings-tab-nav a[href="#invoice-email"],
@@ -669,6 +713,25 @@ export default async function SettingsPage({
                 </div>
               </div>
             </div>
+          </section>
+
+          {/* Notifications — per-user opt-out of the "personal convenience"
+              emails only (mentions, "it's your turn", the daily digest).
+              Escalations and the business-risk alerts (QBO disconnected,
+              unpaid usage, trial ending, no-approver-match) are NOT here
+              and never will be — those exist specifically to reach
+              someone through a channel they might otherwise be missing,
+              so letting them be silenced would defeat the point. */}
+          <section id="notifications" className="settings-panel mt-8">
+            <h2 className="text-xl font-semibold text-brand-ink">Notifications</h2>
+            <p className="mt-1 text-sm text-slate-500">
+              Escalations and account alerts (QuickBooks, billing, trial) always go out — everything below is your own preference.
+            </p>
+            <NotificationPreferencesSection
+              initialPrefs={myNotificationPrefs}
+              dayOptions={DIGEST_DAY_OPTIONS}
+              saveAction={saveNotificationPreferences}
+            />
           </section>
 
           {/* Security — per-user opt-in, set up under your own login (not

@@ -23,6 +23,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentOrg } from "@/lib/current-org";
 import { sendMentionEmail, sendAssignedEmail, sendRejectedEmail } from "@/lib/notify";
+import { getNotificationPreferencesMap, prefsFor } from "@/lib/notification-preferences";
 import {
   extractInvoiceFields,
   mapExtractionToInvoice,
@@ -316,24 +317,29 @@ async function notifyNewApprovers(
     // needless latency already found and fixed for support chat and
     // @mentions.
     const admin = createAdminClient();
-    const targetResults = await Promise.all(targets.map((uid) => admin.auth.admin.getUserById(uid)));
+    const [targetResults, prefsMap] = await Promise.all([
+      Promise.all(targets.map((uid) => admin.auth.admin.getUserById(uid))),
+      getNotificationPreferencesMap(admin, targets),
+    ]);
     const emailById = new Map(
       targets.map((uid, i) => [uid, targetResults[i].data.user?.email ?? null])
     );
 
+    // The in-app notification row above always gets written regardless —
+    // this only gates the "it's your turn" email itself, per each
+    // recipient's own preference (migration 0115).
     await Promise.all(
       targets.map((uid) => {
         const email = emailById.get(uid);
+        if (!email || !prefsFor(prefsMap, uid).assigned_enabled) return Promise.resolve();
         const notificationId = notificationIdByUser.get(uid);
-        return email
-          ? sendAssignedEmail({
-              to: email,
-              invoiceLabel,
-              reason: params.reason,
-              stepName: params.stepName,
-              invoiceUrl: notificationId ? `${invoiceUrl}?n=${notificationId}` : invoiceUrl,
-            })
-          : Promise.resolve();
+        return sendAssignedEmail({
+          to: email,
+          invoiceLabel,
+          reason: params.reason,
+          stepName: params.stepName,
+          invoiceUrl: notificationId ? `${invoiceUrl}?n=${notificationId}` : invoiceUrl,
+        });
       })
     );
   } catch {
@@ -744,9 +750,10 @@ export async function addComment(invoiceId: string, formData: FormData) {
     // finished posting. Same fix already applied to the support chat
     // endpoint and the Members table's 2FA status for the identical reason.
     const admin = createAdminClient();
-    const [{ data: actorProfile }, mentionedUserResults] = await Promise.all([
+    const [{ data: actorProfile }, mentionedUserResults, prefsMap] = await Promise.all([
       supabase.from("profiles").select("full_name").eq("id", user.id).single(),
       Promise.all(mentionedIds.map((uid) => admin.auth.admin.getUserById(uid))),
+      getNotificationPreferencesMap(admin, mentionedIds),
     ]);
     const actorName = actorProfile?.full_name ?? "A teammate";
     const invoiceLabel = `${invoice.vendor_name ?? invoice.file_name}${
@@ -757,14 +764,16 @@ export async function addComment(invoiceId: string, formData: FormData) {
       mentionedIds.map((uid, i) => [uid, mentionedUserResults[i].data.user?.email ?? null])
     );
 
+    // The in-app @mention notification row above always gets written
+    // regardless — this only gates the email itself, per each mentioned
+    // user's own preference (migration 0115).
     await Promise.all(
       mentionedIds.map((uid) => {
         const email = emailById.get(uid);
+        if (!email || !prefsFor(prefsMap, uid).mentions_enabled) return Promise.resolve();
         const notificationId = notificationIdByUser.get(uid);
         const url = notificationId ? `${invoiceUrl}?n=${notificationId}` : invoiceUrl;
-        return email
-          ? sendMentionEmail({ to: email, actorName, invoiceLabel, commentBody: body, invoiceUrl: url })
-          : Promise.resolve();
+        return sendMentionEmail({ to: email, actorName, invoiceLabel, commentBody: body, invoiceUrl: url });
       })
     );
   }

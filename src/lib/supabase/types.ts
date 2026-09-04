@@ -210,6 +210,24 @@ export interface Database {
         Update: Partial<Database["public"]["Tables"]["email_template_overrides"]["Row"]>;
         Relationships: [];
       };
+      user_notification_preferences: {
+        Row: {
+          user_id: string;
+          mentions_enabled: boolean;
+          assigned_enabled: boolean;
+          digest_enabled: boolean;
+          digest_days: string[];
+          digest_hour: number;
+          timezone: string;
+          digest_last_sent_at: string | null;
+          updated_at: string;
+        };
+        Insert: Partial<
+          Database["public"]["Tables"]["user_notification_preferences"]["Row"]
+        > & { user_id: string };
+        Update: Partial<Database["public"]["Tables"]["user_notification_preferences"]["Row"]>;
+        Relationships: [];
+      };
       approval_workflow_rules: {
         Row: {
           id: string;

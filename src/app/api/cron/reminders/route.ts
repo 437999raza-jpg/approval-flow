@@ -5,6 +5,7 @@ import { sendDigestEmail, sendEscalationEmail, sendNoApproverMatchEmail, sendTri
 import { getAppUrl } from "@/lib/app-url";
 import { authorizeCronRequest } from "@/lib/cron-auth";
 import { resolvePlan, isTrialActive } from "@/lib/plans";
+import { getNotificationPreferencesMap, prefsFor, isDigestDue } from "@/lib/notification-preferences";
 
 // Reads request.headers directly (not next/headers' headers()) and touches
 // no cookies, so Next has no signal to treat this as dynamic on its own —
@@ -12,7 +13,9 @@ import { resolvePlan, isTrialActive } from "@/lib/plans";
 // at build time instead of re-run on every cron trigger).
 export const dynamic = "force-dynamic";
 
-// Daily job (see vercel.json's "crons" entry): sends every approver a
+// Hourly job (see vercel.json's "crons" entry — moved from once daily so
+// each approver's own digest_days/digest_hour/timezone preference,
+// migration 0115, can actually be honored): sends every approver a
 // digest of what's currently waiting on them, and escalates to org
 // admins anything that's blown well past its step's deadline. Vercel
 // signs cron-triggered requests with a bearer token matching the
@@ -96,7 +99,19 @@ export async function GET(request: NextRequest) {
 
     const { byApprover, escalations, noApprover } = await computeOrgPending(org.id);
 
+    // This cron now runs hourly (vercel.json) instead of once daily, so
+    // each approver's own digest_days/digest_hour/timezone (migration
+    // 0115) decides which single hourly run is actually theirs — everyone
+    // else's run for that user is a no-op via isDigestDue's day/hour
+    // check. Escalations/no-approver/trial-reminder below are unaffected:
+    // they're already idempotent on their own sent-at timestamps, so
+    // running hourly instead of daily just catches them sooner, never
+    // twice.
+    const digestPrefsMap = await getNotificationPreferencesMap(admin, [...byApprover.keys()]);
+    const digestNow = new Date();
     for (const [userId, items] of byApprover) {
+      const prefs = prefsFor(digestPrefsMap, userId);
+      if (!isDigestDue(prefs, digestNow)) continue;
       const email = await getEmail(userId);
       if (!email) continue;
       await sendDigestEmail({
@@ -109,6 +124,9 @@ export async function GET(request: NextRequest) {
         })),
         dashboardUrl: `${appUrl}/dashboard`,
       });
+      await admin
+        .from("user_notification_preferences")
+        .upsert({ user_id: userId, digest_last_sent_at: digestNow.toISOString() });
       digestsSent++;
     }
 
