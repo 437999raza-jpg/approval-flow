@@ -8,6 +8,7 @@ import { CollapsibleSection } from "@/components/CollapsibleSection";
 import { disconnectQbo, refreshQboData, saveDefaultTaxRate, saveInboundEmailLocal, saveStatementReplyTo, syncQboTaxes, syncQboClasses, syncQboCategories, syncQboSuppliers, syncQboProjects, syncQboPaymentStatus } from "@/lib/dashboard-actions";
 import { StatementReplyToForm } from "@/components/StatementReplyToForm";
 import { SecurityMfaSection } from "@/components/SecurityMfaSection";
+import { ProfileTabs } from "@/components/ProfileTabs";
 import { NotificationPreferencesSection } from "@/components/NotificationPreferencesSection";
 import {
   getNotificationPreferences,
@@ -616,12 +617,6 @@ export default async function SettingsPage({
           <a href="#profile" className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600 hover:bg-slate-200">
             My profile
           </a>
-          <a href="#notifications" className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600 hover:bg-slate-200">
-            Notifications
-          </a>
-          <a href="#security" className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600 hover:bg-slate-200">
-            Security
-          </a>
           {showOrgSettings && (
             <>
               <a href="#integrations" className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600 hover:bg-slate-200">
@@ -662,8 +657,6 @@ export default async function SettingsPage({
            open — the tab bar gave no indication of where you were. Brand
            green (#57A14C at 10%) matches the sidebar's own active state. */
         main:has(#profile:target) .settings-tab-nav a[href="#profile"],
-        main:has(#notifications:target) .settings-tab-nav a[href="#notifications"],
-        main:has(#security:target) .settings-tab-nav a[href="#security"],
         main:has(#integrations:target) .settings-tab-nav a[href="#integrations"],
         main:has(#invoice-email:target) .settings-tab-nav a[href="#invoice-email"],
         main:has(#billing:target) .settings-tab-nav a[href="#billing"],
@@ -696,53 +689,63 @@ export default async function SettingsPage({
 
           <div className="settings-tabs">
 
-          {/* My profile */}
+          {/* My profile — General / Notifications / Security as sub-tabs
+              within this one panel (ProfileTabs), mirroring ApprovalMax's
+              own "Edit profile" modal, rather than three separate
+              top-level Settings tabs. */}
           <section id="profile" className="settings-panel mt-8">
             <h2 className="text-xl font-semibold text-brand-ink">My profile</h2>
-            <div className="mt-3 flex items-center gap-4 rounded-lg border border-slate-200 bg-white shadow-elevation-1 p-4">
-              <Avatar name={myName || user.email || "?"} photoUrl={myAvatar} size="lg" />
-              <div className="flex-1">
-                <InlineTextSave
-                  name="full_name"
-                  defaultValue={myName}
-                  placeholder="Your name"
-                  action={updateProfileName}
-                />
-                <div className="mt-2">
-                  <AvatarUploadForm uploadAction={uploadAvatar} />
-                </div>
-              </div>
+            <div className="mt-3">
+              <ProfileTabs
+                general={
+                  <div className="flex items-center gap-4 rounded-lg border border-slate-200 bg-white shadow-elevation-1 p-4">
+                    <Avatar name={myName || user.email || "?"} photoUrl={myAvatar} size="lg" />
+                    <div className="flex-1">
+                      <InlineTextSave
+                        name="full_name"
+                        defaultValue={myName}
+                        placeholder="Your name"
+                        action={updateProfileName}
+                      />
+                      <div className="mt-2">
+                        <AvatarUploadForm uploadAction={uploadAvatar} />
+                      </div>
+                    </div>
+                  </div>
+                }
+                notifications={
+                  // Per-user opt-out of the "personal convenience" emails
+                  // only (mentions, "it's your turn", the daily digest).
+                  // Escalations and the business-risk alerts (QBO
+                  // disconnected, unpaid usage, trial ending,
+                  // no-approver-match) are NOT here and never will be —
+                  // those exist specifically to reach someone through a
+                  // channel they might otherwise be missing, so letting
+                  // them be silenced would defeat the point.
+                  <div>
+                    <p className="text-sm text-slate-500">
+                      Escalations and account alerts (QuickBooks, billing, trial) always go out — everything below is your own preference.
+                    </p>
+                    <NotificationPreferencesSection
+                      initialPrefs={myNotificationPrefs}
+                      dayOptions={DIGEST_DAY_OPTIONS}
+                      saveAction={saveNotificationPreferences}
+                    />
+                  </div>
+                }
+                security={
+                  // Per-user opt-in, set up under your own login (not
+                  // admin-assignable; an admin can only see the status in
+                  // the Members table and remind someone directly).
+                  <div>
+                    <p className="text-sm text-slate-500">
+                      Two-factor authentication for your own account.
+                    </p>
+                    <SecurityMfaSection initialEnabled={mfaEnabledById.get(user.id) ?? false} />
+                  </div>
+                }
+              />
             </div>
-          </section>
-
-          {/* Notifications — per-user opt-out of the "personal convenience"
-              emails only (mentions, "it's your turn", the daily digest).
-              Escalations and the business-risk alerts (QBO disconnected,
-              unpaid usage, trial ending, no-approver-match) are NOT here
-              and never will be — those exist specifically to reach
-              someone through a channel they might otherwise be missing,
-              so letting them be silenced would defeat the point. */}
-          <section id="notifications" className="settings-panel mt-8">
-            <h2 className="text-xl font-semibold text-brand-ink">Notifications</h2>
-            <p className="mt-1 text-sm text-slate-500">
-              Escalations and account alerts (QuickBooks, billing, trial) always go out — everything below is your own preference.
-            </p>
-            <NotificationPreferencesSection
-              initialPrefs={myNotificationPrefs}
-              dayOptions={DIGEST_DAY_OPTIONS}
-              saveAction={saveNotificationPreferences}
-            />
-          </section>
-
-          {/* Security — per-user opt-in, set up under your own login (not
-              admin-assignable; an admin can only see the status below in
-              the Members table and remind someone directly). */}
-          <section id="security" className="settings-panel mt-8">
-            <h2 className="text-xl font-semibold text-brand-ink">Security</h2>
-            <p className="mt-1 text-sm text-slate-500">
-              Two-factor authentication for your own account.
-            </p>
-            <SecurityMfaSection initialEnabled={mfaEnabledById.get(user.id) ?? false} />
           </section>
 
           {showOrgSettings && (
