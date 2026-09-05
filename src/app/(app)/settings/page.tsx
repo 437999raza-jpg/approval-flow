@@ -698,7 +698,7 @@ export default async function SettingsPage({
             <h2 className="text-xl font-semibold text-brand-ink">My profile</h2>
             <div className="mt-3 flex items-center gap-4 rounded-lg border border-slate-200 bg-white shadow-elevation-1 p-4">
               <Avatar name={myName || user.email || "?"} photoUrl={myAvatar} size="lg" />
-              <div className="flex-1">
+              <div className="min-w-0 flex-1">
                 <InlineTextSave
                   name="full_name"
                   defaultValue={myName}

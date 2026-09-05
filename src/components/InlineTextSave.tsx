@@ -23,7 +23,7 @@ export function InlineTextSave({
 
   return (
     <form
-      className="flex items-center gap-2"
+      className="flex min-w-0 items-center gap-2"
       action={async (formData) => {
         setSaving(true);
         await action(formData);
@@ -31,12 +31,18 @@ export function InlineTextSave({
         setSaving(false);
       }}
     >
+      {/* min-w-0 overrides flexbox's default min-width:auto (which
+          otherwise refuses to shrink below the text content's own
+          width) — w-64 alone forced this input to stay 256px even in a
+          much narrower container, pushing the whole "My profile" card
+          into horizontal overflow at phone width. max-w-64 keeps it
+          from growing unnecessarily large on a wide screen. */}
       <input
         name={name}
         value={value}
         onChange={(e) => setValue(e.target.value)}
         placeholder={placeholder}
-        className="w-64 rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+        className="w-full min-w-0 max-w-64 rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
       />
       <button
         type="submit"
