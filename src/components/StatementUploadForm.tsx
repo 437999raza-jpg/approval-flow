@@ -59,18 +59,26 @@ export function StatementUploadForm({
 
   return (
     <div className="rounded-lg border border-brand-line bg-white p-4">
-      <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
-        <div>
+      {/* grid-cols-1 explicit (not just the sm: override) — a native
+          file input's default rendering doesn't shrink below its own
+          content the way most elements do, so leaving the base case to
+          an implicit single-track grid let it force this whole row past
+          the viewport at phone width (confirmed live: the "Upload &
+          reconcile" button ran off the right edge). min-w-0 on the
+          input's wrapper is the other half — flex/grid items default to
+          min-width:auto, refusing to shrink below their content. */}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
+        <div className="min-w-0">
           <label className="text-[11px] font-semibold uppercase tracking-wide text-brand-muted">
             Statement file
           </label>
-          <div className="mt-1 flex items-center gap-2">
+          <div className="mt-1 flex min-w-0 items-center gap-2">
             <input
               ref={fileInputRef}
               type="file"
               accept="application/pdf,image/png,image/jpeg,image/webp"
               onChange={(e) => setFileName(e.target.files?.[0]?.name ?? null)}
-              className="block flex-1 text-sm text-brand-ink file:mr-2 file:rounded-md file:border-0 file:bg-brand-mist file:px-2 file:py-1.5 file:text-xs file:font-medium"
+              className="block min-w-0 flex-1 text-sm text-brand-ink file:mr-2 file:rounded-md file:border-0 file:bg-brand-mist file:px-2 file:py-1.5 file:text-xs file:font-medium"
             />
             {fileName && (
               <button

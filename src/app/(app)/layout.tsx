@@ -86,7 +86,19 @@ export default async function AppLayout({
         <div className="flex min-w-0 flex-1 flex-col">
           <TrialBanner org={trialOrgRow} />
           <div className="flex min-w-0 flex-1 flex-col overflow-y-auto">
-            {children}
+            {/* Each page's own <main> (mx-auto max-w-*, ...) is a direct
+                flex item here (this div is flex-col), and flex items
+                default to min-width:auto on their cross axis — refusing
+                to shrink below their content's natural width. A single
+                long unbreakable text run (e.g. a filename + metadata
+                line on /invoices/pending-splits) was enough to size
+                <main> past the viewport at phone width, silently
+                clipped with no way to scroll to the rest. This wrapper
+                is the one place that needs min-w-0, not every page's
+                own <main> tag — its child then lays out as a normal
+                block element instead of a flex item, sized to 100% of
+                this div the ordinary way. */}
+            <div className="min-w-0">{children}</div>
           </div>
         </div>
       </div>

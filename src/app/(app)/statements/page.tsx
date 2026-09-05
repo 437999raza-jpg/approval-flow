@@ -104,11 +104,15 @@ export default async function StatementsPage() {
                 href={`/statements/${s.id}`}
                 className="flex items-center justify-between gap-3 px-4 py-3 text-sm hover:bg-brand-mist"
               >
-                <div>
-                  <div className="font-medium text-brand-ink">{s.supplier_name}</div>
-                  <div className="text-xs text-brand-muted">{s.file_name}</div>
+                {/* min-w-0 lets this side actually shrink (flex items
+                    default to min-width:auto, refusing to) — a long
+                    filename was pushing the whole row past the phone
+                    viewport instead of truncating with an ellipsis. */}
+                <div className="min-w-0 flex-1">
+                  <div className="truncate font-medium text-brand-ink">{s.supplier_name}</div>
+                  <div className="truncate text-xs text-brand-muted">{s.file_name}</div>
                 </div>
-                <div className="flex items-center gap-3">
+                <div className="flex flex-none items-center gap-3">
                   <span
                     className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${
                       s.status === "reconciled"
