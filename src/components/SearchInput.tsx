@@ -165,6 +165,13 @@ export function SearchInput({
 
   function submit(next: string) {
     const trimmed = stripTrailingPunctuation(next);
+    // The decision logic below always used the stripped text, but the
+    // visible box never did — voice input (Chrome auto-appends a period
+    // to what it decides is a finished sentence) left "clear filter."
+    // sitting in the box even though it correctly cleared the filters,
+    // which reads as "did that actually work?" Sync the box to match
+    // whatever's actually being acted on, typed or spoken.
+    if (trimmed !== next) setValue(trimmed);
     if (trimmed && isClearIntent(trimmed)) {
       setValue("");
       go(pathname);

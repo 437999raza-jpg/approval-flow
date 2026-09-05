@@ -102,6 +102,17 @@ export function DocumentSearchModal({
     setOpen(false);
   }
 
+  // "Clear" used to only reset the in-progress draft (setFilters(EMPTY))
+  // — the actually-applied filters (the URL/advanced state driving the
+  // "Filters" badge) never changed, so a filter stayed active until
+  // "Search" was pressed again afterward. Clear now applies immediately,
+  // same as Search does, just with an empty set.
+  function clearAndApply() {
+    setFilters(EMPTY);
+    go("/dashboard");
+    setOpen(false);
+  }
+
   return (
     <>
       <button
@@ -131,7 +142,7 @@ export function DocumentSearchModal({
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => setFilters(EMPTY)}
+                  onClick={clearAndApply}
                   className="rounded-md border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-50"
                 >
                   Clear
