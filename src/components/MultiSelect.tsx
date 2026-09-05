@@ -43,6 +43,16 @@ export function MultiSelect({ label, options, selected, onChange }: MultiSelectP
   const allFilteredSelected =
     filteredOptions.length > 0 && filteredOptions.every((o) => selected.includes(o.id));
 
+  // With hundreds of options, a handful of checked ones scattered
+  // through one long alphabetical list were easy to lose track of —
+  // there was no way to see everything currently selected without
+  // scrolling to find each checkmark individually. Selected items now
+  // stay pinned at the top regardless of the search query, so what's
+  // picked is always visible; "All" below is just the remaining
+  // (query-filtered) unselected options, so nothing appears twice.
+  const selectedOptions = options.filter((o) => selected.includes(o.id));
+  const filteredUnselected = filteredOptions.filter((o) => !selected.includes(o.id));
+
   function toggle(id: string) {
     onChange(selected.includes(id) ? selected.filter((s) => s !== id) : [...selected, id]);
   }
@@ -96,33 +106,61 @@ export function MultiSelect({ label, options, selected, onChange }: MultiSelectP
             />
           </div>
           <div className="max-h-64 overflow-y-auto p-1">
-            {filteredOptions.length === 0 ? (
+            {selectedOptions.length === 0 && filteredUnselected.length === 0 ? (
               <div className="px-3 py-2 text-sm text-slate-400">No matches.</div>
             ) : (
               <>
-                <label className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">
-                  <input
-                    type="checkbox"
-                    checked={allFilteredSelected}
-                    onChange={toggleAllFiltered}
-                    className="h-4 w-4 rounded border-slate-300"
-                  />
-                  All{query ? ` (${filteredOptions.length} matching)` : ""}
-                </label>
-                {filteredOptions.map((o) => (
-                  <label
-                    key={o.id}
-                    className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-slate-50"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={selected.includes(o.id)}
-                      onChange={() => toggle(o.id)}
-                      className="h-4 w-4 rounded border-slate-300"
-                    />
-                    <span className="truncate">{o.label}</span>
-                  </label>
-                ))}
+                {selectedOptions.length > 0 && (
+                  <>
+                    <div className="px-2 pb-0.5 pt-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                      Selected
+                    </div>
+                    {selectedOptions.map((o) => (
+                      <label
+                        key={o.id}
+                        className="flex cursor-pointer items-center gap-2 rounded bg-blue-50/70 px-2 py-1.5 text-sm hover:bg-blue-50"
+                      >
+                        <input
+                          type="checkbox"
+                          checked
+                          onChange={() => toggle(o.id)}
+                          className="h-4 w-4 rounded border-slate-300"
+                        />
+                        <span className="truncate">{o.label}</span>
+                      </label>
+                    ))}
+                  </>
+                )}
+                {filteredUnselected.length > 0 && (
+                  <>
+                    <div className="px-2 pb-0.5 pt-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                      All{query ? ` (${filteredUnselected.length} matching)` : ""}
+                    </div>
+                    <label className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">
+                      <input
+                        type="checkbox"
+                        checked={allFilteredSelected}
+                        onChange={toggleAllFiltered}
+                        className="h-4 w-4 rounded border-slate-300"
+                      />
+                      Select all{query ? " matching" : ""}
+                    </label>
+                    {filteredUnselected.map((o) => (
+                      <label
+                        key={o.id}
+                        className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-slate-50"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={false}
+                          onChange={() => toggle(o.id)}
+                          className="h-4 w-4 rounded border-slate-300"
+                        />
+                        <span className="truncate">{o.label}</span>
+                      </label>
+                    ))}
+                  </>
+                )}
               </>
             )}
           </div>
