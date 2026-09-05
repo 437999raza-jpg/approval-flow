@@ -62,3 +62,33 @@ export async function resolveSupplier(
   }
   return null;
 }
+
+// PostgREST (Supabase) caps every response at 1000 rows regardless of
+// .limit(), so any bulk read of the full suppliers table needs to page
+// with .range() — an org can have well over 1000 (this one has 2,048+).
+// A plain unpaginated .select() silently returns an arbitrary ~1000-row
+// slice with no error, which is exactly what caused the QBO bill import
+// to report real, long-standing vendors as "not in Flow's supplier list
+// yet": the match table it built only ever held a fraction of the org's
+// suppliers. Same pattern as fetchAllQboSuppliers (qbo-all.ts) for the
+// separate qbo_suppliers mirror table. Authored by Araza.
+export async function fetchAllSuppliers(
+  supabase: SupabaseClient<Database>,
+  organizationId: string
+): Promise<{ id: string; name: string; qbo_vendor_id: string | null; email: string | null }[]> {
+  const all: { id: string; name: string; qbo_vendor_id: string | null; email: string | null }[] = [];
+  const pageSize = 1000;
+  let from = 0;
+  for (;;) {
+    const { data, error } = await supabase
+      .from("suppliers")
+      .select("id, name, qbo_vendor_id, email")
+      .eq("organization_id", organizationId)
+      .range(from, from + pageSize - 1);
+    if (error) break;
+    all.push(...(data ?? []));
+    if ((data ?? []).length < pageSize) break;
+    from += pageSize;
+  }
+  return all;
+}

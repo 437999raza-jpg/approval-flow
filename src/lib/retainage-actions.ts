@@ -7,6 +7,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentOrg } from "@/lib/current-org";
 import { sendHoldbackClaimEmail } from "@/lib/notify";
 import { categoryDisplayName } from "@/lib/qbo";
+import { fetchAllSuppliers } from "@/lib/suppliers";
 import {
   fillClaimTemplate,
   DEFAULT_CLAIM_SUBJECT,
@@ -208,11 +209,12 @@ export async function rescanRetainage(): Promise<void> {
   //   sync, so copy the address onto Flow's own supplier row where we
   //   don't already have one. That address then survives, and the page
   //   reads one column instead of joining two tables.
-  const { data: allSuppliers } = await supabase
-    .from("suppliers")
-    .select("id, qbo_vendor_id, email")
-    .eq("organization_id", org.id);
-  const missingEmail = (allSuppliers ?? []).filter((s) => !s.email && s.qbo_vendor_id);
+  // fetchAllSuppliers pages past PostgREST's 1000-row cap — a plain
+  // .select() here silently checked only an arbitrary ~1000 of this org's
+  // 2,000+ suppliers, so subs outside that slice never got their email
+  // backfilled from the QBO mirror no matter how many times this ran.
+  const allSuppliers = await fetchAllSuppliers(supabase, org.id);
+  const missingEmail = allSuppliers.filter((s) => !s.email && s.qbo_vendor_id);
   if (missingEmail.length > 0) {
     const { data: mirrored } = await supabase
       .from("qbo_suppliers")

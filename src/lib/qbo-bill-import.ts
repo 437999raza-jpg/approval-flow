@@ -10,6 +10,7 @@ import {
   type QboBillForImport,
 } from "@/lib/qbo";
 import { syncInvoiceRetainage } from "@/lib/retainage-sync";
+import { fetchAllSuppliers } from "@/lib/suppliers";
 
 // Historical bill import from QuickBooks — platform-admin only, run by
 // hand when onboarding a paying customer who wants their pre-Flow
@@ -164,13 +165,17 @@ export async function runQboBillImportJob(supabase: Supabase, organizationId: st
   // Reference data resolved once per batch, not once per bill: the
   // account behind every Item (Product/Service), the org's category/class
   // mirrors, and its projects. All small, all already-synced tables.
-  const [itemAccounts, { data: categories }, { data: classes }, { data: projects }, { data: suppliers }] =
+  const [itemAccounts, { data: categories }, { data: classes }, { data: projects }, suppliers] =
     await Promise.all([
       listItemAccounts(conn),
       supabase.from("qbo_categories").select("qbo_account_id, name, acct_num").eq("organization_id", organizationId),
       supabase.from("qbo_classes").select("qbo_class_id, name").eq("organization_id", organizationId),
       supabase.from("projects").select("id, qbo_id").eq("organization_id", organizationId).not("qbo_id", "is", null),
-      supabase.from("suppliers").select("id, name, qbo_vendor_id").eq("organization_id", organizationId).not("qbo_vendor_id", "is", null),
+      // fetchAllSuppliers pages past PostgREST's 1000-row cap — a plain
+      // .select() here silently truncated the match table on any org with
+      // 1000+ suppliers, reporting real, long-standing vendors as "not in
+      // Flow's supplier list yet" depending on arbitrary row order.
+      fetchAllSuppliers(supabase, organizationId),
     ]);
 
   const categoryByAccountId = new Map(
@@ -178,7 +183,9 @@ export async function runQboBillImportJob(supabase: Supabase, organizationId: st
   );
   const classNameById = new Map((classes ?? []).map((c) => [c.qbo_class_id, c.name]));
   const projectIdByQboId = new Map((projects ?? []).map((p) => [p.qbo_id as string, p.id]));
-  const supplierByVendorId = new Map((suppliers ?? []).map((s) => [s.qbo_vendor_id as string, s]));
+  const supplierByVendorId = new Map(
+    suppliers.filter((s) => s.qbo_vendor_id).map((s) => [s.qbo_vendor_id as string, s])
+  );
 
   // A line's category resolves through either shape QBO offers, to the
   // exact display string every other line in the system already carries
