@@ -468,7 +468,7 @@ export interface Database {
           actor_id: string | null;
           invoice_id: string | null;
           comment_id: string | null;
-          type: "mention" | "assigned" | "rejected";
+          type: "mention" | "assigned" | "rejected" | "escalated" | "no_approver";
           read: boolean;
           created_at: string;
         };

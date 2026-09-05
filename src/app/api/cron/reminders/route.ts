@@ -136,9 +136,14 @@ export async function GET(request: NextRequest) {
         .select("user_id")
         .eq("organization_id", org.id)
         .eq("role", "admin");
-      const adminEmails = (
-        await Promise.all((admins ?? []).map((a) => getEmail(a.user_id)))
-      ).filter((e): e is string => !!e);
+      // {userId, email} pairs, not two separately-filtered arrays — an
+      // email-only list would go out of sync with the ids the in-app
+      // notification row below needs the moment any admin lacks an email.
+      const adminRecipients = (
+        await Promise.all(
+          (admins ?? []).map(async (a) => ({ userId: a.user_id, email: await getEmail(a.user_id) }))
+        )
+      ).filter((r): r is { userId: string; email: string } => !!r.email);
 
       const { data: profiles } = await admin
         .from("profiles")
@@ -153,15 +158,15 @@ export async function GET(request: NextRequest) {
         // step nobody has configured, and also covers the case where the
         // nominated person no longer has an email on file — better to
         // over-notify than to let a stuck bill go silent.
-        let recipients = adminEmails;
+        let recipients = adminRecipients;
         if (esc.escalateToUserId) {
-          const nominated = await getEmail(esc.escalateToUserId);
-          if (nominated) recipients = [nominated];
+          const nominatedEmail = await getEmail(esc.escalateToUserId);
+          if (nominatedEmail) recipients = [{ userId: esc.escalateToUserId, email: nominatedEmail }];
         }
         await Promise.all(
-          recipients.map((to) =>
+          recipients.map((r) =>
             sendEscalationEmail({
-              to,
+              to: r.email,
               invoiceLabel: esc.label,
               stepName: esc.stepName,
               daysOnStep: esc.daysOnStep,
@@ -171,6 +176,19 @@ export async function GET(request: NextRequest) {
             })
           )
         );
+        // In-app equivalent (migration 0118) — previously escalation
+        // only ever reached someone by email, so missing or dismissing
+        // that one message left no record it happened at all.
+        if (recipients.length > 0) {
+          await admin.from("notifications").insert(
+            recipients.map((r) => ({
+              organization_id: org.id,
+              user_id: r.userId,
+              invoice_id: esc.invoiceId,
+              type: "escalated" as const,
+            }))
+          );
+        }
         escalationsSent++;
         await admin
           .from("invoices")
@@ -195,24 +213,39 @@ export async function GET(request: NextRequest) {
         .select("user_id")
         .eq("organization_id", org.id)
         .eq("role", "admin");
-      const adminEmails = (
-        await Promise.all((admins ?? []).map((a) => getEmail(a.user_id)))
-      ).filter((e): e is string => !!e);
+      const adminRecipients = (
+        await Promise.all(
+          (admins ?? []).map(async (a) => ({ userId: a.user_id, email: await getEmail(a.user_id) }))
+        )
+      ).filter((r): r is { userId: string; email: string } => !!r.email);
 
-      if (adminEmails.length > 0) {
+      if (adminRecipients.length > 0) {
         const items = dueForNotice.map((n) => ({
           label: n.label,
           stepName: n.stepName,
           url: `${appUrl}/dashboard/${n.invoiceId}`,
         }));
         await Promise.all(
-          adminEmails.map((to) =>
+          adminRecipients.map((r) =>
             sendNoApproverMatchEmail({
-              to,
+              to: r.email,
               orgName: org.name,
               items,
               workflowsUrl: `${appUrl}/workflows`,
             })
+          )
+        );
+        // In-app equivalent (migration 0118), one row per admin per
+        // affected invoice — same reach as the email above, which lists
+        // every stuck invoice in one message per admin.
+        await admin.from("notifications").insert(
+          adminRecipients.flatMap((r) =>
+            dueForNotice.map((n) => ({
+              organization_id: org.id,
+              user_id: r.userId,
+              invoice_id: n.invoiceId,
+              type: "no_approver" as const,
+            }))
           )
         );
         const now = new Date().toISOString();

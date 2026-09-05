@@ -322,7 +322,7 @@ export function AppSidebar({
         href: "/notifications",
         active: is("/notifications"),
         icon: icons.mentions,
-        label: "Mentions",
+        label: "Notifications",
         badge: counts?.mentions,
         badgeTone: "green" as const,
       },

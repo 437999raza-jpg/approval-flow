@@ -65,6 +65,16 @@ export default async function NotificationsPage() {
                 <span className="font-medium">{actorName}</span> rejected{" "}
                 <span className="font-medium">{label}</span>
               </>
+            ) : n.type === "escalated" ? (
+              <>
+                <span className="font-medium">{label}</span> was escalated
+                to you — it&apos;s been stuck past its deadline
+              </>
+            ) : n.type === "no_approver" ? (
+              <>
+                <span className="font-medium">{label}</span> has no one
+                configured to approve it
+              </>
             ) : (
               <>
                 <span className="font-medium">{actorName}</span>{" "}
@@ -82,10 +92,11 @@ export default async function NotificationsPage() {
 
   return (
     <main className="mx-auto w-full max-w-2xl p-8">
-      <h1 className="text-xl font-semibold">Mentions</h1>
+      <h1 className="text-xl font-semibold">Notifications</h1>
       <p className="mt-1 text-sm text-slate-500">
-        @mentions in Discussion, and invoices that just became yours to
-        review — click one to open it. It&apos;s marked done once you do.
+        @mentions, invoices that became yours to review, rejections,
+        escalations, and workflow gaps — click one to open it. It&apos;s
+        marked done once you do.
       </p>
 
       {(notifications ?? []).length === 0 ? (
