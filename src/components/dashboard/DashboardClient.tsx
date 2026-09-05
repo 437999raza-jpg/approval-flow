@@ -58,6 +58,7 @@ import {
   classOptionsFor,
   duplicateGroupKey,
   stepDecisionState,
+  requiresMyApproval,
 } from "@/lib/dashboard-computations";
 import {
   backToReview,
@@ -76,6 +77,7 @@ import {
   deleteInvoicesAction,
   clearQboPublishDataAction,
   emailInvoicesAction,
+  bulkApproveAction,
   reassignApprover,
   setInvoiceStage,
   overrideStatus,
@@ -556,8 +558,9 @@ export function DashboardClient({ initialListData }: { initialListData: Dashboar
         holders: holderOf(inv, lookups).map((id) => data.memberNameById[id] ?? "Team member"),
         selected: selected?.id === inv.id,
         qboBillId: inv.qbo_sync_status === "synced" ? inv.qbo_bill_id : null,
+        canApprove: requiresMyApproval(inv, lookups, user.id),
       })),
-    [data.memberNameById, duplicateInvoiceIds, filteredForDisplay, lookups, selected?.id]
+    [data.memberNameById, duplicateInvoiceIds, filteredForDisplay, lookups, selected?.id, user.id]
   );
 
   if (!mounted) return null;
@@ -688,9 +691,11 @@ export function DashboardClient({ initialListData }: { initialListData: Dashboar
                   pinnedCount={filtered.filter((i) => duplicateInvoiceIds.has(i.id)).length}
                   qs=""
                   canReview={canReviewNow}
+                  canBulkApprove={data.bulkApproveEnabled}
                   deleteInvoicesAction={invalidateAfter(deleteInvoicesAction)}
                   clearQboPublishDataAction={invalidateAfter(clearQboPublishDataAction)}
                   emailInvoicesAction={emailInvoicesAction}
+                  bulkApproveAction={invalidateAfter(bulkApproveAction)}
                   onSelect={(id) => {
                     prefetchInvoiceDetail(id);
                     setSelectedId(id);

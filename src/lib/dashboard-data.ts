@@ -31,6 +31,7 @@ import {
   getInvoiceListUncached,
 } from "@/lib/org-cache";
 import { normalizeForMatching } from "@/lib/matching";
+import { hasBulkApprove } from "@/lib/plans";
 import { isPdfName, isImageName } from "@/lib/file-types";
 import type { DocumentRef } from "@/components/DetailSplit";
 import type { SupplierDefaultsValues } from "@/components/SupplierRulesModal";
@@ -66,7 +67,7 @@ export async function fetchDashboardListData() {
     unreadNotificationsRes,
     { invoices, approvedPairs, lineItemRows },
   ] = await Promise.all([
-    supabase.from("organizations").select("plan, custom_plan, is_internal, trial_ends_at").eq("id", org.id).single(),
+    supabase.from("organizations").select("plan, custom_plan, is_internal, trial_ends_at, bulk_approve_enabled").eq("id", org.id).single(),
     supabase.from("organization_members").select("organization_id").eq("user_id", user.id),
     supabase
       .from("qbo_connections")
@@ -151,6 +152,7 @@ export async function fetchDashboardListData() {
     trialCustomPlan: trialOrgRow?.custom_plan ?? null,
     trialIsInternal: trialOrgRow?.is_internal ?? false,
     trialEndsAt: trialOrgRow?.trial_ends_at ?? null,
+    bulkApproveEnabled: hasBulkApprove(trialOrgRow),
     myOrgs,
     qboConnected: !!qboConnection,
     memberUserIds,

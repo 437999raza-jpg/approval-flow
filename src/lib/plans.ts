@@ -197,6 +197,15 @@ export function isOrgLocked(org: OrgPlanContext): boolean {
   );
 }
 
+// Bulk-approve is an org-level on/off switch (organizations.
+// bulk_approve_enabled, migration 0117), not a plan-tier gate like
+// statementReconciliation below — this may become plan-gated/marketed
+// later, but for now any org can be flipped independently from
+// /admin/organizations. Defaults on: only an explicit `false` disables it.
+export function hasBulkApprove(org: { bulk_approve_enabled?: boolean | null } | null | undefined): boolean {
+  return org?.bulk_approve_enabled !== false;
+}
+
 // Statement Reconciliation is the first plan-gated feature. Full access
 // during an active trial is the point of the trial, so it passes here
 // too, independent of plan.

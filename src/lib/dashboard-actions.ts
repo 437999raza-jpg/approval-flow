@@ -47,7 +47,7 @@ import { buildMergedInvoicePdf } from "@/lib/invoice-export";
 import { qboTag, INVOICES_TAG } from "@/lib/org-cache";
 import { syncInvoiceRetainage } from "@/lib/retainage-sync";
 import { categoryDisplayName } from "@/lib/qbo";
-import { PLANS, isPlanId, hasStatementReconciliation, isOrgLocked, extractionModeForOrg, resolvePlan, resolveSetupFee } from "@/lib/plans";
+import { PLANS, isPlanId, hasStatementReconciliation, hasBulkApprove, isOrgLocked, extractionModeForOrg, resolvePlan, resolveSetupFee } from "@/lib/plans";
 import { extractStatementLines } from "@/lib/extract-statement";
 import { getAppUrl } from "@/lib/app-url";
 
@@ -715,6 +715,53 @@ export async function rejectWithReason(invoiceId: string, formData: FormData) {
   if (!result.ok) {
     redirect(`/dashboard/${invoiceId}?error=${result.error}`);
   }
+}
+
+export interface BulkApproveResult {
+  succeeded: string[];
+  skipped: { id: string; reason: Extract<DecisionOutcome, { ok: false }>["error"] }[];
+  // Set instead of processing anything when the org has this switched
+  // off (organizations.bulk_approve_enabled, migration 0117) — checked
+  // here too, not just hidden client-side, since the button being absent
+  // from the UI is not the same as the action being unreachable.
+  disabled?: boolean;
+}
+
+// Approves each invoice in turn, reusing recordDecision's exact
+// eligibility/step-advance/audit logic per item (never decide()/a
+// second loop of its own — see the comment on recordDecision above).
+// Sequential, not Promise.all: each invoice can independently trigger
+// an email send and several writes, and there's no benefit to bursting
+// all of those at once for what's normally a few dozen items at most.
+// Deliberately never redirects or throws on a per-item failure (e.g.
+// someone else already decided it) — the caller gets every outcome back
+// to show as one summary ("42 approved, 3 skipped").
+export async function bulkApproveAction(invoiceIds: string[]): Promise<BulkApproveResult> {
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
+  const org = await getCurrentOrg(supabase);
+  if (!org) redirect("/dashboard");
+
+  const { data: orgRow } = await supabase
+    .from("organizations")
+    .select("bulk_approve_enabled")
+    .eq("id", org.id)
+    .single();
+  if (!hasBulkApprove(orgRow)) {
+    return { succeeded: [], skipped: [], disabled: true };
+  }
+
+  const result: BulkApproveResult = { succeeded: [], skipped: [] };
+  for (const invoiceId of invoiceIds) {
+    const outcome = await recordDecision(supabase, user.id, invoiceId, "approved", "");
+    if (outcome.ok) result.succeeded.push(invoiceId);
+    else result.skipped.push({ id: invoiceId, reason: outcome.error });
+  }
+  return result;
 }
 
 // Post a message to an invoice's discussion thread. Any org member who can

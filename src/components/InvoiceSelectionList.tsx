@@ -4,7 +4,9 @@ import { useState, useRef, useEffect } from "react";
 import Link from "next/link";
 import { clsx } from "clsx";
 import { InvoiceStatusBadge } from "./InvoiceStatusBadge";
+import { useToast } from "./ToastContext";
 import type { InvoiceStatus } from "@/lib/supabase/types";
+import type { BulkApproveResult } from "@/lib/dashboard-actions";
 
 // Multi-select invoice list: checkboxes on every row plus a batch action
 // bar (delete / clear publishing data / export all PDFs as one file / send
@@ -23,6 +25,7 @@ export interface SelectableInvoice {
   holders: string[]; // approver display names for on_approval/on_hold
   selected: boolean; // is this the currently-open invoice?
   qboBillId: string | null; // set only once actually pushed to QBO (qbo_sync_status === "synced")
+  canApprove: boolean; // requiresMyApproval — this invoice is on_approval with the current user as an eligible approver on its current step
 }
 
 export function InvoiceSelectionList({
@@ -30,9 +33,11 @@ export function InvoiceSelectionList({
   pinnedCount,
   qs,
   canReview,
+  canBulkApprove,
   deleteInvoicesAction,
   clearQboPublishDataAction,
   emailInvoicesAction,
+  bulkApproveAction,
   onSelect,
   onRowIntent,
 }: {
@@ -40,6 +45,13 @@ export function InvoiceSelectionList({
   pinnedCount: number;
   qs: string;
   canReview: boolean;
+  // Org-level on/off switch (organizations.bulk_approve_enabled,
+  // migration 0117) — independent of canReview, since the people who
+  // actually approve day-to-day AP work are usually plain "user" role,
+  // not admins. Only gates the Approve button + the reason checkboxes
+  // show at all when canReview is false; delete/clear/export/email stay
+  // canReview-only exactly as before.
+  canBulkApprove: boolean;
   deleteInvoicesAction: (ids: string[]) => Promise<void>;
   clearQboPublishDataAction: (ids: string[]) => Promise<void>;
   emailInvoicesAction: (
@@ -47,6 +59,7 @@ export function InvoiceSelectionList({
     to: string,
     note: string
   ) => Promise<{ ok: boolean; error?: string }>;
+  bulkApproveAction: (ids: string[]) => Promise<BulkApproveResult>;
   // Phase 2: when provided, a plain left-click selects the invoice via
   // client state (instant — no server round trip) instead of a real Next
   // navigation. The href stays real underneath, so modified clicks
@@ -59,10 +72,11 @@ export function InvoiceSelectionList({
   // reads are expensive, so scroll itself must stay cheap.
   onRowIntent?: (id: string) => void;
 }) {
+  const { showToast } = useToast();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
-  const [busy, setBusy] = useState<null | "delete" | "clear" | "email">(null);
+  const [busy, setBusy] = useState<null | "delete" | "clear" | "email" | "approve">(null);
   const [emailOpen, setEmailOpen] = useState(false);
   const [emailTo, setEmailTo] = useState("");
   const [emailNote, setEmailNote] = useState("");
@@ -72,6 +86,9 @@ export function InvoiceSelectionList({
   const selectedCount = selected.size;
   const allIds = rows.map((r) => r.id);
   const allSelected = rows.length > 0 && allIds.every((id) => selected.has(id));
+  const approvableSelectedIds = rows
+    .filter((r) => selected.has(r.id) && r.canApprove)
+    .map((r) => r.id);
 
   const toggle = (id: string) => {
     setSelected((prev) => {
@@ -143,6 +160,30 @@ export function InvoiceSelectionList({
     window.open(url, "_blank");
   };
 
+  // Only ever sent the ids that were actually eligible at click time
+  // (approvableSelectedIds) — never every id in the selection, since a
+  // selection can include rows that aren't currently the user's to
+  // decide on at all (a submitted-but-not-yet-approved bill, one already
+  // approved, etc.). The server re-checks eligibility per item anyway
+  // (recordDecision), so this is a UX filter, not the real gate.
+  const runBulkApprove = async () => {
+    if (approvableSelectedIds.length === 0) return;
+    setBusy("approve");
+    try {
+      const result = await bulkApproveAction(approvableSelectedIds);
+      if (result.disabled) {
+        showToast("Bulk approve is turned off for this organization.");
+      } else {
+        const parts = [`${result.succeeded.length} approved`];
+        if (result.skipped.length > 0) parts.push(`${result.skipped.length} skipped`);
+        showToast(parts.join(", ") + ".");
+      }
+      clearSelection();
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const runEmail = async () => {
     if (!emailTo.trim()) {
       setEmailStatus({ ok: false, message: "Enter a recipient email address." });
@@ -167,10 +208,12 @@ export function InvoiceSelectionList({
     }
   };
 
+  const showBatchBar = selectedCount > 0 && (canReview || canBulkApprove);
+
   return (
     <div>
       {/* Batch action bar — sticky at the top of the list while scrolling */}
-      {selectedCount > 0 && canReview && (
+      {showBatchBar && (
         <div className="sticky top-0 z-10 flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-slate-200 bg-slate-50 px-3 py-2">
           <label className="flex cursor-pointer items-center gap-1.5 text-xs font-medium text-slate-600">
             <input
@@ -181,6 +224,19 @@ export function InvoiceSelectionList({
             />
             {selectedCount} selected
           </label>
+          {canBulkApprove && approvableSelectedIds.length > 0 && (
+            <button
+              type="button"
+              onClick={runBulkApprove}
+              disabled={busy !== null}
+              className="rounded-md border border-emerald-600 bg-emerald-600 px-2.5 py-1 text-xs font-medium text-white transition-colors hover:bg-emerald-700 disabled:opacity-50"
+              title="Only approves the invoices in your selection that are actually waiting on you"
+            >
+              {busy === "approve" ? "Approving…" : `Approve ${approvableSelectedIds.length}`}
+            </button>
+          )}
+          {canReview && (
+          <>
           <button
             type="button"
             onClick={runDelete}
@@ -225,6 +281,8 @@ export function InvoiceSelectionList({
           >
             Send by email
           </button>
+          </>
+          )}
           <button
             type="button"
             onClick={clearSelection}
@@ -302,7 +360,7 @@ export function InvoiceSelectionList({
               <label
                 className={clsx(
                   "flex w-8 flex-none cursor-pointer items-center justify-center",
-                  canReview ? "" : "hidden"
+                  canReview || canBulkApprove ? "" : "hidden"
                 )}
                 title="Select for batch actions"
               >

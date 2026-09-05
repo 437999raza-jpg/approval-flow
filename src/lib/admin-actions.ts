@@ -369,6 +369,31 @@ export async function setOrgInternalAction(formData: FormData) {
   redirect("/admin/organizations");
 }
 
+// Platform-admin only: per-org on/off switch for bulk-approve (migration
+// 0117) — select several pending invoices in the dashboard, approve
+// them all at once. Kept as an explicit flag rather than shipped
+// unconditionally since it may become a plan-gated/marketed feature
+// later; for now it's just something to turn on or off per org.
+export async function setOrgBulkApproveAction(formData: FormData) {
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user || !isPlatformAdmin(user.email)) redirect("/login");
+
+  const orgId = String(formData.get("org_id") ?? "");
+  if (!orgId) redirect("/admin/organizations?error=bad-org");
+
+  const admin = createAdminClient();
+  await admin
+    .from("organizations")
+    .update({ bulk_approve_enabled: formData.get("bulk_approve_enabled") === "on" })
+    .eq("id", orgId);
+
+  revalidatePath("/admin/organizations");
+  redirect("/admin/organizations");
+}
+
 // Platform-admin only: write (or clear) an org's negotiated plan and its
 // one-time build fee. Deliberately not exposed to the org's own admin —
 // these are the terms of a deal we agreed, not a self-serve setting; the

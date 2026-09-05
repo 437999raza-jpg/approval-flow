@@ -81,6 +81,10 @@ export interface Database {
           // Days after a step's own deadline before escalating (migration
           // 0094). Replaces the hardcoded ESCALATION_GRACE_DAYS constant.
           escalation_grace_days: number;
+          // Per-org on/off switch for bulk-approve (migration 0117) —
+          // may become plan-gated/marketed later, so this stays a
+          // separate flag rather than tied to a specific tier for now.
+          bulk_approve_enabled: boolean;
           created_at: string;
         };
         Insert: Partial<
