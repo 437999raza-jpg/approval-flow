@@ -447,7 +447,7 @@ export function InvoiceSelectionList({
                       title="Open this bill in QuickBooks Online"
                       className="inline-flex flex-none cursor-pointer items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-medium text-emerald-800 hover:bg-emerald-200"
                     >
-                      Pushed to QBO ↗
+                      {inv.imported ? "Synced to QBO ↗" : "Pushed to QBO ↗"}
                     </span>
                   ) : (
                     <InvoiceStatusBadge status={inv.status} />

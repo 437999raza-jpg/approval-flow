@@ -1233,6 +1233,7 @@ export interface QboBillForImport {
   totalTax: number | null;
   privateNote: string | null;
   lastUpdatedTime: string | null;
+  createdTime: string | null;
   lines: QboBillLine[];
 }
 
@@ -1265,7 +1266,7 @@ export async function listBillsForImport(
         CurrencyRef?: { value: string };
         TotalAmt?: number;
         PrivateNote?: string;
-        MetaData?: { LastUpdatedTime?: string };
+        MetaData?: { LastUpdatedTime?: string; CreateTime?: string };
         TxnTaxDetail?: { TotalTax?: number };
         Line?: Array<{
           Amount?: number;
@@ -1298,6 +1299,7 @@ export async function listBillsForImport(
       totalTax: b.TxnTaxDetail?.TotalTax ?? null,
       privateNote: b.PrivateNote?.trim() || null,
       lastUpdatedTime: b.MetaData?.LastUpdatedTime ?? null,
+      createdTime: b.MetaData?.CreateTime ?? null,
       lines: (b.Line ?? [])
         .filter((l) => l.Amount != null && l.DetailType !== "SubTotalLineDetail")
         .map((l) => ({

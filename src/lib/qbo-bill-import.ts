@@ -288,7 +288,14 @@ export async function runQboBillImportJob(supabase: Supabase, organizationId: st
           file_name: uploaded[0].name,
           qbo_bill_id: bill.id,
           qbo_sync_status: "synced",
-          qbo_synced_at: bill.lastUpdatedTime ?? new Date().toISOString(),
+          // An imported bill was never pushed by Flow — it was pulled from
+          // history that already existed in QBO — so this must NOT be a
+          // fabricated push timestamp (lastUpdatedTime, or "now", both
+          // wrong: neither reflects when the bill actually entered QBO).
+          // Use QBO's own MetaData.CreateTime instead, so the date shown
+          // ("Already in QuickBooks — <date>") is the real date the bill
+          // was created there, not an invented Flow-sync moment.
+          qbo_synced_at: bill.createdTime,
         })
         .select("id")
         .single();

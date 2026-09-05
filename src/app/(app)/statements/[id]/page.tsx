@@ -78,7 +78,7 @@ export default async function StatementDetailPage({
   // go out together rather than one after the other.
   const [{ data: matchedInvoices }, [{ data: vendorInvoices }, { data: recentInvoice }]] = await Promise.all([
     matchedIds.length
-      ? supabase.from("invoices").select("id, status, qbo_sync_status, qbo_bill_id").in("id", matchedIds)
+      ? supabase.from("invoices").select("id, status, qbo_sync_status, qbo_bill_id, source").in("id", matchedIds)
       : Promise.resolve({ data: [] }),
     // Flow's own outstanding balance for this vendor (every invoice not
     // yet marked paid — same "still owed" semantics runQboPaymentSync,
@@ -317,7 +317,7 @@ export default async function StatementDetailPage({
                                     title="Open this bill in QuickBooks Online"
                                     className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-medium text-emerald-800 hover:bg-emerald-200"
                                   >
-                                    Pushed to QBO ↗
+                                    {matchedInvoice.source === "qbo_import" ? "Synced to QBO ↗" : "Pushed to QBO ↗"}
                                   </a>
                                 ) : (
                                   <InvoiceStatusBadge status={matchedInvoice.status} />

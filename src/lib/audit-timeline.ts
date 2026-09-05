@@ -138,7 +138,26 @@ const ACTION_DESCRIBERS: Record<
     summary: "Supplier rule saved",
     detail: typeof m.vendor_name === "string" ? `For ${m.vendor_name}` : undefined,
   }),
+  "invoice.qbo_synced": () => ({ summary: "Pushed to QBO" }),
+  "invoice.qbo_sync_failed": (m) => ({
+    summary: "Push to QBO failed",
+    detail: typeof m.error === "string" ? m.error : undefined,
+  }),
+  "invoice.qbo_sync_cleared": () => ({ summary: "QBO sync cleared — ready to push again" }),
+  // Bulk historical import (migration 0104/0120) — distinct from
+  // invoice.qbo_synced above: this bill already existed in QBO, Flow
+  // never pushed it. Keeping the two summaries visibly different is the
+  // whole point — collapsing them into one generic label is exactly
+  // what made "pushed" and "imported" indistinguishable in the trail.
+  "invoice.imported_from_qbo": () => ({ summary: "Imported from QBO" }),
 };
+
+// Any word "qbo" in the generic fallback below must always render as the
+// acronym QBO, never title-cased to "Qbo" — this only matters for action
+// codes not covered by an explicit describer above.
+function fixQboCasing(s: string): string {
+  return s.replace(/\bqbo\b/gi, "QBO");
+}
 
 function describeAction(
   action: string,
@@ -151,7 +170,8 @@ function describeAction(
   // Fallback for any action not in the map above: turn "invoice.foo_bar"
   // into "Foo bar" rather than silently dropping it from the trail.
   const readable = action.replace(/^invoice\./, "").replace(/_/g, " ");
-  return { summary: readable.charAt(0).toUpperCase() + readable.slice(1) };
+  const capitalized = readable.charAt(0).toUpperCase() + readable.slice(1);
+  return { summary: fixQboCasing(capitalized) };
 }
 
 export function buildAuditTimeline({
