@@ -839,7 +839,17 @@ export function DashboardClient({ initialListData }: { initialListData: Dashboar
                         setStage: invalidateAfter(setInvoiceStage.bind(null, selected.id)),
                         statusOptions: STATUS_OPTIONS.map((s) => ({ value: s.id, label: s.label })),
                         overrideStatus: invalidateAfter(overrideStatus.bind(null, selected.id)),
-                        deleteInvoice: invalidateAfter(deleteInvoiceAction.bind(null, selected.id, nextInvoiceIdAfterDelete, "")),
+                        // deleteInvoiceAction no longer redirects (that
+                        // was a full Next.js navigation remounting this
+                        // whole client-driven tree — reported live as
+                        // "deleting an invoice reloads the whole app").
+                        // Moving to the next/previous invoice is exactly
+                        // the same thing selecting one from the list
+                        // already does — just setSelectedId, client-side.
+                        deleteInvoice: async () => {
+                          await invalidateAfter(deleteInvoiceAction)(selected.id);
+                          setSelectedId(nextInvoiceIdAfterDelete);
+                        },
                         syncToQbo: invalidateAfter(syncToQbo.bind(null, selected.id)),
                         clearQboError: invalidateAfter(clearQboError.bind(null, selected.id)),
                         clearQboSync: invalidateAfter(clearQboSync.bind(null, selected.id)),

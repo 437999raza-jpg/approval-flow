@@ -1628,15 +1628,17 @@ export async function cancelInvoice(invoiceId: string) {
 // (ConfirmSubmitButton). The audit_log row logging the deletion is written
 // BEFORE the delete and survives it (invoice_id becomes null via ON DELETE
 // SET NULL, migration 0022) so the deletion itself stays traceable.
-export async function deleteInvoiceAction(
-  invoiceId: string,
-  // Where to land after deleting — the next invoice in whatever view
-  // (filtered/sorted) the user was looking at, so deleting stays in this
-  // same detail view instead of jumping to the default/newest invoice.
-  // null when there's nowhere else to go (this was the only invoice).
-  nextInvoiceId: string | null,
-  qs: string
-) {
+//
+// No redirect() here (there used to be one, straight back to /dashboard
+// or a computed "next invoice" URL) — this file's own top-of-file note
+// explains why every other action here deliberately avoids it: a real
+// Next.js navigation remounts the client-driven Dashboard tree and
+// silently resets its view/filter/search state. This one was missed
+// during that migration — reported live as "deleting an invoice
+// reloads the whole app." DashboardClient now picks the next invoice
+// to show client-side (see its own deleteInvoice wiring) instead of the
+// server deciding where to send the browser.
+export async function deleteInvoiceAction(invoiceId: string) {
 
   const supabase = createClient();
   const {
@@ -1678,8 +1680,6 @@ export async function deleteInvoiceAction(
   await supabase.storage.from("invoices").remove(filePaths);
 
   revalidateTag(INVOICES_TAG);
-
-  redirect(nextInvoiceId ? `/dashboard/${nextInvoiceId}${qs}` : "/dashboard");
 }
 
 // Batch delete: same rules as deleteInvoiceAction but for many invoices at
@@ -1733,10 +1733,11 @@ export async function deleteInvoicesAction(invoiceIds: string[]) {
 
   revalidateTag(INVOICES_TAG);
 
-  // The deleted invoices may include the one currently open in the URL
-  // (/dashboard/<id>) — the page treats "selected invoice not found" as a
-  // 404. Land back on the bare list (same as the single-invoice delete).
-  redirect("/dashboard");
+  // No redirect() — same reasoning as deleteInvoiceAction above. If the
+  // batch included whichever invoice is currently open, the Dashboard's
+  // own "that invoice isn't available anymore" state (selectedNotFound)
+  // already covers it once the list refetches, with no navigation
+  // needed at all.
 }
 
 // Batch "clear publishing data": undoes a SUCCESSFUL QBO sync for several
