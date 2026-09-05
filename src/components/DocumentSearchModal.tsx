@@ -106,11 +106,13 @@ export function DocumentSearchModal({
   // — the actually-applied filters (the URL/advanced state driving the
   // "Filters" badge) never changed, so a filter stayed active until
   // "Search" was pressed again afterward. Clear now applies immediately,
-  // same as Search does, just with an empty set.
+  // same as Search does, just with an empty set — but stays open,
+  // unlike Search: clearing is usually the start of building a new
+  // search, not a reason to leave. The "×" button is there if closing
+  // is what's actually wanted.
   function clearAndApply() {
     setFilters(EMPTY);
     go("/dashboard");
-    setOpen(false);
   }
 
   return (
