@@ -26,6 +26,7 @@ export interface SelectableInvoice {
   selected: boolean; // is this the currently-open invoice?
   qboBillId: string | null; // set only once actually pushed to QBO (qbo_sync_status === "synced")
   canApprove: boolean; // requiresMyApproval — this invoice is on_approval with the current user as an eligible approver on its current step
+  imported: boolean; // source === "qbo_import" — a bulk historical-bill import, not a real upload (migration 0120)
 }
 
 export function InvoiceSelectionList({
@@ -391,6 +392,14 @@ export function InvoiceSelectionList({
               >
                 <div className="flex items-center gap-1.5">
                   <div className="min-w-0 flex-1 truncate text-sm font-medium">{inv.vendor}</div>
+                  {inv.imported && (
+                    <span
+                      title="Bulk-imported from QuickBooks history, not uploaded through Flow"
+                      className="inline-flex flex-none items-center rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-600"
+                    >
+                      Imported
+                    </span>
+                  )}
                   {inv.isDuplicate && (
                     <span className="inline-flex flex-none items-center rounded-full bg-orange-100 px-2 py-0.5 text-[10px] font-medium text-orange-800">
                       Duplicate

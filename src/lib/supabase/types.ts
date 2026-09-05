@@ -15,7 +15,11 @@ export type InvoiceStatus =
   | "rejected"
   | "on_hold";
 
-export type InvoiceSource = "manual" | "email";
+// qbo_import (migration 0120): a bulk-imported historical bill from
+// the platform-admin QBO onboarding tool (qbo_bill_import_jobs) —
+// distinct from "manual" so it can be tagged in the UI as having come
+// from QuickBooks rather than a real upload.
+export type InvoiceSource = "manual" | "email" | "qbo_import";
 
 export type OrgRole = "user" | "auditor" | "admin";
 

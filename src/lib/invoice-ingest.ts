@@ -27,7 +27,13 @@ interface IngestArgs {
   supabase: SupabaseClient<Database>;
   organizationId: string;
   file: File;
-  source: InvoiceSource;
+  // Narrower than the full InvoiceSource (migration 0120 added
+  // "qbo_import") on purpose — this pipeline classifies/splits a
+  // just-uploaded file, which a bulk QBO bill import never goes
+  // through (it writes already-structured invoices directly, see
+  // qbo-bill-import.ts). pending_invoice_splits.source is typed to
+  // match this same pair, not the full InvoiceSource union.
+  source: Exclude<InvoiceSource, "qbo_import">;
   submittedBy?: string;
   sourceEmail?: string;
   extraContext?: string; // e.g. the inbound email subject

@@ -575,6 +575,7 @@ export function DashboardClient({ initialListData }: { initialListData: Dashboar
         selected: selected?.id === inv.id,
         qboBillId: inv.qbo_sync_status === "synced" ? inv.qbo_bill_id : null,
         canApprove: requiresMyApproval(inv, lookups, user.id),
+        imported: inv.source === "qbo_import",
       })),
     [data.memberNameById, duplicateInvoiceIds, filteredForDisplay, lookups, selected?.id, user.id]
   );

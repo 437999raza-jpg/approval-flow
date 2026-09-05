@@ -954,9 +954,19 @@ export function BillPanel({
         <div className="border-b border-slate-200 px-6 py-5">
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0">
-              <h2 className="truncate text-lg font-semibold text-slate-900">
-                Bill {billNumber} from {vendor}
-              </h2>
+              <div className="flex items-center gap-2">
+                <h2 className="truncate text-lg font-semibold text-slate-900">
+                  Bill {billNumber} from {vendor}
+                </h2>
+                {invoice.source === "qbo_import" && (
+                  <span
+                    title="Bulk-imported from QuickBooks history, not uploaded through Flow"
+                    className="inline-flex flex-none items-center rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600"
+                  >
+                    Imported
+                  </span>
+                )}
+              </div>
               {!readOnly && invoice.vendor_name && (
                 <div className="mt-1.5">
                   <SupplierRulesModal

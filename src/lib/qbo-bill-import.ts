@@ -283,7 +283,7 @@ export async function runQboBillImportJob(supabase: Supabase, organizationId: st
           due_date: bill.dueDate,
           project_id: invoiceProjectId,
           status: "approved",
-          source: "manual",
+          source: "qbo_import",
           file_path: uploaded[0].path,
           file_name: uploaded[0].name,
           qbo_bill_id: bill.id,
