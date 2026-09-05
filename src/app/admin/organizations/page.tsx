@@ -576,12 +576,19 @@ export default async function AdminOrganizationsPage({
                   {importJob?.status === "queued" && (
                     <span className="ml-1.5 text-brand-navy">· queued</span>
                   )}
-                  {importJob?.status === "done" && (
-                    <span className="ml-1.5 text-brand-green-dark">
-                      · last run: {importJob.imported_count} imported, {importJob.skipped_count} skipped,{" "}
-                      {importJob.failed_count} failed
-                    </span>
-                  )}
+                  {importJob?.status === "done" &&
+                    (importJob.imported_count === 0 &&
+                    importJob.skipped_count === 0 &&
+                    importJob.failed_count === 0 ? (
+                      <span className="ml-1.5 text-brand-muted">
+                        · last run: no bills found in QuickBooks for that date range
+                      </span>
+                    ) : (
+                      <span className="ml-1.5 text-brand-green-dark">
+                        · last run: {importJob.imported_count} imported, {importJob.skipped_count} skipped,{" "}
+                        {importJob.failed_count} failed
+                      </span>
+                    ))}
                   {importJob?.status === "error" && (
                     <span className="ml-1.5 text-rose-700">· last run failed</span>
                   )}
