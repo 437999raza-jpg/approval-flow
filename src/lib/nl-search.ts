@@ -20,7 +20,15 @@ import type { DocumentSearchFilters } from "@/components/DocumentSearchModal";
 // ever was. Authored by Araza.
 
 export interface SearchLookupContext {
-  vendors: string[];
+  // {id, name} — id is the real supplier_id (a real Supplier entity,
+  // src/lib/dashboard-computations.ts's vendorOptionsFor and
+  // applyViewAndFilters' advanced.supplier match), not the vendor's
+  // display name. A version of this that used the name as the id used
+  // to slip a bare vendor-name string into DocumentSearchFilters.supplier
+  // — the "Filters" modal showed "1 selected" with no checkbox actually
+  // checked (nothing in the real supplier_id list matched that string),
+  // and the invoice query silently matched zero rows.
+  vendors: { id: string; name: string }[];
   projects: { id: string; name: string }[];
   members: { id: string; name: string }[];
 }
@@ -133,7 +141,7 @@ export async function parseNaturalLanguageSearch(
       unknown
     >;
 
-    const vendorCandidates = context.vendors.map((v) => ({ id: v, label: v }));
+    const vendorCandidates = context.vendors.map((v) => ({ id: v.id, label: v.name }));
     const projectCandidates = context.projects.map((p) => ({ id: p.id, label: p.name }));
     const memberCandidates = context.members.map((m) => ({ id: m.id, label: m.name }));
 

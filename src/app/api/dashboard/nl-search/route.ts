@@ -23,7 +23,7 @@ export async function POST(request: NextRequest) {
   if (!text) return NextResponse.json({ filters: null });
 
   const [{ data: invoices }, { data: projects }, { data: members }] = await Promise.all([
-    supabase.from("invoices").select("vendor_name").eq("organization_id", org.id),
+    supabase.from("invoices").select("vendor_name, supplier_id").eq("organization_id", org.id),
     supabase
       .from("projects")
       .select("id, name")
@@ -32,9 +32,22 @@ export async function POST(request: NextRequest) {
     supabase.from("organization_members").select("user_id").eq("organization_id", org.id),
   ]);
 
-  const vendors = [
-    ...new Set((invoices ?? []).map((i) => i.vendor_name).filter((v): v is string => !!v)),
-  ].sort((a, b) => a.localeCompare(b));
+  // Keyed by supplier_id (the real Supplier entity), not vendor_name —
+  // that's the id the "Filters" modal's own Supplier multi-select and
+  // the actual invoice query (advanced.supplier, dashboard-computations.ts)
+  // both match against. A vendor with no supplier_id yet (pre-dates the
+  // Supplier entity backfill, or never resolved) can't be searched by
+  // name here — it's just not offered as a candidate, rather than
+  // resolving to a value nothing downstream can ever match.
+  const vendorNameById = new Map<string, string>();
+  for (const i of invoices ?? []) {
+    if (i.supplier_id && i.vendor_name && !vendorNameById.has(i.supplier_id)) {
+      vendorNameById.set(i.supplier_id, i.vendor_name);
+    }
+  }
+  const vendors = [...vendorNameById.entries()]
+    .map(([id, name]) => ({ id, name }))
+    .sort((a, b) => a.name.localeCompare(b.name));
 
   const memberIds = (members ?? []).map((m) => m.user_id);
   const { data: profiles } =
