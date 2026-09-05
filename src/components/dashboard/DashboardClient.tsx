@@ -656,7 +656,7 @@ export function DashboardClient({ initialListData }: { initialListData: Dashboar
                 onNavigate={handleSearchNavigate}
               />
               <div className="flex-1" />
-              {isMobile && selected && (
+              {isMobile && selectedId && (
                 <button
                   type="button"
                   onClick={() => setSelectedId(null)}
@@ -720,8 +720,16 @@ export function DashboardClient({ initialListData }: { initialListData: Dashboar
                   pattern. The list stays mounted (just hidden), not
                   conditionally rendered, so CollapsiblePane's own scroll-
                   position restore (sessionStorage-based) isn't disturbed
-                  by unmount/remount on every selection change. */}
-              <div className={clsx("flex", isMobile && selected && "hidden")}>
+                  by unmount/remount on every selection change.
+                  Gated on selectedId (raw state), not `selected` — the
+                  latter falls back to filtered[0] whenever selectedId is
+                  null, specifically so the desktop detail pane always has
+                  something to show by default. That fallback meant the
+                  first cut of this used `selected` and "Back" (which
+                  clears selectedId) silently did nothing on mobile: the
+                  fallback kept `selected` truthy, so the list pane never
+                  reappeared. */}
+              <div className={clsx("flex", isMobile && selectedId && "hidden")}>
               <CollapsiblePane title="Invoices">
                 <InvoiceSelectionList
                   rows={selectableRows}
@@ -743,7 +751,7 @@ export function DashboardClient({ initialListData }: { initialListData: Dashboar
               </CollapsiblePane>
               </div>
 
-              <div className={clsx("flex min-w-0 flex-1", isMobile && !selected && "hidden")}>
+              <div className={clsx("flex min-w-0 flex-1", isMobile && !selectedId && "hidden")}>
                 {selectedNotFound ? (
                   <div className="flex flex-1 items-center justify-center text-sm text-slate-400">
                     That invoice isn&apos;t available anymore.
