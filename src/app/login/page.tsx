@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import Image from "next/image";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { completeSelfSignup } from "@/lib/auth-actions";
@@ -339,14 +338,7 @@ export default function LoginPage() {
 
         <div className="flex flex-col justify-center p-8 sm:p-10">
           <div className="mb-7 flex flex-col items-start">
-            <Image
-              src="/brand/ufirst-wordmark.png"
-              alt="ufirst"
-              width={2400}
-              height={878}
-              className="h-6 w-auto"
-              priority
-            />
+            <div className="font-display text-3xl font-bold tracking-tight text-brand-green">flow</div>
             <p className="mt-3 text-sm text-brand-muted">
               {authMode === "signup"
                 ? "Create your account"
