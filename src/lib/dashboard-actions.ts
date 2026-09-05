@@ -2324,6 +2324,42 @@ export async function deleteLineItem(invoiceId: string, lineItemId: string) {
   await syncInvoiceRetainage(supabase, invoice.organization_id, invoiceId);
 }
 
+// Swaps this line's line_order with its immediate neighbor in the
+// current sorted order — not a renumber-everything operation, so it
+// works the same whether line_order values are contiguous or have gaps
+// (cloneLineItem, splits, etc. don't guarantee either).
+export async function reorderLineItem(
+  invoiceId: string,
+  lineItemId: string,
+  direction: "up" | "down"
+) {
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
+  const { data: items } = await supabase
+    .from("invoice_line_items")
+    .select("id, line_order")
+    .eq("invoice_id", invoiceId)
+    .order("line_order", { ascending: true });
+  if (!items) return;
+
+  const index = items.findIndex((i) => i.id === lineItemId);
+  const neighborIndex = direction === "up" ? index - 1 : index + 1;
+  if (index === -1 || neighborIndex < 0 || neighborIndex >= items.length) return;
+
+  const current = items[index];
+  const neighbor = items[neighborIndex];
+  await Promise.all([
+    supabase.from("invoice_line_items").update({ line_order: neighbor.line_order }).eq("id", current.id),
+    supabase.from("invoice_line_items").update({ line_order: current.line_order }).eq("id", neighbor.id),
+  ]);
+
+  revalidateTag(INVOICES_TAG);
+}
+
 // Duplicate a line item exactly (same category/description/tax/class/
 // project/amount) as a new row right after it — the fast path for "one
 // more line just like this one", instead of re-typing everything into

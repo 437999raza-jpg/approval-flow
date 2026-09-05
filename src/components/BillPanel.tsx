@@ -113,8 +113,10 @@ const ghostLabel = "block text-[10px] font-semibold uppercase tracking-wide text
 // search box to actually show "Change Orders" instead of truncating to
 // "Chang…" once a value is committed and it goes idle.
 // Leading 22px column: the per-line select checkbox (bulk delete/etc.).
+// Trailing 78px column: reorder (↑↓) + clone/delete, four icon buttons —
+// widened from 42px to fit all four without crowding.
 const LINE_ITEM_COLS =
-  "grid-cols-[22px_minmax(0,0.85fr)_minmax(0,1.5fr)_minmax(0,1.15fr)_176px_52px_104px_44px_42px]";
+  "grid-cols-[22px_minmax(0,0.85fr)_minmax(0,1.5fr)_minmax(0,1.15fr)_176px_52px_104px_44px_78px]";
 
 // The exact QBO class names the CON/CO/E toggle writes (must exist in the
 // org's qbo_classes mirror — Fluid's QBO has "Contract", "Change Orders",
@@ -147,6 +149,7 @@ export function BillPanel({
   saveLineItem,
   deleteLineItem,
   cloneLineItem,
+  reorderLineItem,
   collapseToOneLine,
   reExtract,
   getPageCount,
@@ -204,6 +207,7 @@ export function BillPanel({
   ) => Promise<void>;
   deleteLineItem: (lineItemId: string) => Promise<void>;
   cloneLineItem: (lineItemId: string) => Promise<void>;
+  reorderLineItem: (lineItemId: string, direction: "up" | "down") => Promise<void>;
   collapseToOneLine: (lineItemIds: string[]) => Promise<void>;
   reExtract: () => Promise<void>;
   getPageCount: (invoiceId: string) => Promise<number | null>;
@@ -1258,7 +1262,7 @@ export function BillPanel({
               <span className="text-center">Linked</span>
               <span />
             </div>
-            {lineItems.map((item) => (
+            {lineItems.map((item, index) => (
               <LineItemRow
                 key={item.id}
                 itemId={item.id}
@@ -1280,6 +1284,9 @@ export function BillPanel({
                 saveLineItem={saveLineItem}
                 deleteLineItem={deleteLineItem}
                 cloneLineItem={cloneLineItem}
+                reorderLineItem={reorderLineItem}
+                isFirst={index === 0}
+                isLast={index === lineItems.length - 1}
                 readOnly={readOnly}
                 classReadOnly={classReadOnly}
                 selected={selectedLineIds.has(item.id)}
@@ -1520,6 +1527,9 @@ function LineItemRow({
   saveLineItem,
   deleteLineItem,
   cloneLineItem,
+  reorderLineItem,
+  isFirst,
+  isLast,
   readOnly,
   classReadOnly,
   onCancel,
@@ -1550,6 +1560,12 @@ function LineItemRow({
   ) => Promise<void>;
   deleteLineItem?: (lineItemId: string) => Promise<void>;
   cloneLineItem?: (lineItemId: string) => Promise<void>;
+  // Undefined for the "new" blank row — nothing to reorder before it's
+  // actually saved. isFirst/isLast disable the arrow that would otherwise
+  // move it past either end of the list.
+  reorderLineItem?: (lineItemId: string, direction: "up" | "down") => Promise<void>;
+  isFirst?: boolean;
+  isLast?: boolean;
   readOnly: boolean;
   // Independent of readOnly — see BillPanel's own classReadOnly for why.
   classReadOnly: boolean;
@@ -1961,6 +1977,28 @@ function LineItemRow({
       ) : (
         !readOnly && (
           <div className="flex h-full items-end justify-end gap-1.5 pb-1.5 opacity-0 group-hover:opacity-100">
+            {reorderLineItem && (
+              <form action={reorderLineItem.bind(null, itemId, "up")}>
+                <SubmitButton
+                  title="Move line up"
+                  disabled={isFirst}
+                  className="text-slate-400 hover:text-blue-600 disabled:pointer-events-none disabled:opacity-30"
+                >
+                  ↑
+                </SubmitButton>
+              </form>
+            )}
+            {reorderLineItem && (
+              <form action={reorderLineItem.bind(null, itemId, "down")}>
+                <SubmitButton
+                  title="Move line down"
+                  disabled={isLast}
+                  className="text-slate-400 hover:text-blue-600 disabled:pointer-events-none disabled:opacity-30"
+                >
+                  ↓
+                </SubmitButton>
+              </form>
+            )}
             {cloneLineItem && (
               <form action={cloneLineItem.bind(null, itemId)}>
                 <SubmitButton title="Clone line" className="text-slate-400 hover:text-blue-600">
