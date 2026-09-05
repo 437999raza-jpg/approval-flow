@@ -232,6 +232,22 @@ export function DashboardClient({ initialListData }: { initialListData: Dashboar
   const [error, setError] = useState<string | null>(null);
   const [initialSupportOpen, setInitialSupportOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
+  // The list+detail 3-pane layout below doesn't have room to sit side by
+  // side on a phone — reported live as both panes bleeding off opposite
+  // edges of the screen at 375px, un-scrollable-into-view. Below this
+  // width, show ONE pane at a time (list, or the open invoice full-width
+  // with a way back) instead — the standard mobile master-detail pattern.
+  // Same matchMedia-change-event approach as AppSidebar's own responsive
+  // collapse, for the same reason: react to the breakpoint being crossed,
+  // not every resize pixel.
+  const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    const mql = window.matchMedia("(max-width: 767px)");
+    setIsMobile(mql.matches);
+    const handleChange = (e: MediaQueryListEvent) => setIsMobile(e.matches);
+    mql.addEventListener("change", handleChange);
+    return () => mql.removeEventListener("change", handleChange);
+  }, []);
 
   // Restore state from the URL exactly once (deep link / email link /
   // browser refresh) — everything after this is pure client navigation.
@@ -625,8 +641,8 @@ export function DashboardClient({ initialListData }: { initialListData: Dashboar
           </AppSidebar>
 
           <div className="flex min-w-0 flex-1 flex-col">
-            <header className="flex flex-none items-center gap-3 border-b border-slate-200 bg-white px-4 py-3">
-              <div className="w-80 lg:w-[32rem]">
+            <header className="flex flex-none flex-wrap items-center gap-3 border-b border-slate-200 bg-white px-4 py-3">
+              <div className="w-40 flex-1 sm:w-80 sm:flex-none lg:w-[32rem]">
                 <SearchInput defaultValue={q} onNavigate={handleSearchNavigate} />
               </div>
               <DocumentSearchModal
@@ -640,7 +656,19 @@ export function DashboardClient({ initialListData }: { initialListData: Dashboar
                 onNavigate={handleSearchNavigate}
               />
               <div className="flex-1" />
-              {selected && (
+              {isMobile && selected && (
+                <button
+                  type="button"
+                  onClick={() => setSelectedId(null)}
+                  className="flex items-center gap-1 rounded-md border border-slate-300 px-2.5 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                    <path d="M15 6l-6 6 6 6" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                  Back
+                </button>
+              )}
+              {!isMobile && selected && (
                 <div className="flex items-center gap-1">
                   <button
                     type="button"
@@ -685,6 +713,15 @@ export function DashboardClient({ initialListData }: { initialListData: Dashboar
             </header>
 
             <div className="flex min-h-0 flex-1">
+              {/* Below 768px there isn't room for list + detail side by
+                  side (reported live as both bleeding off opposite
+                  screen edges, un-scrollable-into-view) — show one pane
+                  at a time instead, the standard mobile master-detail
+                  pattern. The list stays mounted (just hidden), not
+                  conditionally rendered, so CollapsiblePane's own scroll-
+                  position restore (sessionStorage-based) isn't disturbed
+                  by unmount/remount on every selection change. */}
+              <div className={clsx("flex", isMobile && selected && "hidden")}>
               <CollapsiblePane title="Invoices">
                 <InvoiceSelectionList
                   rows={selectableRows}
@@ -704,8 +741,9 @@ export function DashboardClient({ initialListData }: { initialListData: Dashboar
                   onRowIntent={prefetchInvoiceDetail}
                 />
               </CollapsiblePane>
+              </div>
 
-              <div className="flex min-w-0 flex-1">
+              <div className={clsx("flex min-w-0 flex-1", isMobile && !selected && "hidden")}>
                 {selectedNotFound ? (
                   <div className="flex flex-1 items-center justify-center text-sm text-slate-400">
                     That invoice isn&apos;t available anymore.

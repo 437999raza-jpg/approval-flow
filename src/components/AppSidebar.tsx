@@ -302,6 +302,27 @@ export function AppSidebar({
   const [width, setWidth] = useState(240);
   const [pendingHref, setPendingHref] = useState<string | null>(null);
 
+  // A full 240px sidebar has no business eating a third of a tablet's
+  // width or two-thirds of a phone's — reported live as every page
+  // (Settings, Dashboard, ...) squeezing its real content into a
+  // sliver at iPad width. Auto-collapses to the existing icon rail
+  // below desktop width, matching the responsive-nav pattern most
+  // productivity apps use (Gmail, Linear, Notion): a slim icon rail
+  // survives narrow screens, a full labeled sidebar doesn't need to.
+  //
+  // Reacts to the breakpoint actually being CROSSED (matchMedia's own
+  // change event) rather than every resize pixel, so manually
+  // re-expanding the rail (the existing "Show menu" toggle already
+  // does this) is only overridden again if the window is resized across
+  // the boundary once more — not fought on every intermediate render.
+  useEffect(() => {
+    const mql = window.matchMedia("(max-width: 1023px)");
+    setCollapsed(mql.matches);
+    const handleChange = (e: MediaQueryListEvent) => setCollapsed(e.matches);
+    mql.addEventListener("change", handleChange);
+    return () => mql.removeEventListener("change", handleChange);
+  }, []);
+
   // Workflows/Billing/Statements/Reports/Settings are open to anyone but
   // the "user" role; Queue is stricter — admin only (see /queue's own
   // redirect) — so it needs its own check rather than reusing this one.
