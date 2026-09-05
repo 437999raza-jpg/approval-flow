@@ -360,6 +360,16 @@ async function resetMemberMfa(membershipId: string) {
   revalidatePath("/settings");
 }
 
+// Server actions on this page (syncQboSuppliers etc.) revalidatePath("/settings")
+// after writing, but that doesn't stop Next.js from serving the page's own
+// Supabase reads (qbo_sync_log's synced_at in particular) from its fetch
+// Data Cache instead of the live database on the very next load — the same
+// gap that left the QBO import cron reading stale state (see the cron
+// routes' fetchCache comments). Settings always needs live data on every
+// visit, so force every fetch here to skip that cache outright.
+export const dynamic = "force-dynamic";
+export const fetchCache = "force-no-store";
+
 export default async function SettingsPage({
   searchParams,
 }: {
