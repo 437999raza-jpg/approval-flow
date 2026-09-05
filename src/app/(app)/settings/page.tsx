@@ -23,6 +23,8 @@ import { InlineSelectSave } from "@/components/InlineSelectSave";
 import { SubstitutePicker } from "@/components/SubstitutePicker";
 import { InlineTextSave } from "@/components/InlineTextSave";
 import { SubmitButton } from "@/components/SubmitButton";
+import { QboSyncButton } from "@/components/QboSyncButton";
+import { ToastProvider } from "@/components/ToastContext";
 import { ConfirmSubmitButton } from "@/components/ConfirmSubmitButton";
 import { DefaultTaxRateForm } from "@/components/DefaultTaxRateForm";
 import { InboundEmailForm } from "@/components/InboundEmailForm";
@@ -687,6 +689,7 @@ export default async function SettingsPage({
             </div>
           )}
 
+          <ToastProvider>
           <div className="settings-tabs">
 
           {/* My profile — profile info, Notifications, and Security all
@@ -890,9 +893,12 @@ export default async function SettingsPage({
                   <span className="flex-1" />
                   {isAdmin && qboConnection && (
                     <ScrollPreserveForm action={refreshQboData}>
-                      <SubmitButton className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">
+                      <QboSyncButton
+                        toastMessage="Pulling the latest from QuickBooks…"
+                        className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700"
+                      >
                         Refresh data
-                      </SubmitButton>
+                      </QboSyncButton>
                     </ScrollPreserveForm>
                   )}
                 </div>
@@ -918,9 +924,12 @@ export default async function SettingsPage({
                   >
                     {isAdmin && (
                       <ScrollPreserveForm action={syncQboTaxes}>
-                        <SubmitButton className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">
+                        <QboSyncButton
+                          toastMessage="Pulling tax rates from QuickBooks…"
+                          className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700"
+                        >
                           Sync taxes from QuickBooks
-                        </SubmitButton>
+                        </QboSyncButton>
                       </ScrollPreserveForm>
                     )}
                     <p className="mt-2 text-xs text-slate-500">
@@ -970,9 +979,12 @@ export default async function SettingsPage({
                   >
                     {isAdmin && (
                       <ScrollPreserveForm action={syncQboClasses}>
-                        <SubmitButton className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">
+                        <QboSyncButton
+                          toastMessage="Pulling classes from QuickBooks…"
+                          className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700"
+                        >
                           Sync classes from QuickBooks
-                        </SubmitButton>
+                        </QboSyncButton>
                       </ScrollPreserveForm>
                     )}
                     <p className="mt-2 text-xs text-slate-500">
@@ -1010,9 +1022,12 @@ export default async function SettingsPage({
                   >
                     {isAdmin && (
                       <ScrollPreserveForm action={syncQboProjects}>
-                        <SubmitButton className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">
+                        <QboSyncButton
+                          toastMessage="Pulling projects from QuickBooks…"
+                          className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700"
+                        >
                           Sync projects from QuickBooks
-                        </SubmitButton>
+                        </QboSyncButton>
                       </ScrollPreserveForm>
                     )}
                     <p className="mt-2 text-xs text-slate-500">
@@ -1052,9 +1067,12 @@ export default async function SettingsPage({
                     <div className="flex flex-wrap items-center gap-2">
                       {isAdmin && (
                         <ScrollPreserveForm action={syncQboSuppliers}>
-                          <SubmitButton className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">
+                          <QboSyncButton
+                            toastMessage="Pulling suppliers from QuickBooks…"
+                            className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700"
+                          >
                             Sync suppliers from QuickBooks
-                          </SubmitButton>
+                          </QboSyncButton>
                         </ScrollPreserveForm>
                       )}
                       <span className="flex-1" />
@@ -1103,9 +1121,12 @@ export default async function SettingsPage({
                   >
                     {isAdmin && (
                       <ScrollPreserveForm action={syncQboCategories}>
-                        <SubmitButton className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">
+                        <QboSyncButton
+                          toastMessage="Pulling categories from QuickBooks…"
+                          className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700"
+                        >
                           Sync categories from QuickBooks
-                        </SubmitButton>
+                        </QboSyncButton>
                       </ScrollPreserveForm>
                     )}
                     <p className="mt-2 text-xs text-slate-500">
@@ -1151,9 +1172,12 @@ export default async function SettingsPage({
                   <CollapsibleSection title="Payment status" defaultOpen={false}>
                     {isAdmin && (
                       <ScrollPreserveForm action={syncQboPaymentStatus}>
-                        <SubmitButton className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">
+                        <QboSyncButton
+                          toastMessage="Checking payment status in QuickBooks…"
+                          className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700"
+                        >
                           Sync payment status from QuickBooks
-                        </SubmitButton>
+                        </QboSyncButton>
                       </ScrollPreserveForm>
                     )}
                     <p className="mt-2 text-xs text-slate-500">
@@ -1559,6 +1583,7 @@ export default async function SettingsPage({
           )}
 
           </div>
+          </ToastProvider>
     </main>
   );
 }
