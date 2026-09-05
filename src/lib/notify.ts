@@ -735,6 +735,40 @@ export async function sendUsagePaymentOverdueAdminAlert({
   await sendEmail({ to, subject: `${orgName} hasn't paid in ${daysSincePaid} days`, html });
 }
 
+// A real autopay charge (migration 0119) failed — different from the
+// two reminders above, which are about someone forgetting to click
+// "Pay now." This is Stripe attempting an automatic charge and getting
+// declined (expired card, insufficient funds). Same "notify, don't
+// lock" philosophy: Stripe's own Smart Retries will try again over the
+// next couple of weeks on their own; this just makes sure someone who
+// can fix the card actually hears about it before those retries run
+// out. Sent to both the org's own admins and platform admins — one
+// template works for both audiences since the fix (update the card) is
+// the same either way.
+export async function sendAutopayFailedEmail({
+  to,
+  orgName,
+  billingUrl,
+}: {
+  to: string;
+  orgName: string;
+  billingUrl: string;
+}): Promise<void> {
+  const html = emailShell({
+    accentColor: "#B45309",
+    eyebrow: orgName,
+    headline: "An automatic payment didn't go through",
+    bodyHtml: `
+      <p style="margin:0 0 12px 0;">Flow tried to charge <strong>${escapeHtml(orgName)}</strong>'s card on file and it was declined. Stripe will keep retrying automatically over the next couple of weeks.</p>
+      <p style="margin:0;">Nothing is blocked in the meantime — updating the card in Billing is all that's needed to clear it.</p>
+    `,
+    ctaLabel: "Go to Billing",
+    ctaUrl: billingUrl,
+  });
+
+  await sendEmail({ to, subject: `${orgName}: an automatic payment didn't go through`, html });
+}
+
 // "An invoice can get stuck forever with zero notification to anyone"
 // — reminders.ts's own digest/escalation logic used to just skip any
 // invoice where NO approver currently matches its step at all (a

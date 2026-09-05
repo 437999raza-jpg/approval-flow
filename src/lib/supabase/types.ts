@@ -85,6 +85,16 @@ export interface Database {
           // may become plan-gated/marketed later, so this stays a
           // separate flag rather than tied to a specific tier for now.
           bulk_approve_enabled: boolean;
+          // Real auto-charging subscription, opt-in alongside the
+          // existing manual "Pay now" checkout (migration 0119). Covers
+          // the base plan price only — overage is billed separately as
+          // a Stripe invoice item once each completed month's usage is
+          // known (src/app/api/cron/billing-reminders).
+          stripe_subscription_id: string | null;
+          stripe_subscription_item_id: string | null;
+          autopay_enabled: boolean;
+          last_overage_billed_month: string | null;
+          subscription_payment_failed_at: string | null;
           created_at: string;
         };
         Insert: Partial<

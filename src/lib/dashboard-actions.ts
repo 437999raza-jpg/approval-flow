@@ -47,7 +47,7 @@ import { buildMergedInvoicePdf } from "@/lib/invoice-export";
 import { qboTag, INVOICES_TAG } from "@/lib/org-cache";
 import { syncInvoiceRetainage } from "@/lib/retainage-sync";
 import { categoryDisplayName } from "@/lib/qbo";
-import { PLANS, isPlanId, hasStatementReconciliation, hasBulkApprove, isOrgLocked, extractionModeForOrg, resolvePlan, resolveSetupFee } from "@/lib/plans";
+import { PLANS, isPlanId, hasStatementReconciliation, hasBulkApprove, isOrgLocked, extractionModeForOrg, resolvePlan, resolveSetupFee, computeOverage } from "@/lib/plans";
 import { extractStatementLines } from "@/lib/extract-statement";
 import { getAppUrl } from "@/lib/app-url";
 
@@ -2897,6 +2897,12 @@ export async function selectPlan(formData: FormData) {
     redirect("/billing?error=plan-invalid");
   }
 
+  const { data: beforeRow } = await supabase
+    .from("organizations")
+    .select("autopay_enabled, stripe_subscription_id, stripe_subscription_item_id, name")
+    .eq("id", org.id)
+    .single();
+
   const { error: updateError } = await supabase
     .from("organizations")
     .update({
@@ -2907,6 +2913,47 @@ export async function selectPlan(formData: FormData) {
   if (updateError) {
     console.error("selectPlan failed:", updateError);
     redirect("/billing?error=plan-save-failed");
+  }
+
+  // Autopay is already on — the running subscription's price has to
+  // move to the new tier too, or the customer keeps being auto-charged
+  // for whatever plan they were on when they first enabled it. Stripe's
+  // default proration handles the mid-cycle switch; a failure here
+  // doesn't roll back the plan change (the org's own read of "what plan
+  // am I on" should never disagree with what's shown on this page), it
+  // just leaves the subscription momentarily out of sync until the next
+  // manual save — logged so it's not silently lost.
+  if (beforeRow?.autopay_enabled && beforeRow.stripe_subscription_id && beforeRow.stripe_subscription_item_id) {
+    const secret = process.env.STRIPE_SECRET_KEY;
+    if (secret) {
+      const plan = PLANS[planId];
+      try {
+        const res = await fetch(
+          `https://api.stripe.com/v1/subscriptions/${beforeRow.stripe_subscription_id}`,
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${secret}`,
+              "Content-Type": "application/x-www-form-urlencoded",
+            },
+            body: new URLSearchParams({
+              "items[0][id]": beforeRow.stripe_subscription_item_id,
+              "items[0][price_data][currency]": "usd",
+              "items[0][price_data][unit_amount]": String(Math.round(plan.priceUsd * 100)),
+              "items[0][price_data][recurring][interval]": "month",
+              "items[0][price_data][product_data][name]": `${beforeRow.name ?? "Flow"} — ${plan.name} plan`,
+              "proration_behavior": "create_prorations",
+            }),
+          }
+        );
+        if (!res.ok) {
+          const text = await res.text();
+          console.error("Stripe subscription price update failed:", res.status, text.slice(0, 300));
+        }
+      } catch (err) {
+        console.error("selectPlan Stripe update error:", err);
+      }
+    }
   }
 
   await supabase.from("audit_log").insert({
@@ -3026,8 +3073,8 @@ export async function createUsageCheckout(): Promise<{ ok: boolean; url?: string
   const setupFee = resolveSetupFee(orgRow);
   const chargeSetupFee = setupFee?.outstanding === true;
   const docCount = count ?? 0;
-  const overageDocs = Math.max(0, docCount - plan.includedDocs);
-  const overageCents = Math.round(overageDocs * plan.overageRatePerDoc * 100);
+  const { overageDocs, overageUsd } = computeOverage(plan, docCount);
+  const overageCents = Math.round(overageUsd * 100);
   const planCents = Math.round(plan.priceUsd * 100);
 
   const origin = getAppUrl();
@@ -3097,6 +3144,102 @@ export async function createUsageCheckout(): Promise<{ ok: boolean; url?: string
     return { ok: true, url: json.url };
   } catch (err) {
     console.error("createUsageCheckout error:", err);
+    return { ok: false, error: err instanceof Error ? err.message : "Stripe error." };
+  }
+}
+
+// Opt-in autopay (migration 0119) — a real Stripe Subscription for the
+// base plan price, alongside the manual "Pay now" flow above, which
+// never goes away. Only the base price is a subscription line item;
+// overage is billed separately once each completed month's usage is
+// known (see the cron step in api/cron/billing-reminders). Fixed tiers
+// only in v1 — a negotiated custom plan changing mid-cycle is a sales
+// conversation, not a self-serve button, and selectPlan's custom-plan
+// path already doesn't touch Stripe today.
+//
+// billing_cycle_anchor is pinned to the 1st of next calendar month with
+// proration_behavior "none" for the stub period, so nobody already
+// paying manually for the current month gets charged again for the
+// same days — and so the subscription's renewal date stays exactly
+// aligned with the calendar-month usage periods used everywhere else
+// (createUsageCheckout above, the Billing page, the overage cron).
+export async function enableAutopay(): Promise<{ ok: boolean; url?: string; error?: string }> {
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
+  const org = await getCurrentOrg(supabase);
+  if (!org || org.role !== "admin") {
+    return { ok: false, error: "Only admins can turn on autopay." };
+  }
+
+  const secret = process.env.STRIPE_SECRET_KEY;
+  if (!secret) {
+    return { ok: false, error: "Stripe is not configured (STRIPE_SECRET_KEY missing)." };
+  }
+
+  const [{ data: orgRow }, customer] = await Promise.all([
+    supabase
+      .from("organizations")
+      .select("plan, is_internal, name, autopay_enabled")
+      .eq("id", org.id)
+      .single(),
+    ensureStripeCustomer(supabase, secret, org),
+  ]);
+  if (!customer.ok) return { ok: false, error: customer.error };
+  if (orgRow?.is_internal) {
+    return { ok: false, error: "This is an internal account — it is never billed." };
+  }
+  if (orgRow?.autopay_enabled) {
+    return { ok: false, error: "Autopay is already on." };
+  }
+  if (!isPlanId(orgRow?.plan)) {
+    return { ok: false, error: "Choose a fixed plan below before turning on autopay — negotiated plans aren't self-serve yet." };
+  }
+  const plan = PLANS[orgRow.plan];
+
+  const anchor = new Date();
+  anchor.setMonth(anchor.getMonth() + 1, 1);
+  anchor.setHours(0, 0, 0, 0);
+
+  const origin = getAppUrl();
+
+  try {
+    const res = await fetch("https://api.stripe.com/v1/checkout/sessions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${secret}`,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({
+        mode: "subscription",
+        customer: customer.customerId,
+        success_url: `${origin}/billing?autopay=connected`,
+        cancel_url: `${origin}/billing?autopay=cancelled`,
+        "line_items[0][quantity]": "1",
+        "line_items[0][price_data][currency]": "usd",
+        "line_items[0][price_data][unit_amount]": String(Math.round(plan.priceUsd * 100)),
+        "line_items[0][price_data][recurring][interval]": "month",
+        "line_items[0][price_data][product_data][name]": `${orgRow.name ?? "Flow"} — ${plan.name} plan`,
+        "line_items[0][price_data][product_data][description]": `${plan.includedDocs} documents included each month`,
+        "subscription_data[billing_cycle_anchor]": String(Math.floor(anchor.getTime() / 1000)),
+        "subscription_data[proration_behavior]": "none",
+        "metadata[organization_id]": org.id,
+        "metadata[type]": "enable_autopay",
+      }),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      console.error("Stripe autopay checkout failed:", res.status, text.slice(0, 300));
+      return { ok: false, error: `Stripe checkout failed (${res.status}).` };
+    }
+    const json = (await res.json()) as { url?: string };
+    if (!json.url) return { ok: false, error: "Stripe returned no checkout URL." };
+    return { ok: true, url: json.url };
+  } catch (err) {
+    console.error("enableAutopay error:", err);
     return { ok: false, error: err instanceof Error ? err.message : "Stripe error." };
   }
 }

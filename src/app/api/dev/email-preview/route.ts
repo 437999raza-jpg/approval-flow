@@ -3,7 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { isPlatformAdmin } from "@/lib/platform-admin";
 import { getCurrentOrg } from "@/lib/current-org";
 import { getAppUrl } from "@/lib/app-url";
-import { sendDigestEmail, sendEscalationEmail, sendPdfOnlyRequestEmail, sendInvoiceReceiptEmail, sendQboDisconnectedEmail, sendUsagePaymentReminderEmail, sendUsagePaymentOverdueAdminAlert, sendNoApproverMatchEmail, sendTrialEndingSoonEmail, sendCronErrorAlert, sendAssignedEmail } from "@/lib/notify";
+import { sendDigestEmail, sendEscalationEmail, sendPdfOnlyRequestEmail, sendInvoiceReceiptEmail, sendQboDisconnectedEmail, sendUsagePaymentReminderEmail, sendUsagePaymentOverdueAdminAlert, sendNoApproverMatchEmail, sendTrialEndingSoonEmail, sendCronErrorAlert, sendAssignedEmail, sendAutopayFailedEmail } from "@/lib/notify";
 import { decisionUrl } from "@/lib/decision-token";
 
 // Sends one of each notification tier to the caller's own address, so the
@@ -153,6 +153,15 @@ export async function GET() {
     rejectUrl: decisionUrl("reject", "sample-3", user.id),
   });
 
+  // 14 — an autopay charge was declined (migration 0119). Different
+  // from 8/9 above, which are about someone forgetting to click "Pay
+  // now" — this is Stripe's own automatic charge bouncing.
+  await sendAutopayFailedEmail({
+    to,
+    orgName: "Fluid Construction",
+    billingUrl: `${appUrl}/billing`,
+  });
+
   return NextResponse.json({
     ok: true,
     sentTo: to,
@@ -170,6 +179,7 @@ export async function GET() {
       "11 — trial ending soon",
       "12 — cron error alert",
       "13 — it's your turn, with Approve/Reject buttons (real /decide links, this account only)",
+      "14 — autopay charge declined",
     ],
   });
 }

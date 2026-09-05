@@ -1,11 +1,11 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentOrg } from "@/lib/current-org";
-import { selectPlan, createUsageCheckout, createBillingPortalSession, confirmSetupFeePayment } from "@/lib/dashboard-actions";
+import { selectPlan, createUsageCheckout, createBillingPortalSession, confirmSetupFeePayment, enableAutopay } from "@/lib/dashboard-actions";
 import { StripeCheckoutButton } from "@/components/StripeCheckoutButton";
 import { CollapsibleSection } from "@/components/CollapsibleSection";
 import { SubmitButton } from "@/components/SubmitButton";
-import { PLANS, PLAN_ORDER, isTrialActive, resolvePlan, resolveSetupFee } from "@/lib/plans";
+import { PLANS, PLAN_ORDER, isTrialActive, resolvePlan, resolveSetupFee, computeOverage } from "@/lib/plans";
 
 // Flow's billing: a fixed monthly plan (Starter/Growth/Scale) rather than
 // an admin-editable $/document rate — see src/lib/plans.ts for how these
@@ -18,7 +18,7 @@ import { PLANS, PLAN_ORDER, isTrialActive, resolvePlan, resolveSetupFee } from "
 export default async function BillingPage({
   searchParams,
 }: {
-  searchParams: { payment?: string; error?: string; session_id?: string };
+  searchParams: { payment?: string; autopay?: string; error?: string; session_id?: string };
 }) {
   const supabase = createClient();
   const {
@@ -43,7 +43,7 @@ export default async function BillingPage({
     supabase
       .from("organizations")
       .select(
-        "plan, custom_plan, is_internal, plan_selected_at, trial_ends_at, setup_fee_usd, setup_fee_label, setup_fee_paid_at"
+        "plan, custom_plan, is_internal, plan_selected_at, trial_ends_at, setup_fee_usd, setup_fee_label, setup_fee_paid_at, autopay_enabled"
       )
       .eq("id", org.id)
       .single(),
@@ -91,16 +91,21 @@ export default async function BillingPage({
     return new Date(y, m - 1, 1).toLocaleDateString(undefined, { month: "short" });
   };
   const monthCost = (count: number) =>
-    currentPlan
-      ? currentPlan.priceUsd + Math.max(0, count - currentPlan.includedDocs) * currentPlan.overageRatePerDoc
-      : null;
+    currentPlan ? currentPlan.priceUsd + computeOverage(currentPlan, count).overageUsd : null;
 
   const thisMonthKey = monthKey(new Date().toISOString());
   const thisMonthCount = byMonth.get(thisMonthKey) ?? 0;
-  const overageDocs = currentPlan ? Math.max(0, thisMonthCount - currentPlan.includedDocs) : 0;
+  const overageDocs = currentPlan ? computeOverage(currentPlan, thisMonthCount).overageDocs : 0;
   const totalCharge = currentPlan ? monthCost(thisMonthCount)! : 0;
   const canPay = Boolean(currentPlan) && stripeConfigured;
   const totalCount = (events ?? []).length;
+  const autopayEnabled = orgRow?.autopay_enabled === true;
+  const canEnableAutopay = Boolean(currentPlan) && currentPlan?.isCustom === false && stripeConfigured && !autopayEnabled;
+  const nextAutopayCharge = (() => {
+    const d = new Date();
+    d.setMonth(d.getMonth() + 1, 1);
+    return d.toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" });
+  })();
 
   return (
     <main className="mx-auto w-full max-w-3xl px-6 py-10">
@@ -144,6 +149,16 @@ export default async function BillingPage({
       {searchParams.payment === "cancelled" && (
         <div className="mt-4 rounded-lg border border-brand-line bg-brand-mist px-4 py-3 text-sm text-brand-muted">
           Payment cancelled — nothing was charged.
+        </div>
+      )}
+      {searchParams.autopay === "connected" && (
+        <div className="mt-4 rounded-lg border border-brand-green-light/40 bg-brand-mist px-4 py-3 text-sm text-brand-green-dark">
+          Autopay is on — nothing to do from here on.
+        </div>
+      )}
+      {searchParams.autopay === "cancelled" && (
+        <div className="mt-4 rounded-lg border border-brand-line bg-brand-mist px-4 py-3 text-sm text-brand-muted">
+          Autopay setup cancelled — nothing changed, &quot;Pay now&quot; still works as before.
         </div>
       )}
       {searchParams.error && (
@@ -379,7 +394,17 @@ export default async function BillingPage({
         </div>
         {stripeConfigured ? (
           <>
-            {canPay ? (
+            {autopayEnabled ? (
+              <p className="mt-2 text-sm text-slate-600">
+                <strong className="text-brand-ink">Autopay is on.</strong> The{" "}
+                {currentPlan!.name} plan price is charged automatically each
+                month; next charge on{" "}
+                <strong className="text-brand-ink">{nextAutopayCharge}</strong>.
+                Any overage from the month before is billed automatically at
+                the same time. Update your card or cancel autopay any time
+                below.
+              </p>
+            ) : canPay ? (
               <>
                 <p className="mt-2 text-sm text-slate-600">
                   Pay this month&apos;s charge of{" "}
@@ -422,8 +447,20 @@ export default async function BillingPage({
               </p>
             )}
             <div className="mt-3 flex flex-wrap items-start gap-3">
-              {canPay && (
+              {/* Opt-in, no deadline — "Pay now" never goes away for
+                  anyone who'd rather keep paying manually; this is
+                  purely an additional choice, shown only while autopay
+                  isn't already on. */}
+              {!autopayEnabled && canPay && (
                 <StripeCheckoutButton action={createUsageCheckout} label="Pay now" pendingLabel="Opening checkout…" />
+              )}
+              {canEnableAutopay && (
+                <StripeCheckoutButton
+                  action={enableAutopay}
+                  label="Enable autopay"
+                  pendingLabel="Setting up autopay…"
+                  variant="secondary"
+                />
               )}
               <StripeCheckoutButton
                 action={createBillingPortalSession}

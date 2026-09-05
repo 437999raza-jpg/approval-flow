@@ -206,6 +206,20 @@ export function hasBulkApprove(org: { bulk_approve_enabled?: boolean | null } | 
   return org?.bulk_approve_enabled !== false;
 }
 
+// The one place "how many documents over the plan limit, and what does
+// that cost" gets computed — used to build the manual "Pay now" Checkout
+// line item, the Billing page's on-screen estimate, and the autopay
+// cron's monthly Stripe invoice item. Previously duplicated inline in
+// two of those three places; a third copy for autopay was the reason to
+// finally extract it.
+export function computeOverage(
+  plan: Pick<ResolvedPlan, "includedDocs" | "overageRatePerDoc">,
+  docCount: number
+): { overageDocs: number; overageUsd: number } {
+  const overageDocs = Math.max(0, docCount - plan.includedDocs);
+  return { overageDocs, overageUsd: overageDocs * plan.overageRatePerDoc };
+}
+
 // Statement Reconciliation is the first plan-gated feature. Full access
 // during an active trial is the point of the trial, so it passes here
 // too, independent of plan.
