@@ -1,9 +1,10 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { clsx } from "clsx";
+import { unzip } from "fflate";
 
 // Upload queue: every dropped file appears in a list with a live status —
 // Waiting → Processing → Done / Split review / Rejected (with the reason).
@@ -13,18 +14,81 @@ type QueueItem = {
   id: string;
   name: string;
   file: File;
-  status: "queued" | "processing" | "done" | "split" | "error";
+  status: "queued" | "processing" | "done" | "split" | "error" | "extracting";
   message?: string;
   invoiceId?: string;
   pendingSplitId?: string;
 };
 
+// Kept in sync with ALLOWED_INVOICE_TYPES (src/lib/invoices.ts) — that
+// file pulls in server-only modules (QBO, extraction) so it can't be
+// imported directly into this client component; this is the client-side
+// pre-check only, the server re-validates independently either way.
 const ACCEPTED_TYPES = [
   "application/pdf",
   "image/png",
   "image/jpeg",
   "image/webp",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document", // .docx
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", // .xlsx
 ];
+
+// A .zip's contents arrive with no browser-assigned MIME type (each
+// entry is raw bytes from fflate's unzip), so the type has to be
+// inferred from the extension instead — same set as ACCEPTED_TYPES.
+const MIME_BY_EXTENSION: Record<string, string> = {
+  pdf: "application/pdf",
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  webp: "image/webp",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+};
+
+const MAX_ZIP_BYTES = 50 * 1024 * 1024; // 50MB — the zip itself is only ever parsed in-browser, never uploaded whole; each extracted file still goes through the normal 20MB-per-file server check.
+
+function isZipFile(file: File): boolean {
+  return (
+    file.type === "application/zip" ||
+    file.type === "application/x-zip-compressed" ||
+    file.name.toLowerCase().endsWith(".zip")
+  );
+}
+
+// Unpacks a .zip into individual invoice files, skipping directory
+// entries, macOS's __MACOSX/.DS_Store artifacts, and anything whose
+// extension isn't one Flow can actually process. Async (not unzipSync)
+// so a large archive doesn't block the main thread while parsing.
+function extractZip(file: File): Promise<{ files: File[]; error?: string }> {
+  return file
+    .arrayBuffer()
+    .then(
+      (buf) =>
+        new Promise<{ files: File[]; error?: string }>((resolve) => {
+          unzip(new Uint8Array(buf), (err, entries) => {
+            if (err) {
+              resolve({ files: [], error: "Could not read this zip file." });
+              return;
+            }
+            const files: File[] = [];
+            for (const [path, bytes] of Object.entries(entries)) {
+              if (path.endsWith("/")) continue;
+              const name = path.split("/").pop() ?? path;
+              if (!name || name.startsWith(".") || path.startsWith("__MACOSX/")) continue;
+              const ext = name.toLowerCase().split(".").pop() ?? "";
+              const mime = MIME_BY_EXTENSION[ext];
+              if (!mime) continue;
+              files.push(new File([bytes], name, { type: mime }));
+            }
+            resolve({
+              files,
+              error: files.length === 0 ? "No invoices found inside this zip." : undefined,
+            });
+          });
+        })
+    );
+}
 
 export function InvoiceUploadDropzone() {
   const router = useRouter();
@@ -110,28 +174,100 @@ export function InvoiceUploadDropzone() {
     }
   }
 
-  function addFiles(fileList: FileList | null) {
-    if (!fileList || fileList.length === 0) return;
-    const fresh: QueueItem[] = Array.from(fileList).map((file) => ({
-      id: crypto.randomUUID(),
-      name: file.name,
-      file,
-      status: ACCEPTED_TYPES.includes(file.type)
-        ? ("queued" as const)
-        : ("error" as const),
-      message: ACCEPTED_TYPES.includes(file.type)
-        ? undefined
-        : "Not a PDF or image (use PDF, PNG, JPEG, or WebP).",
-    }));
-    setQueue((prev) => [...prev, ...fresh]);
+  // A zip is unpacked (extractZip, async) rather than queued directly —
+  // its contained files re-enter this same function once extracted, so
+  // a zip full of PDFs and a folder of dropped PDFs go through exactly
+  // one code path from that point on. Everything else is queued as-is.
+  function addFiles(files: File[]) {
+    if (files.length === 0) return;
+
+    const immediate: QueueItem[] = [];
+    const zipFiles: File[] = [];
+
+    for (const file of files) {
+      if (isZipFile(file)) {
+        if (file.size > MAX_ZIP_BYTES) {
+          immediate.push({
+            id: crypto.randomUUID(),
+            name: file.name,
+            file,
+            status: "error",
+            message: `Zip exceeds ${MAX_ZIP_BYTES / (1024 * 1024)}MB limit`,
+          });
+        } else {
+          zipFiles.push(file);
+        }
+        continue;
+      }
+      const accepted = ACCEPTED_TYPES.includes(file.type);
+      immediate.push({
+        id: crypto.randomUUID(),
+        name: file.name,
+        file,
+        status: accepted ? "queued" : "error",
+        message: accepted
+          ? undefined
+          : "Not a supported file type (PDF, PNG, JPEG, WebP, Word, or Excel).",
+      });
+    }
+
+    if (immediate.length > 0) {
+      setQueue((prev) => [...prev, ...immediate]);
+    }
+
+    for (const zipFile of zipFiles) {
+      const placeholderId = crypto.randomUUID();
+      setQueue((prev) => [
+        ...prev,
+        { id: placeholderId, name: zipFile.name, file: zipFile, status: "extracting" },
+      ]);
+      extractZip(zipFile).then(({ files: extracted, error }) => {
+        setQueue((prev) => prev.filter((it) => it.id !== placeholderId));
+        if (error) {
+          setQueue((prev) => [
+            ...prev,
+            { id: placeholderId, name: zipFile.name, file: zipFile, status: "error", message: error },
+          ]);
+          return;
+        }
+        addFiles(extracted);
+      });
+    }
+
     void runQueue();
   }
+
+  // Paste a screenshot or a copied image straight in — window-level so it
+  // works without first clicking into the dropzone, and harmless for any
+  // other paste on this page: a normal text paste has no clipboard items
+  // with kind "file", so this simply finds nothing and does nothing.
+  useEffect(() => {
+    function handlePaste(e: ClipboardEvent) {
+      const clipboardItems = e.clipboardData?.items;
+      if (!clipboardItems) return;
+      const pasted: File[] = [];
+      for (const item of clipboardItems) {
+        if (item.kind !== "file") continue;
+        const file = item.getAsFile();
+        if (file) pasted.push(file);
+      }
+      if (pasted.length === 0) return;
+      e.preventDefault();
+      addFiles(pasted);
+    }
+    window.addEventListener("paste", handlePaste);
+    return () => window.removeEventListener("paste", handlePaste);
+    // addFiles/runQueue/setQueue all read and write itemsRef.current
+    // directly rather than closing over the `items` state, so this
+    // listener stays correct without re-binding on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const finishedCount = items.filter((it) =>
     ["done", "split", "error"].includes(it.status)
   ).length;
   const runningCount = items.filter((it) =>
-    ["queued", "processing"].includes(it.status)
+    ["queued", "processing", "extracting"].includes(it.status)
   ).length;
 
   function clearFinished() {
@@ -155,7 +291,7 @@ export function InvoiceUploadDropzone() {
         onDrop={(e) => {
           e.preventDefault();
           setIsDragging(false);
-          addFiles(e.dataTransfer.files);
+          addFiles(Array.from(e.dataTransfer.files));
         }}
         className={clsx(
           "flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed p-10 text-center transition-colors",
@@ -168,16 +304,19 @@ export function InvoiceUploadDropzone() {
             : "Drop invoices here, or click to add one or more"}
         </p>
         <p className="mt-1 text-xs text-slate-400">
-          PDF, PNG, JPEG, WebP, Word, or Excel — up to 20MB each
+          PDF, PNG, JPEG, WebP, Word, Excel, or a zip of them — up to 20MB per file
+        </p>
+        <p className="mt-1 text-xs text-slate-400">
+          Copied an image? Paste it in (⌘V) — no need to save it first.
         </p>
         <input
           ref={inputRef}
           type="file"
           multiple
-          accept="application/pdf,image/png,image/jpeg,image/webp,.docx,.xlsx,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+          accept="application/pdf,image/png,image/jpeg,image/webp,.docx,.xlsx,.zip,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/zip,application/x-zip-compressed"
           className="hidden"
           onChange={(e) => {
-            addFiles(e.target.files);
+            addFiles(Array.from(e.target.files ?? []));
             e.target.value = "";
           }}
         />
@@ -209,6 +348,12 @@ export function InvoiceUploadDropzone() {
                   >
                     {it.name}
                   </span>
+                  {it.status === "extracting" && (
+                    <span className="flex items-center gap-1.5 rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-600">
+                      <span className="h-3 w-3 animate-spin rounded-full border-2 border-blue-500 border-t-transparent" />
+                      Unzipping…
+                    </span>
+                  )}
                   {it.status === "queued" && (
                     <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-500">
                       Waiting…
