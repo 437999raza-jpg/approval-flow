@@ -67,6 +67,19 @@ export function DocumentSearchModal({
   const [open, setOpen] = useState(false);
   const [filters, setFilters] = useState<DocumentSearchFilters>(initial);
 
+  // useState(initial) only snapshots `initial` on this component's first
+  // mount — it never re-syncs on its own if the real applied filters
+  // change afterward through some other path (e.g. the URL/advanced
+  // filters get set before this modal has ever been opened). That left
+  // the "Filters" badge correctly showing an active count while the
+  // modal itself opened to a blank, out-of-sync draft. Re-snapshot the
+  // draft from the current committed filters every time the modal is
+  // opened, so what's shown always matches what's actually active.
+  function openModal() {
+    setFilters(initial);
+    setOpen(true);
+  }
+
   function set<K extends keyof DocumentSearchFilters>(key: K, value: DocumentSearchFilters[K]) {
     setFilters((f) => ({ ...f, [key]: value }));
   }
@@ -93,7 +106,7 @@ export function DocumentSearchModal({
     <>
       <button
         type="button"
-        onClick={() => setOpen(true)}
+        onClick={openModal}
         className="flex items-center gap-1.5 rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
       >
         Filters
