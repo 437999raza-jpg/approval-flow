@@ -359,6 +359,22 @@ export function DashboardClient({ initialListData }: { initialListData: Dashboar
     [queryClient, orgId, effectiveSelectedId]
   );
 
+  // Lighter sibling of invalidateAfter for reorderLineItem only: a
+  // same-invoice line_order swap changes nothing the invoice LIST shows
+  // (amount, category, class, project), so refetching every invoice in
+  // the org on each click — the cost invalidateAfter always pays — is
+  // pure waste that gets worse the more clicks a long move needs. Only
+  // the open invoice's own detail actually needs to reflect the new order.
+  const invalidateDetailAfter = useCallback(
+    <T extends unknown[], R>(fn: (...args: T) => Promise<R>) =>
+      async (...args: T): Promise<R> => {
+        const result = await fn(...args);
+        if (effectiveSelectedId) await queryClient.invalidateQueries({ queryKey: ["invoice-detail", effectiveSelectedId] });
+        return result;
+      },
+    [queryClient, effectiveSelectedId]
+  );
+
   const org = data.org;
   const user = data.user;
   const isAuditor = org.role === "auditor";
@@ -793,7 +809,7 @@ export function DashboardClient({ initialListData }: { initialListData: Dashboar
                       saveLineItem: invalidateAfter(saveLineItem.bind(null, selected.id)),
                       deleteLineItem: invalidateAfter(deleteLineItem.bind(null, selected.id)),
                       cloneLineItem: invalidateAfter(cloneLineItem.bind(null, selected.id)),
-                      reorderLineItem: invalidateAfter(reorderLineItem.bind(null, selected.id)),
+                      reorderLineItem: invalidateDetailAfter(reorderLineItem.bind(null, selected.id)),
                       collapseToOneLine: invalidateAfter(collapseInvoiceToOneLine.bind(null, selected.id)),
                       reExtract: invalidateAfter(reExtract.bind(null, selected.id)),
                       getPageCount: getInvoicePageCount,

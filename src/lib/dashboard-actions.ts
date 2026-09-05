@@ -2357,7 +2357,12 @@ export async function reorderLineItem(
     supabase.from("invoice_line_items").update({ line_order: current.line_order }).eq("id", neighbor.id),
   ]);
 
-  revalidateTag(INVOICES_TAG);
+  // No revalidateTag(INVOICES_TAG) here on purpose: unlike every other
+  // line-item action, reordering doesn't touch anything the cached
+  // invoice list actually displays (amount, category, class, project) —
+  // only this one invoice's own line_order. Purging that org-wide cache
+  // for a same-invoice swap is a pure waste that only gets worse when a
+  // line needs several clicks to move far.
 }
 
 // Duplicate a line item exactly (same category/description/tax/class/
