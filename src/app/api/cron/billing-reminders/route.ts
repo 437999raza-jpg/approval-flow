@@ -21,6 +21,11 @@ import { sendUsagePaymentReminderEmail, sendUsagePaymentOverdueAdminAlert, sendC
 import { authorizeCronRequest } from "@/lib/cron-auth";
 
 export const dynamic = "force-dynamic";
+// force-dynamic alone doesn't stop Next.js from caching individual fetch()
+// calls made inside the route (including ones the Supabase client makes
+// under the hood) — force-no-store guarantees every fetch here hits the
+// live database instead of a stale cached response.
+export const fetchCache = "force-no-store";
 
 const OVERDUE_AFTER_DAYS = 35;
 const RENOTIFY_AFTER_DAYS = 7;

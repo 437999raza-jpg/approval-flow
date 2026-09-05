@@ -12,6 +12,11 @@ import { getNotificationPreferencesMap, prefsFor, isDigestDue } from "@/lib/noti
 // without this it gets optimized as a static route (built and cached once
 // at build time instead of re-run on every cron trigger).
 export const dynamic = "force-dynamic";
+// force-dynamic alone doesn't stop Next.js from caching individual fetch()
+// calls made inside the route (including ones the Supabase client makes
+// under the hood) — force-no-store guarantees every fetch here hits the
+// live database instead of a stale cached response.
+export const fetchCache = "force-no-store";
 
 // Hourly job (see vercel.json's "crons" entry — moved from once daily so
 // each approver's own digest_days/digest_hour/timezone preference,

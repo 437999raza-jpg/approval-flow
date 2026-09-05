@@ -12,6 +12,13 @@ import { authorizeCronRequest } from "@/lib/cron-auth";
 // large backlog finishes over several ticks rather than one long request.
 // Authored by Araza.
 export const dynamic = "force-dynamic";
+// force-dynamic alone doesn't stop Next.js from caching individual fetch()
+// calls made inside the route (including ones the Supabase client makes
+// under the hood) — force-no-store guarantees every fetch here hits the
+// live database instead of a stale cached response. This is exactly the
+// bug that left qbo_bill_import_jobs stuck at "queued" forever: the job
+// lookup query kept getting served a cached "no active jobs" response.
+export const fetchCache = "force-no-store";
 
 export async function GET(request: NextRequest) {
   const unauthorized = authorizeCronRequest(request);

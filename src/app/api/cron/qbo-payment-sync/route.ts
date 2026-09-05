@@ -14,6 +14,11 @@ import { sendCronErrorAlert } from "@/lib/notify";
 // syncQboPaymentStatus) — see runQboPaymentSync in qbo.ts. Authored by
 // Araza.
 export const dynamic = "force-dynamic";
+// force-dynamic alone doesn't stop Next.js from caching individual fetch()
+// calls made inside the route (including ones the Supabase client makes
+// under the hood) — force-no-store guarantees every fetch here hits the
+// live database instead of a stale cached response.
+export const fetchCache = "force-no-store";
 
 export async function GET(request: NextRequest) {
   const unauthorized = authorizeCronRequest(request);
