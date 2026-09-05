@@ -78,6 +78,17 @@ guess or default to any other year. A single specific day mentioned
 ("for August 27th", "on the 27th") means dateFrom and dateTo are both
 that same day.
 
+Relative date ranges are computed from today's date above, dateFrom
+through dateTo inclusive:
+- "the last N days" / "past N days" → dateFrom = today minus (N-1) days, dateTo = today.
+- "yesterday" → dateFrom and dateTo both today minus 1 day.
+- "this week" → dateFrom = the most recent Monday on or before today, dateTo = today.
+- "last week" → the full Monday-through-Sunday week before this week's Monday.
+- "this month" → dateFrom = the 1st of today's month, dateTo = today.
+- "last month" → the full 1st-through-last-day of the calendar month before today's.
+Do the actual date arithmetic yourself and output real YYYY-MM-DD
+values — never leave a relative phrase unresolved.
+
 Status meanings: "on_review" and "on_approval" and "on_hold" = still in the
 approval pipeline, NOT yet approved. "approved" and "qbo_ready" = already
 approved. "cancelled" and "rejected" = terminal, also not approved. A query
