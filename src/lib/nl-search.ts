@@ -44,7 +44,21 @@ const STATUS_VALUES = [
 ] as const;
 type StatusValue = (typeof STATUS_VALUES)[number];
 
-const SYSTEM_PROMPT = `You extract search intent from a user's plain-English invoice search. Return ONLY a JSON object (no markdown, no commentary) with exactly this shape — every field optional, omit anything the query doesn't mention:
+// A function, not a module-level constant — this runs in a long-lived
+// serverless instance, and a plain `const` built from `new Date()` at
+// cold start would freeze "today" at whatever moment the instance
+// happened to start, silently going stale for every request after that
+// until the next cold start. Computed fresh on every call instead.
+//
+// Reported live: "battlefield invoice for August 27th" (voice, no year
+// spoken) came back as dateFrom/dateTo "2024-08-27" — the model had no
+// idea what year "now" actually was and picked one out of its training
+// data, missing the real (2026) invoice entirely even though every
+// other part of the filter (the supplier) resolved correctly. The
+// model needs to be told today's date explicitly; it can't infer it.
+function buildSystemPrompt(): string {
+  const today = new Date().toISOString().slice(0, 10);
+  return `You extract search intent from a user's plain-English invoice search. Return ONLY a JSON object (no markdown, no commentary) with exactly this shape — every field optional, omit anything the query doesn't mention:
 {
   "status": string[],        // from: ${STATUS_VALUES.join(", ")}
   "holderHint": string,      // a person's name mentioned as currently holding/waiting on it
@@ -58,6 +72,12 @@ const SYSTEM_PROMPT = `You extract search intent from a user's plain-English inv
   "amountTo": string
 }
 
+Today's date is ${today}. When the user gives a date with no year
+("August 27th", "8/27"), use the year from today's date above — never
+guess or default to any other year. A single specific day mentioned
+("for August 27th", "on the 27th") means dateFrom and dateTo are both
+that same day.
+
 Status meanings: "on_review" and "on_approval" and "on_hold" = still in the
 approval pipeline, NOT yet approved. "approved" and "qbo_ready" = already
 approved. "cancelled" and "rejected" = terminal, also not approved. A query
@@ -70,6 +90,7 @@ full name, just extract what was said. A bare query with no verb at all
 (e.g. just "Sat Metal", or just "Clarington Toyota") is still a valid
 search — put it in nameHints even though you can't tell what kind of name
 it is.`;
+}
 
 function isStatusValue(v: unknown): v is StatusValue {
   return typeof v === "string" && (STATUS_VALUES as readonly string[]).includes(v);
@@ -113,7 +134,7 @@ export async function parseNaturalLanguageSearch(
         response_format: { type: "json_object" },
         usage: { include: true },
         messages: [
-          { role: "system", content: SYSTEM_PROMPT },
+          { role: "system", content: buildSystemPrompt() },
           { role: "user", content: query },
         ],
       }),
