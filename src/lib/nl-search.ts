@@ -56,8 +56,39 @@ type StatusValue = (typeof STATUS_VALUES)[number];
 // data, missing the real (2026) invoice entirely even though every
 // other part of the filter (the supplier) resolved correctly. The
 // model needs to be told today's date explicitly; it can't infer it.
+// "The last 3 days" first came back as a 4-day span (today minus 3
+// through today) instead of 3 — the model didn't reliably follow the
+// inclusive-range formula in prose. Every NAMED relative range
+// (yesterday/this week/last week/this month/last month) has a fixed
+// boundary for a given today, so those are computed here in real code
+// and handed to the model as literal dates — zero arithmetic left for
+// it to get wrong. Only "last/past N days" still needs the model to
+// read N out of the query text, so that one keeps a worked numeric
+// example instead (proved more reliable than the abstract formula
+// alone for the year-and-month arithmetic above).
+function fmtDate(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
 function buildSystemPrompt(): string {
-  const today = new Date().toISOString().slice(0, 10);
+  const now = new Date();
+  const today = fmtDate(now);
+
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+
+  const daysSinceMonday = (now.getDay() + 6) % 7; // Mon=0 .. Sun=6
+  const thisMonday = new Date(now);
+  thisMonday.setDate(now.getDate() - daysSinceMonday);
+  const lastMonday = new Date(thisMonday);
+  lastMonday.setDate(thisMonday.getDate() - 7);
+  const lastSunday = new Date(thisMonday);
+  lastSunday.setDate(thisMonday.getDate() - 1);
+
+  const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0);
+
   return `You extract search intent from a user's plain-English invoice search. Return ONLY a JSON object (no markdown, no commentary) with exactly this shape — every field optional, omit anything the query doesn't mention:
 {
   "status": string[],        // from: ${STATUS_VALUES.join(", ")}
@@ -78,16 +109,19 @@ guess or default to any other year. A single specific day mentioned
 ("for August 27th", "on the 27th") means dateFrom and dateTo are both
 that same day.
 
-Relative date ranges are computed from today's date above, dateFrom
-through dateTo inclusive:
-- "the last N days" / "past N days" → dateFrom = today minus (N-1) days, dateTo = today.
-- "yesterday" → dateFrom and dateTo both today minus 1 day.
-- "this week" → dateFrom = the most recent Monday on or before today, dateTo = today.
-- "last week" → the full Monday-through-Sunday week before this week's Monday.
-- "this month" → dateFrom = the 1st of today's month, dateTo = today.
-- "last month" → the full 1st-through-last-day of the calendar month before today's.
-Do the actual date arithmetic yourself and output real YYYY-MM-DD
-values — never leave a relative phrase unresolved.
+Relative date ranges — these exact values are already computed for
+today (${today}), use them literally, no arithmetic needed:
+- "yesterday" → dateFrom "${fmtDate(yesterday)}", dateTo "${fmtDate(yesterday)}".
+- "this week" → dateFrom "${fmtDate(thisMonday)}", dateTo "${today}".
+- "last week" → dateFrom "${fmtDate(lastMonday)}", dateTo "${fmtDate(lastSunday)}".
+- "this month" → dateFrom "${fmtDate(thisMonthStart)}", dateTo "${today}".
+- "last month" → dateFrom "${fmtDate(lastMonthStart)}", dateTo "${fmtDate(lastMonthEnd)}".
+
+"The last N days" / "past N days" is the one relative phrase that
+needs arithmetic (N comes from the query, not a fixed name) — dateFrom
+is N-1 days before today, dateTo is today, so the range is exactly N
+days including today. Worked example: today is ${today}, "the last 3
+days" → dateFrom "${fmtDate(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 2))}", dateTo "${today}" (that's 3 calendar days total: two days ago, yesterday, and today — NOT 4).
 
 Status meanings: "on_review" and "on_approval" and "on_hold" = still in the
 approval pipeline, NOT yet approved. "approved" and "qbo_ready" = already
